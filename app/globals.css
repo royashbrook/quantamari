@@ -435,6 +435,19 @@ a {
   line-height: 1.45;
 }
 
+.fact-source {
+  display: inline-block;
+  margin-top: 7px;
+  color: #9d3d70;
+  font: 760 7px var(--font-geist-mono), monospace;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+}
+
+.fact-source:hover {
+  text-decoration: underline;
+}
+
 .toast {
   position: absolute;
   z-index: 8;
@@ -770,6 +783,16 @@ kbd {
 .era-actions code {
   color: #9b8f9f;
   font: 700 8px var(--font-geist-mono), monospace;
+}
+
+.era-actions a {
+  color: #9d4774;
+  font: 720 7px var(--font-geist-mono), monospace;
+  text-decoration: none;
+}
+
+.era-actions a:hover {
+  text-decoration: underline;
 }
 
 .era-actions button {

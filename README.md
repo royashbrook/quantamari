@@ -1,108 +1,71 @@
-# vinext-starter
+# Quarkatamari
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Quarkatamari is an untimed, browser-based 3D rolling game about the scale of
+everything. Begin with a deliberately speculative visualization near the
+Planck regime, roll through particles, atoms, cells, dust, rooms, planets, and
+galaxies, then continue forever into a clearly fictional beyond.
 
-## Prerequisites
+The current release contains 21 eras and 168 collectible identities across a
+500-hour authored journey. Progress is saved locally and Scale Lab can preview
+any era without changing that save.
 
-- Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+## Gameplay contract
 
-## Sites Lifecycle
+- Visible size determines whether a pickup fits. If it looks smaller than the
+  mash, it can be rolled up.
+- Mass or energy weighting determines growth. Older scales remain collectible
+  but contribute progressively less.
+- Only current-scale pickups remain visible on the mash. Older pickups dissolve
+  silently into its mass and replenish their scale band.
+- The world keeps three smaller and three larger neighboring scale bands alive.
+  Oversized obstacles are separated during spawning so they cannot form cages.
+- Every named collectible has a deterministic model signature, motion
+  personality, and synthesized three-note pickup voice.
+- Rendering adapts pickup density, pixel ratio, and shadows from measured frame
+  rate, with mobile-specific budgets.
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+## Science contract
 
-This starter does not use `wrangler.jsonc`.
+The game compresses roughly 95 orders of magnitude into play, so scale changes
+are logarithmic and time is a game progression axis—not physical time.
+Authoritative references from NIST, CERN, NIH, CDC, EPA, USGS, and NASA are
+attached to every era and collectible fact. Confidence labels distinguish
+measured science, supported models, unresolved territory, and deliberate
+speculation.
 
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout and then validates the Sites artifact. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
+See [SCIENCE.md](SCIENCE.md) for the editorial policy, source registry, and
+known game metaphors.
 
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
+## Development
 
-## Included Shape
+Requirements: Node.js `>=22.13.0`, Bash, GNU `timeout`, and `flock`.
 
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm ci
+npm run dev
+npm test
+npm run lint
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+`npm test` performs the production build, verifies the rendered application,
+and runs the pure gameplay/science regression suite.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+Important code:
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+- `app/page.tsx` — Three.js world, rolling, pickup, sound, HUD, and Scale Lab
+- `app/scale-data.ts` — 21-era progression, 168 facts, and source metadata
+- `app/game-rules.ts` — deterministic identities and testable gameplay budgets
+- `tests/` — render, science, progression, collision, audio-identity, and
+  adaptive-quality checks
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+## Releases and mirrors
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+The Sites lifecycle owns production deployment and `.openai/hosting.json`
+identifies the existing site. GitHub is a source mirror and collaboration
+surface. Never force-push either remote.
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+See [docs/GITHUB-SITES-WORKFLOW.md](docs/GITHUB-SITES-WORKFLOW.md), or run
+`npm run sync:remotes` after both remotes are configured and the tree is clean.
 
-## Diagnostic Commands
-
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
-- `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-Use build and validation commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
-
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+The release record is in [BACKLOG.md](BACKLOG.md). V14 remains the rollback
+point for the V15 backlog-completion release.

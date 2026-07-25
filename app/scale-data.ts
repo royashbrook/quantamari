@@ -1,5 +1,10 @@
 export type Confidence = "MEASURED" | "SUPPORTED MODEL" | "UNKNOWN" | "SPECULATIVE";
 export type Realm = "prephysical" | "particle" | "matter" | "macroscopic" | "cosmic" | "speculative";
+export type ScienceSource = {
+  label: string;
+  organization: string;
+  url: string;
+};
 export type Shape =
   | "bubble" | "spark" | "quark" | "hadron" | "atom" | "molecule"
   | "virus" | "cell" | "fiber" | "dust" | "stone" | "object"
@@ -12,6 +17,7 @@ export type Curio = {
   color: string;
   fact: string;
   symbol: string;
+  source?: ScienceSource;
 };
 
 export type Era = {
@@ -24,6 +30,7 @@ export type Era = {
   palette: [string, string, string];
   lesson: string;
   curios: Curio[];
+  sources: ScienceSource[];
 };
 
 const SHAPE_SYMBOLS: Record<Shape, string> = {
@@ -62,7 +69,7 @@ const c = (
 
 export const JOURNEY_HOURS = 500;
 
-const BASE_ERAS: Era[] = [
+const BASE_ERAS: Omit<Era, "sources">[] = [
   {
     at: 0,
     logMeters: Math.log10(1.616255e-35),
@@ -530,9 +537,284 @@ const EXTRA_CURIOS: Record<string, Curio[]> = {
   ],
 };
 
+const source = (
+  label: string,
+  organization: string,
+  url: string,
+): ScienceSource => ({ label, organization, url });
+
+/**
+ * Curated, authoritative starting points for every era. Each collectible is
+ * assigned one of its era's sources below so the fact card always provides a
+ * direct path out of the game and into the underlying science.
+ */
+const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
+  "Planck Regime": [
+    source(
+      "CODATA Planck length",
+      "NIST",
+      "https://physics.nist.gov/cgi-bin/cuu/Value?plkl=",
+    ),
+    source(
+      "SI base-unit definitions",
+      "NIST",
+      "https://www.nist.gov/si-redefinition/definitions-si-base-units",
+    ),
+  ],
+  "The Unresolved Gap": [
+    source(
+      "The Standard Model",
+      "CERN",
+      "https://home.cern/science/physics/standard-model",
+    ),
+    source(
+      "Fundamental physical constants",
+      "NIST",
+      "https://physics.nist.gov/cuu/Constants/",
+    ),
+  ],
+  "Quark–Gluon Droplet": [
+    source(
+      "ALICE experiment",
+      "CERN",
+      "https://home.cern/science/experiments/alice/",
+    ),
+    source(
+      "Heavy ions and quark–gluon plasma",
+      "CERN",
+      "https://home.cern/science/physics/heavy-ions-and-quark-gluon-plasma/",
+    ),
+  ],
+  "Hadron Forge": [
+    source(
+      "From partons to hadrons",
+      "CERN",
+      "https://home.cern/partons-hadrons/",
+    ),
+    source(
+      "The Standard Model",
+      "CERN",
+      "https://home.cern/science/physics/standard-model",
+    ),
+  ],
+  "Atomic Cloud": [
+    source(
+      "Atomic Spectra Database",
+      "NIST",
+      "https://physics.nist.gov/PhysRefData/ASD/",
+    ),
+    source(
+      "Atomic energy levels and spectra",
+      "NIST",
+      "https://physics.nist.gov/cgi-bin/ASBib1/ELevBib.cgi",
+    ),
+  ],
+  "Molecular Assembly": [
+    source(
+      "Chemistry WebBook",
+      "NIST",
+      "https://webbook.nist.gov/chemistry/",
+    ),
+    source(
+      "DNA fact sheet",
+      "NHGRI",
+      "https://www.genome.gov/about-genomics/fact-sheets/Deoxyribonucleic-Acid-Fact-Sheet",
+    ),
+  ],
+  "Macromolecule Reef": [
+    source(
+      "DNA fact sheet",
+      "NHGRI",
+      "https://www.genome.gov/about-genomics/fact-sheets/Deoxyribonucleic-Acid-Fact-Sheet",
+    ),
+    source(
+      "Viruses at the edge of life",
+      "CDC",
+      "https://wwwnc.cdc.gov/eid/article/26/1/AC-2601_article.htm",
+    ),
+  ],
+  "Cellular Sea": [
+    source(
+      "Inside the cell",
+      "NIGMS",
+      "https://nigms.nih.gov/biobeat/2016/12/youve-got-questions-weve-got-answers-cell-day-2016",
+    ),
+    source(
+      "Yeast cell microscopy",
+      "NIGMS",
+      "https://www.nigms.nih.gov/image-gallery/1092",
+    ),
+  ],
+  "Fiber & Pollen": [
+    source(
+      "Inside the cell",
+      "NIGMS",
+      "https://nigms.nih.gov/biobeat/2016/12/youve-got-questions-weve-got-answers-cell-day-2016",
+    ),
+    source(
+      "Indoor particulate matter sources",
+      "US EPA",
+      "https://www.epa.gov/indoor-air-quality-iaq/sources-indoor-particulate-matter-pm",
+    ),
+  ],
+  "Dust Country": [
+    source(
+      "Indoor particulate matter sources",
+      "US EPA",
+      "https://www.epa.gov/indoor-air-quality-iaq/sources-indoor-particulate-matter-pm",
+    ),
+    source(
+      "Wentworth grain-size scale",
+      "USGS",
+      "https://pubs.usgs.gov/of/2006/1046/htmldocs/nomenclature.htm",
+    ),
+  ],
+  "Pocket World": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "Wentworth grain-size scale",
+      "USGS",
+      "https://pubs.usgs.gov/of/2006/1046/htmldocs/nomenclature.htm",
+    ),
+  ],
+  "Everyday Kingdom": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI units: mass",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-mass",
+    ),
+  ],
+  "Vehicle Yard": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI units: mass",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-mass",
+    ),
+  ],
+  "Built Environment": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI base units",
+      "NIST",
+      "https://www.nist.gov/pml/owm/metric-si/si-units",
+    ),
+  ],
+  "Landscape Scale": [
+    source(
+      "Geology and landforms",
+      "USGS",
+      "https://www.usgs.gov/programs/national-cooperative-geologic-mapping-program/science",
+    ),
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+  ],
+  "Planetary Pantry": [
+    source(
+      "About the planets",
+      "NASA",
+      "https://science.nasa.gov/solar-system/planets/",
+    ),
+    source(
+      "Solar System facts",
+      "NASA",
+      "https://science.nasa.gov/solar-system/solar-system-facts/",
+    ),
+  ],
+  "Stellar Buffet": [
+    source(
+      "Stars",
+      "NASA",
+      "https://science.nasa.gov/universe/stars/",
+    ),
+    source(
+      "How stars form and evolve",
+      "NASA",
+      "https://science.nasa.gov/exoplanets/stars/",
+    ),
+  ],
+  "System Sweep": [
+    source(
+      "Planetary systems",
+      "NASA",
+      "https://science.nasa.gov/universe/stars/planetary-system/",
+    ),
+    source(
+      "Solar System facts",
+      "NASA",
+      "https://science.nasa.gov/solar-system/solar-system-facts/",
+    ),
+  ],
+  "Galaxy Garden": [
+    source(
+      "Galaxies",
+      "NASA",
+      "https://science.nasa.gov/universe/galaxies/",
+    ),
+    source(
+      "Large-scale structures",
+      "NASA",
+      "https://science.nasa.gov/universe/galaxies/large-scale-structures/",
+    ),
+  ],
+  "Observable Universe": [
+    source(
+      "What is the universe?",
+      "NASA",
+      "https://science.nasa.gov/exoplanets/what-is-the-universe/",
+    ),
+    source(
+      "The cosmic web",
+      "NASA",
+      "https://science.nasa.gov/universe/galaxies/large-scale-structures/",
+    ),
+  ],
+  "Metaversal Beyond": [
+    source(
+      "Observable-universe boundary",
+      "NASA",
+      "https://science.nasa.gov/exoplanets/what-is-the-universe/",
+    ),
+    source(
+      "Where measured cosmology ends",
+      "NASA",
+      "https://science.nasa.gov/universe/galaxies/large-scale-structures/",
+    ),
+  ],
+};
+
 export const ERAS: Era[] = BASE_ERAS.map((era) => ({
   ...era,
-  curios: [...era.curios, ...(EXTRA_CURIOS[era.name] ?? [])],
+  sources: SCIENCE_SOURCES[era.name],
+  curios: [...era.curios, ...(EXTRA_CURIOS[era.name] ?? [])].map(
+    (curio, index) => ({
+      ...curio,
+      source:
+        SCIENCE_SOURCES[era.name][
+          index % SCIENCE_SOURCES[era.name].length
+        ],
+    }),
+  ),
 }));
 
 export function eraAt(hours: number) {

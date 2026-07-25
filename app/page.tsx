@@ -7,10 +7,22 @@ import {
   ERAS,
   Era,
   JOURNEY_HOURS,
+  ScienceSource,
   eraAt,
   formatHours,
   formatScale,
 } from "./scale-data";
+import {
+  CollectibleIdentity,
+  QualityTier,
+  canCollectPickup,
+  collectibleIdentityFor,
+  growthContribution,
+  lowPickupBudget,
+  pickupBudget,
+  pixelRatioCap,
+  qualityTierForFps,
+} from "./game-rules";
 
 type Pickup = {
   root: THREE.Group;
@@ -25,6 +37,7 @@ type Pickup = {
   big: boolean;
   baseY: number;
   wiggle: number;
+  identity: CollectibleIdentity;
 };
 
 type MashRecord = {
@@ -163,6 +176,7 @@ export default function Home() {
   const [lastFact, setLastFact] = useState({
     name: "Spacetime fluctuation",
     fact: ERAS[0].lesson,
+    source: ERAS[0].curios[0].source as ScienceSource,
   });
   const [hud, setHud] = useState({
     hours: 0,
@@ -170,6 +184,7 @@ export default function Home() {
     era: 0,
     progress: 0,
     radius: 1.12,
+    quality: "high" as QualityTier,
   });
 
   useEffect(() => {
@@ -212,36 +227,77 @@ export default function Home() {
     const context = audioRef.current ?? new AudioConstructor();
     audioRef.current = context;
     const profile = PICKUP_SOUND_PROFILES[curio.shape];
-    const nameHash = [...curio.name].reduce(
-      (total, character) => total + character.charCodeAt(0),
-      0,
-    );
-    const itemPitch = 2 ** (((nameHash % 9) - 4) / 24);
+    const identity = collectibleIdentityFor(curio.name, curio.shape);
+    const itemPitch = 2 ** (((identity.seed % 17) - 8) / 38);
     const eraPitch = 2 ** ((sourceEra % 6) / 18);
     const basePitch = profile.base * itemPitch * eraPitch;
-    const start = context.currentTime + (gameRef.current.picked % 3) * 0.012;
+    const start =
+      context.currentTime +
+      (gameRef.current.picked % 3) * 0.009 +
+      identity.soundRhythm * 0.18;
     const master = context.createGain();
     const filter = context.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(Math.min(7200, basePitch * 8), start);
+    filter.type = identity.seed % 4 === 0 ? "bandpass" : "lowpass";
+    filter.Q.setValueAtTime(0.7 + identity.soundBrightness * 4.2, start);
+    filter.frequency.setValueAtTime(
+      Math.min(7600, basePitch * (5 + identity.soundBrightness * 5)),
+      start,
+    );
     master.gain.setValueAtTime(0.0001, start);
     master.gain.exponentialRampToValueAtTime(0.034, start + 0.012);
-    master.gain.exponentialRampToValueAtTime(0.0001, start + profile.decay);
+    master.gain.exponentialRampToValueAtTime(
+      0.0001,
+      start + profile.decay + identity.soundRhythm,
+    );
     filter.connect(master);
     master.connect(context.destination);
 
-    [1, profile.interval].forEach((ratio, index) => {
+    identity.soundRatios.forEach((signatureRatio, index) => {
       const oscillator = context.createOscillator();
-      oscillator.type = index === 0 ? profile.wave : "sine";
-      oscillator.frequency.setValueAtTime(basePitch * ratio, start);
+      const ratio = signatureRatio * (index === 1 ? profile.interval / 1.5 : 1);
+      oscillator.type =
+        index === 0
+          ? profile.wave
+          : index === 1
+            ? identity.soundWave
+            : "sine";
+      const noteStart = start + index * identity.soundRhythm;
+      oscillator.detune.setValueAtTime(
+        index === 2 ? ((identity.seed >>> 8) % 13) - 6 : 0,
+        noteStart,
+      );
+      oscillator.frequency.setValueAtTime(basePitch * ratio, noteStart);
       oscillator.frequency.exponentialRampToValueAtTime(
         Math.max(35, basePitch * ratio * profile.glide),
-        start + profile.decay * 0.82,
+        noteStart + profile.decay * (0.62 + index * 0.12),
       );
       oscillator.connect(filter);
-      oscillator.start(start + index * 0.008);
-      oscillator.stop(start + profile.decay + 0.025);
+      oscillator.start(noteStart);
+      oscillator.stop(noteStart + profile.decay + 0.035);
     });
+
+    if (identity.soundNoise > 0.34) {
+      const sampleCount = Math.max(1, Math.floor(context.sampleRate * 0.045));
+      const buffer = context.createBuffer(1, sampleCount, context.sampleRate);
+      const samples = buffer.getChannelData(0);
+      let noiseState = identity.seed || 1;
+      for (let index = 0; index < samples.length; index += 1) {
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >>> 17;
+        noiseState ^= noiseState << 5;
+        samples[index] =
+          ((noiseState >>> 0) / 0xffffffff) * 2 - 1;
+        samples[index] *= 1 - index / samples.length;
+      }
+      const noise = context.createBufferSource();
+      const noiseGain = context.createGain();
+      noise.buffer = buffer;
+      noiseGain.gain.setValueAtTime(identity.soundNoise * 0.018, start);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.05);
+      noise.connect(noiseGain);
+      noiseGain.connect(master);
+      noise.start(start);
+    }
   }, []);
 
   const begin = useCallback(() => {
@@ -264,7 +320,11 @@ export default function Home() {
     setLabEra(index);
     setShowAtlas(false);
     setToast(`Scale Lab: ${ERAS[index].name}. Journey progress is paused.`);
-    setLastFact({ name: ERAS[index].name, fact: ERAS[index].lesson });
+    setLastFact({
+      name: ERAS[index].name,
+      fact: ERAS[index].lesson,
+      source: ERAS[index].sources[0],
+    });
   };
 
   useEffect(() => {
@@ -328,8 +388,12 @@ export default function Home() {
     const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     const compactGpu = window.innerWidth <= 860;
+    let qualityTier: QualityTier = compactGpu ? "balanced" : "high";
     renderer.setPixelRatio(
-      Math.min(window.devicePixelRatio || 1, compactGpu ? 1.75 : 2),
+      Math.min(
+        window.devicePixelRatio || 1,
+        pixelRatioCap(compactGpu, qualityTier),
+      ),
     );
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -355,7 +419,10 @@ export default function Home() {
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
     keyLight.position.set(-7, 12, 8);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(compactGpu ? 1024 : 2048, compactGpu ? 1024 : 2048);
+    keyLight.shadow.mapSize.set(
+      qualityTier === "high" ? (compactGpu ? 1024 : 2048) : 1024,
+      qualityTier === "high" ? (compactGpu ? 1024 : 2048) : 1024,
+    );
     keyLight.shadow.camera.left = -22;
     keyLight.shadow.camera.right = 22;
     keyLight.shadow.camera.top = 22;
@@ -1347,7 +1414,11 @@ export default function Home() {
         setToast(
           `ZOOMING OUT! ${activeEra.name} opens into ${eraWorldNames[index] ?? environmentNames[environmentMode]}.`,
         );
-        setLastFact({ name: activeEra.name, fact: activeEra.lesson });
+        setLastFact({
+          name: activeEra.name,
+          fact: activeEra.lesson,
+          source: activeEra.sources[0],
+        });
         ping(360 + index * 18, true);
       }
     };
@@ -1385,11 +1456,9 @@ export default function Home() {
 
     const makeVisual = (curio: Curio, rich = true) => {
       const group = new THREE.Group();
-      const curioSeed = [...curio.name].reduce(
-        (total, character) => total + character.charCodeAt(0),
-        0,
-      );
-      const variant = curioSeed % 4;
+      const identity = collectibleIdentityFor(curio.name, curio.shape);
+      const curioSeed = identity.seed;
+      const variant = identity.visualVariant % 4;
       const name = curio.name.toLowerCase();
       const material = createMaterial(
         curio.color,
@@ -1864,45 +1933,52 @@ export default function Home() {
           addPart(group, new THREE.SphereGeometry(0.16, 12, 9), accent, [0.36, 0.3, 0.28]);
         }
       }
-      const needsSignatureDetail = [
-        "bubble",
-        "spark",
-        "fiber",
-        "dust",
-        "stone",
-        "object",
-        "car",
-        "house",
-        "mountain",
-        "star",
-        "system",
-        "universe",
-      ].includes(shape);
-      if (rich && needsSignatureDetail) {
-        const signature = curioSeed % 6;
-        const signatureGeometry: THREE.BufferGeometry =
-          signature === 0
-            ? new THREE.TorusGeometry(0.16, 0.045, 7, 18)
-            : signature === 1
-              ? new THREE.TetrahedronGeometry(0.2, 0)
-              : signature === 2
-                ? new THREE.OctahedronGeometry(0.18, 0)
-                : signature === 3
-                  ? new THREE.CapsuleGeometry(0.055, 0.24, 3, 7)
-                  : signature === 4
-                    ? new THREE.ConeGeometry(0.12, 0.28, 6)
-                    : new THREE.TorusKnotGeometry(0.12, 0.025, 32, 5, 2, 3);
-        addPart(
-          group,
-          signatureGeometry,
-          signature % 2 ? accent : pale,
-          [
-            0.38 + pseudo(curioSeed) * 0.2,
-            0.32 + (signature % 3) * 0.12,
-            0.3 - (signature % 2) * 0.55,
-          ],
-          [1, 1, 1],
-          [signature * 0.31, signature * 0.47, signature * 0.19],
+      if (rich) {
+        const signatureGeometry = (
+          signature: number,
+          secondary = false,
+        ): THREE.BufferGeometry => {
+          switch (signature % 12) {
+            case 0: return new THREE.TorusGeometry(0.16, 0.045, 7, 18);
+            case 1: return new THREE.TetrahedronGeometry(0.2, 0);
+            case 2: return new THREE.OctahedronGeometry(0.18, 0);
+            case 3: return new THREE.CapsuleGeometry(0.055, 0.24, 3, 7);
+            case 4: return new THREE.ConeGeometry(0.12, 0.28, 6);
+            case 5: return new THREE.TorusKnotGeometry(0.12, 0.025, 32, 5, 2, 3);
+            case 6: return new THREE.DodecahedronGeometry(0.17, 0);
+            case 7: return new THREE.CylinderGeometry(0.11, 0.15, 0.22, 7);
+            case 8: return new THREE.RingGeometry(0.08, 0.18, 8);
+            case 9: return new THREE.BoxGeometry(0.22, 0.16, 0.13);
+            case 10: return new THREE.SphereGeometry(0.15, 10, 7);
+            default:
+              return new THREE.TorusGeometry(
+                secondary ? 0.11 : 0.15,
+                0.03,
+                6,
+                5 + (identity.visualVariant % 4),
+              );
+          }
+        };
+        [identity.detailVariant, identity.detailVariant + 5].forEach(
+          (signature, detailIndex) => {
+            const side = detailIndex ? -1 : 1;
+            addPart(
+              group,
+              signatureGeometry(signature, detailIndex === 1),
+              signature % 2 ? accent : pale,
+              [
+                side * (0.38 + pseudo(curioSeed + detailIndex * 41) * 0.2),
+                0.22 + (signature % 4) * 0.09,
+                0.28 - (signature % 3) * 0.24,
+              ],
+              detailIndex ? [0.72, 0.72, 0.72] : [1, 1, 1],
+              [
+                signature * 0.31,
+                signature * 0.47,
+                signature * 0.19,
+              ],
+            );
+          },
         );
       }
       const stretch = new THREE.Vector3(
@@ -2088,6 +2164,7 @@ export default function Home() {
       const source = ERAS[sourceEra];
       const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
       const curio = source.curios[curioIndex];
+      const identity = collectibleIdentityFor(curio.name, curio.shape);
       let big = levelDelta > 0;
       const scaleBand =
         levelDelta < 0
@@ -2195,12 +2272,13 @@ export default function Home() {
         big,
         baseY,
         wiggle,
+        identity,
       });
       game.id += 1;
     };
 
     const populate = () => {
-      const desiredPickupCount = width <= 860 ? 392 : 544;
+      const desiredPickupCount = pickupBudget(width, qualityTier);
       pickups = pickups.filter((pickup) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
@@ -2238,17 +2316,15 @@ export default function Home() {
       const isOlderScale = pickup.sourceEra < activeIndex;
       const isCurrentScale = pickup.sourceEra === activeIndex;
       const liveScaleGap = Math.max(0, activeIndex - pickup.sourceEra);
-      const growthFactor =
-        liveScaleGap === 0 ? 1 : Math.max(0.0002, 0.14 ** liveScaleGap);
       const sourceRealm = ERAS[pickup.sourceEra].realm;
       const massEnergyFactor = MASS_ENERGY_FACTORS[pickup.curio.shape];
-      const rawContribution =
-        pickup.bulkRadius ** 3 *
-        massEnergyFactor *
-        growthFactor *
-        0.42;
-      const contribution = Math.min(game.radius ** 3 * 0.014, rawContribution);
-      game.radius = Math.cbrt(game.radius ** 3 + Math.max(0.000008, contribution));
+      const { growthFactor, contribution } = growthContribution(
+        game.radius,
+        pickup.bulkRadius,
+        massEnergyFactor,
+        liveScaleGap,
+      );
+      game.radius = Math.cbrt(game.radius ** 3 + contribution);
       const contributionLabel =
         growthFactor < 0.02
           ? "trace contribution"
@@ -2264,7 +2340,11 @@ export default function Home() {
       if (isCurrentScale) {
         const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
         setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
-        setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
+        setLastFact({
+          name: pickup.curio.name,
+          fact: pickup.curio.fact,
+          source: pickup.curio.source ?? activeEra.sources[0],
+        });
         playPickupSound(pickup.curio, pickup.sourceEra);
         faceReactionUntil = now + 240;
         ballFaceMaterial.map = chompFaceTexture;
@@ -2377,6 +2457,12 @@ export default function Home() {
       const box = mount.getBoundingClientRect();
       width = box.width;
       height = box.height;
+      renderer.setPixelRatio(
+        Math.min(
+          window.devicePixelRatio || 1,
+          pixelRatioCap(width <= 860, qualityTier),
+        ),
+      );
       renderer.setSize(width, height, false);
       camera.aspect = Math.max(0.2, width / height);
       camera.fov = width <= 860 ? 56 : 46;
@@ -2391,6 +2477,8 @@ export default function Home() {
     let frame = 0;
     let hudClock = 0;
     let rollRadiusClock = 0;
+    let performanceWindowStarted = performance.now();
+    let performanceFrames = 0;
     let effectiveRollRadius = game.radius;
     const rollBounds = new THREE.Box3();
     const rollDimensions = new THREE.Vector3();
@@ -2400,6 +2488,31 @@ export default function Home() {
     const animate = (now: number) => {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
+      performanceFrames += 1;
+      const performanceWindow = now - performanceWindowStarted;
+      if (performanceWindow >= 5000) {
+        const measuredFps = (performanceFrames * 1000) / performanceWindow;
+        const nextQualityTier = qualityTierForFps(measuredFps, qualityTier);
+        if (nextQualityTier !== qualityTier) {
+          qualityTier = nextQualityTier;
+          renderer.setPixelRatio(
+            Math.min(
+              window.devicePixelRatio || 1,
+              pixelRatioCap(width <= 860, qualityTier),
+            ),
+          );
+          renderer.setSize(width, height, false);
+          renderer.shadowMap.enabled = qualityTier !== "battery";
+          keyLight.castShadow = qualityTier !== "battery";
+          const nextBudget = pickupBudget(width, qualityTier);
+          while (pickups.length > nextBudget) {
+            const pickup = pickups.pop();
+            if (pickup) removePickup(pickup);
+          }
+        }
+        performanceWindowStarted = now;
+        performanceFrames = 0;
+      }
       rollRadiusClock += dt;
       if (rollRadiusClock > 0.12) {
         rollGroup.updateMatrixWorld(true);
@@ -2457,8 +2570,12 @@ export default function Home() {
           const distance = Math.hypot(dx, dz);
           if (distance < effectiveRollRadius + pickup.visualRadius) {
             if (
-              pickup.sourceEra <= activeIndex &&
-              pickup.bulkRadius <= effectiveRollRadius * 1.1
+              canCollectPickup(
+                pickup.sourceEra,
+                activeIndex,
+                pickup.bulkRadius,
+                effectiveRollRadius,
+              )
             ) {
               collect(pickup, now);
               pickup.root.position.x = Number.POSITIVE_INFINITY;
@@ -2496,7 +2613,7 @@ export default function Home() {
       }
 
       spawnClock += dt;
-      const lowPickupThreshold = width <= 860 ? 328 : 456;
+      const lowPickupThreshold = lowPickupBudget(width, qualityTier);
       if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
         populate();
         spawnClock = 0;
@@ -2556,12 +2673,68 @@ export default function Home() {
           pickup.marker.visible = pickup.sourceEra >= activeIndex && distance < 20;
         }
         pickup.big = pickup.bulkRadius > effectiveRollRadius * 1.1;
-        pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
-        pickup.root.rotation.z = Math.sin(now * 0.0012 + pickup.wiggle) * 0.075;
-        pickup.root.position.y =
-          pickup.baseY +
-          Math.sin(now * (early ? 0.0018 : 0.00125) + pickup.wiggle + index * 0.04) *
-            (early ? 0.11 : 0.055);
+        const identity = pickup.identity;
+        const motionTime =
+          now * 0.001 * identity.motionRate + pickup.wiggle + index * 0.017;
+        const motionAmount =
+          identity.motionAmount * (early ? 1.35 : 1) * (pickup.big ? 0.65 : 1);
+        const baseSpin = pickup.big ? 0.07 : 0.18;
+        pickup.root.position.y = pickup.baseY;
+        if (identity.motion !== "tumble") {
+          pickup.root.rotation.x *= Math.pow(0.002, dt);
+        }
+        pickup.root.rotation.z *= Math.pow(0.002, dt);
+        pickup.root.scale.setScalar(
+          identity.motion === "pulse"
+            ? 1 + Math.sin(motionTime * 3.1) * 0.045
+            : 1,
+        );
+
+        switch (identity.motion) {
+          case "bob":
+            pickup.root.position.y += Math.sin(motionTime * 2.2) * motionAmount;
+            pickup.root.rotation.y += dt * baseSpin;
+            break;
+          case "flutter":
+            pickup.root.position.y += Math.sin(motionTime * 3.7) * motionAmount * 0.7;
+            pickup.root.rotation.z =
+              Math.sin(motionTime * 7.2) * motionAmount * 2.3;
+            break;
+          case "orbit":
+            pickup.root.position.y += Math.cos(motionTime * 1.8) * motionAmount * 0.45;
+            pickup.root.rotation.x =
+              Math.sin(motionTime * 2.1) * motionAmount * 1.8;
+            pickup.root.rotation.y += dt * (baseSpin + identity.motionRate * 0.35);
+            break;
+          case "pulse":
+            pickup.root.position.y +=
+              (0.35 + Math.sin(motionTime * 3.1) * 0.65) * motionAmount;
+            pickup.root.rotation.y += dt * baseSpin;
+            pickup.root.rotation.z =
+              Math.sin(motionTime * 1.55) * motionAmount * 0.6;
+            break;
+          case "shimmy":
+            pickup.root.position.y += Math.sin(motionTime * 2) * motionAmount * 0.35;
+            pickup.root.rotation.z =
+              Math.sin(motionTime * 8.5) * motionAmount * 2;
+            break;
+          case "spin":
+            pickup.root.position.y += Math.sin(motionTime * 1.5) * motionAmount * 0.4;
+            pickup.root.rotation.y += dt * (0.55 + identity.motionRate * 0.55);
+            break;
+          case "tumble":
+            pickup.root.position.y += Math.abs(Math.sin(motionTime * 1.9)) * motionAmount;
+            pickup.root.rotation.x += dt * (0.45 + identity.motionRate * 0.32);
+            pickup.root.rotation.y += dt * (0.35 + identity.motionRate * 0.2);
+            break;
+          case "wobble":
+            pickup.root.position.y += Math.sin(motionTime * 2.4) * motionAmount * 0.55;
+            pickup.root.rotation.x =
+              Math.sin(motionTime * 2.7) * motionAmount * 1.4;
+            pickup.root.rotation.z =
+              Math.cos(motionTime * 2.1) * motionAmount * 1.8;
+            break;
+        }
       });
 
       for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
@@ -2624,6 +2797,7 @@ export default function Home() {
           era: displayIndex,
           progress,
           radius: game.radius,
+          quality: qualityTier,
         });
         hudClock = 0;
       }
@@ -2731,7 +2905,7 @@ export default function Home() {
               <b>QUARKATAMARI</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V14 · SCALE IDENTITIES</span>
+            <span className="version-badge">V15 · BACKLOG COMPLETE</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
@@ -2787,6 +2961,14 @@ export default function Home() {
           <div className="fact-kicker">WHAT YOU JUST ROLLED UP</div>
           <h2>{lastFact.name}</h2>
           <p>{lastFact.fact}</p>
+          <a
+            className="fact-source"
+            href={lastFact.source.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {lastFact.source.organization} · {lastFact.source.label} ↗
+          </a>
         </aside>
 
         <div className="toast hud" role="status">
@@ -2798,6 +2980,7 @@ export default function Home() {
           <span><kbd>WASD</kbd> / arrows to roll</span>
           <span><kbd>SPACE</kbd> to surge</span>
           <span><kbd>I</kbd> science</span>
+          <span className="quality-mode">{hud.quality} graphics</span>
         </div>
         <div className="touch-tip hud">◎ drag anywhere to roll</div>
 
@@ -2827,8 +3010,8 @@ export default function Home() {
               <b>→</b>
             </button>
             <div className="welcome-foot">
-              <span>7 ACTIVE SCALE BANDS</span><span>•</span>
-              <span>REAL 3D ROLLING</span><span>•</span>
+              <span>168 UNIQUE PICKUP VOICES</span><span>•</span>
+              <span>SOURCED SCALE ATLAS</span><span>•</span>
               <span>INFINITE AFTER 500H</span>
             </div>
           </section>
@@ -2870,6 +3053,13 @@ export default function Home() {
                       </div>
                       <div className="era-actions">
                         <code>{scaleFromLog(item.logMeters)}</code>
+                        <a
+                          href={item.sources[0].url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {item.sources[0].organization} source ↗
+                        </a>
                         <button onClick={() => previewEra(index)}>
                           {labEra === index ? "Viewing" : "Preview in 3D"}
                         </button>
@@ -2882,8 +3072,10 @@ export default function Home() {
                     <span>PRIMARY SOURCES</span>
                     <h3>Built to teach without pretending certainty</h3>
                     <p>
-                      The progression compresses scale and uses magical adhesion, but
-                      factual claims and confidence labels follow authoritative sources.
+                      The progression compresses scale and uses magical adhesion. Every
+                      collectible fact links to an authoritative era source, while
+                      confidence labels keep observation, models, unknowns, and fiction
+                      visibly separate.
                     </p>
                   </div>
                   <div className="source-links">
