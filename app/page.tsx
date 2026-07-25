@@ -15,7 +15,7 @@ import {
 type Pickup = {
   root: THREE.Group;
   visual: THREE.Object3D;
-  label: THREE.Sprite;
+  marker: THREE.Sprite;
   curio: Curio;
   sourceEra: number;
   curioIndex: number;
@@ -168,7 +168,7 @@ export default function Home() {
       game.sound = saved.sound ?? true;
       game.era = eraAt(game.hours);
       mashHistoryRef.current = Array.isArray(saved.mash)
-        ? saved.mash.slice(-72)
+        ? saved.mash.slice(-96)
         : [];
       setSound(game.sound);
       setHud((current) => ({
@@ -527,29 +527,29 @@ export default function Home() {
       return group;
     };
 
-    const makeLabel = (text: string, color: string) => {
+    const makeMarker = (symbol: string, color: string) => {
       const canvas = document.createElement("canvas");
-      canvas.width = 512;
-      canvas.height = 112;
+      canvas.width = 160;
+      canvas.height = 160;
       const context = canvas.getContext("2d")!;
-      context.fillStyle = "rgba(14, 8, 32, .82)";
+      context.fillStyle = "rgba(14, 8, 32, .88)";
       context.beginPath();
-      context.roundRect(8, 8, 496, 96, 32);
+      context.roundRect(15, 15, 130, 130, 42);
       context.fill();
       context.strokeStyle = color;
-      context.lineWidth = 4;
+      context.lineWidth = 8;
       context.stroke();
       context.fillStyle = "#ffffff";
-      context.font = "700 34px Arial";
+      context.font = `900 ${symbol.length > 2 ? 48 : symbol.length > 1 ? 58 : 78}px Arial`;
       context.textAlign = "center";
       context.textBaseline = "middle";
-      context.fillText(text, 256, 58, 448);
+      context.fillText(symbol, 80, 84, 112);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }),
       );
-      sprite.scale.set(2.4, 0.525, 1);
+      sprite.scale.set(0.52, 0.52, 1);
       return sprite;
     };
 
@@ -618,13 +618,13 @@ export default function Home() {
           }
         });
       }
-      const labelMaterial = pickup.label.material as THREE.SpriteMaterial;
-      labelMaterial.map?.dispose();
-      labelMaterial.dispose();
+      const markerMaterial = pickup.marker.material as THREE.SpriteMaterial;
+      markerMaterial.map?.dispose();
+      markerMaterial.dispose();
     };
 
     const spawnPickup = (seed: number) => {
-      const radius = 8 + pseudo(seed + game.id * 7) * 26;
+      const radius = 5.2 + pseudo(seed + game.id * 7) * 19.5;
       const angle = pseudo(seed + 13) * Math.PI * 2;
       const sourceEra =
         activeIndex > 0 && pseudo(seed + 97) > 0.58
@@ -647,9 +647,11 @@ export default function Home() {
       const root = new THREE.Group();
       const visual = makeVisual(curio);
       visual.scale.setScalar(size);
-      const label = makeLabel(curio.name, curio.color);
-      label.position.y = Math.max(0.9, size * 1.32);
-      root.add(visual, label);
+      const marker = makeMarker(curio.symbol, curio.color);
+      const markerSize = Math.max(0.28, Math.min(0.62, size * 0.62));
+      marker.scale.set(markerSize, markerSize, 1);
+      marker.position.y = Math.max(0.36, size * 0.74);
+      root.add(visual, marker);
       root.position.set(
         game.x + Math.cos(angle) * radius,
         Math.max(0.22, size * 0.48),
@@ -660,7 +662,7 @@ export default function Home() {
       pickups.push({
         root,
         visual,
-        label,
+        marker,
         curio,
         sourceEra,
         curioIndex,
@@ -672,16 +674,17 @@ export default function Home() {
     };
 
     const populate = () => {
+      const desiredPickupCount = width <= 860 ? 86 : 118;
       pickups = pickups.filter((pickup) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
           pickup.root.position.z - game.z,
         );
-        if (distance < 72) return true;
+        if (distance < 54) return true;
         removePickup(pickup);
         return false;
       });
-      while (pickups.length < 54) {
+      while (pickups.length < desiredPickupCount) {
         spawnPickup(performance.now() * 0.002 + pickups.length * 101);
       }
     };
@@ -707,8 +710,10 @@ export default function Home() {
       game.picked += 1;
       game.lastPickup = now / 1000;
       const growth =
-        Math.min(0.055, 0.026 + pickup.size * 0.018) * pickup.growthFactor;
-      game.radius += Math.max(0.000006, growth);
+        Math.min(0.055, 0.026 + pickup.size * 0.018) *
+        pickup.growthFactor *
+        0.24;
+      game.radius += Math.max(0.000002, growth);
       const trace = pickup.growthFactor < 0.02 ? " · trace growth" : "";
       setToast(`${pickup.curio.name} joined the mash${trace}.`);
       setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
@@ -756,7 +761,7 @@ export default function Home() {
         scale: targetScale.toArray() as [number, number, number],
         mergedInside: fieldLike,
       });
-      if (attachments.length > 72) {
+      if (attachments.length > 96) {
         const oldest = attachments.shift();
         mashHistoryRef.current.shift();
         if (oldest) {
@@ -771,14 +776,16 @@ export default function Home() {
         }
       }
 
-      if (game.radius >= 2.18) {
+      if (game.radius >= 2.3) {
         game.radius = 1.14;
         game.zooms += 1;
         shrinkHistory();
         pickups.forEach((item) => {
           item.size *= 0.72;
           item.visual.scale.multiplyScalar(0.72);
-          item.label.position.y = Math.max(0.9, item.size * 1.32);
+          const markerSize = Math.max(0.28, Math.min(0.62, item.size * 0.62));
+          item.marker.scale.set(markerSize, markerSize, 1);
+          item.marker.position.y = Math.max(0.36, item.size * 0.74);
         });
         setToast(`ZOOM OUT #${game.zooms} — the whole mixed-scale world stayed put.`);
         ping(350 + activeIndex * 18, true);
@@ -875,7 +882,8 @@ export default function Home() {
       }
 
       spawnClock += dt;
-      if (spawnClock > 0.5 || pickups.length < 38) {
+      const lowPickupThreshold = width <= 860 ? 70 : 98;
+      if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
         populate();
         spawnClock = 0;
       }
@@ -910,7 +918,7 @@ export default function Home() {
           pickup.root.position.x - game.x,
           pickup.root.position.z - game.z,
         );
-        pickup.label.visible = distance < 9;
+        pickup.marker.visible = distance < 14;
         pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
         if (early) pickup.root.position.y += Math.sin(now * 0.0017 + index) * dt * 0.08;
       });
@@ -1054,7 +1062,7 @@ export default function Home() {
               <b>EVERYTHING ROLL</b>
               <small>a very small adventure</small>
             </div>
-            <span className="version-badge">V5 · 3D</span>
+            <span className="version-badge">V6 · 3D</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>

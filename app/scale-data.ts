@@ -11,6 +11,7 @@ export type Curio = {
   shape: Shape;
   color: string;
   fact: string;
+  symbol: string;
 };
 
 export type Era = {
@@ -25,13 +26,43 @@ export type Era = {
   curios: Curio[];
 };
 
-const c = (name: string, shape: Shape, color: string, fact: string): Curio => ({
-  name, shape, color, fact,
+const SHAPE_SYMBOLS: Record<Shape, string> = {
+  bubble: "∿",
+  spark: "✦",
+  quark: "q",
+  hadron: "●",
+  atom: "⚛",
+  molecule: "⬡",
+  virus: "✣",
+  cell: "◉",
+  fiber: "≋",
+  dust: "✺",
+  stone: "◆",
+  object: "▣",
+  chair: "⌑",
+  car: "▰",
+  house: "⌂",
+  mountain: "▲",
+  planet: "◍",
+  star: "★",
+  system: "◎",
+  galaxy: "〰",
+  universe: "∞",
+};
+
+const c = (
+  name: string,
+  shape: Shape,
+  color: string,
+  fact: string,
+  symbol = SHAPE_SYMBOLS[shape],
+): Curio => ({
+  name, shape, color, fact, symbol,
 });
 
 export const JOURNEY_HOURS = 1000;
 
-export const ERAS: Era[] = [
+const BASE_ERAS: Era[] = [
   {
     at: 0,
     logMeters: Math.log10(1.616255e-35),
@@ -369,6 +400,140 @@ export const ERAS: Era[] = [
     ],
   },
 ];
+
+const EXTRA_CURIOS: Record<string, Curio[]> = {
+  "Planck Regime": [
+    c("geometry pulse", "bubble", "#ff9bdd", "This pulse is a visual metaphor for unknown Planck-scale geometry, not an observed object.", "≈"),
+    c("causal uncertainty", "spark", "#fff18a", "Known physics does not yet provide an experimentally tested description of causality at the Planck scale.", "?"),
+    c("topology question", "bubble", "#9ea1ff", "Quantum gravity might alter how geometry is described, but no microscopic topology has been observed.", "∩"),
+    c("minimum-length marker", "spark", "#78f2ff", "The Planck length is a derived natural scale, not a proven smallest pixel of space.", "ℓ"),
+  ],
+  "The Unresolved Gap": [
+    c("symmetry echo", "spark", "#8de8ff", "Symmetries organize modern particle theories, but unknown new physics may lie beyond present experiments.", "◇"),
+    c("field excitation", "bubble", "#6fc9ff", "In quantum field theory, particles are excitations of underlying fields.", "∿"),
+    c("unknown resonance", "spark", "#ff92c9", "This deliberately unnamed resonance represents possibilities that experiments have not established.", "?"),
+    c("probe limit", "bubble", "#d5a8ff", "Smaller structure requires higher-energy probes; present measurements set limits rather than revealing a ladder.", "⊣"),
+  ],
+  "Quark–Gluon Droplet": [
+    c("strange-quark trace", "quark", "#9b7cff", "Strange quarks appear in short-lived hadrons but are not isolated as free particles.", "s"),
+    c("charm-quark trace", "quark", "#ff9a61", "Charm quarks are heavy quarks produced in energetic interactions.", "c"),
+    c("color-field knot", "spark", "#68f0c1", "Color charge is the charge of the strong interaction; it is unrelated to visible color.", "3"),
+    c("gluon spray", "spark", "#ffe45c", "Energetic quarks and gluons form jets of hadrons rather than emerging alone.", "g"),
+  ],
+  "Hadron Forge": [
+    c("kaon", "hadron", "#b58cff", "Kaons are mesons containing a strange quark or antiquark.", "K"),
+    c("lambda baryon", "hadron", "#7ed9c4", "A lambda baryon contains up, down, and strange valence quarks.", "Λ"),
+    c("rho meson", "hadron", "#ff9f76", "Rho mesons are extremely short-lived quark–antiquark states.", "ρ"),
+    c("delta baryon", "hadron", "#6fb7ff", "Delta baryons are excited relatives of protons and neutrons.", "Δ"),
+  ],
+  "Atomic Cloud": [
+    c("nitrogen atom", "atom", "#77b8ff", "Nitrogen has seven protons and is central to proteins and nucleic acids.", "N"),
+    c("silicon atom", "atom", "#d4c6a3", "Silicon is abundant in Earth's crust and foundational to modern electronics.", "Si"),
+    c("iron atom", "atom", "#e69a74", "Iron nuclei sit near the peak of nuclear binding energy per nucleon.", "Fe"),
+    c("uranium atom", "atom", "#9fe37a", "All uranium isotopes are radioactive; uranium has 92 protons.", "U"),
+  ],
+  "Molecular Assembly": [
+    c("methane", "molecule", "#d7e8ef", "Methane has one carbon bonded tetrahedrally to four hydrogens.", "CH₄"),
+    c("carbon dioxide", "molecule", "#a8d7e8", "Carbon dioxide is a linear molecule with one carbon and two oxygen atoms.", "CO₂"),
+    c("caffeine", "molecule", "#d6a66b", "Caffeine is a relatively small organic molecule that blocks adenosine receptors.", "Cf"),
+    c("salt formula unit", "molecule", "#f3f5ff", "Solid sodium chloride forms an ionic lattice rather than separate NaCl molecules.", "Na"),
+  ],
+  "Macromolecule Reef": [
+    c("ribosome", "molecule", "#f5a1ce", "Ribosomes translate messenger RNA into proteins.", "R"),
+    c("antibody", "molecule", "#8de2ff", "Antibodies are Y-shaped proteins whose binding regions recognize molecular targets.", "Y"),
+    c("collagen fiber", "fiber", "#f2cab7", "Collagen proteins assemble into strong structural fibers in animals.", "≋"),
+    c("bacteriophage", "virus", "#bd9cff", "Bacteriophages are viruses that infect bacteria.", "Φ"),
+  ],
+  "Cellular Sea": [
+    c("white blood cell", "cell", "#f4f1db", "White blood cells are diverse immune cells rather than one single cell type.", "W"),
+    c("neuron", "cell", "#f2d45e", "Neurons transmit information through electrical and chemical signaling.", "Ψ"),
+    c("amoeba", "cell", "#8ae0a5", "Amoebae change shape using extensions called pseudopodia.", "A"),
+    c("sperm cell", "cell", "#78d9ef", "A sperm cell is a specialized motile reproductive cell.", "↝"),
+  ],
+  "Fiber & Pollen": [
+    c("moss spore", "cell", "#a9dc63", "Spores are reproductive cells whose sizes and structures vary widely.", "•"),
+    c("skin flake", "fiber", "#e7c5aa", "Many dust particles are fragments of biological material, including shed skin.", "◇"),
+    c("fungal hypha", "fiber", "#e8dfb5", "Hyphae are branching filaments that form much of a fungus.", "Y"),
+    c("tiny nematode", "cell", "#dbb7a4", "Nematodes span a huge size range; the smallest are microscopic multicellular animals.", "S"),
+  ],
+  "Dust Country": [
+    c("soot fleck", "dust", "#58525c", "Soot contains carbon-rich particles produced by incomplete combustion.", "✦"),
+    c("salt crystal", "stone", "#e9f0ff", "Table salt crystals form a cubic ionic lattice.", "□"),
+    c("insect scale", "fiber", "#d5a6e8", "Butterfly and moth wings are covered with tiny overlapping scales.", "◈"),
+    c("microplastic", "dust", "#55c9e8", "Microplastics are plastic particles smaller than five millimetres.", "P"),
+  ],
+  "Pocket World": [
+    c("coin", "object", "#e4c75c", "Coins are thin metal discs whose familiar size makes a useful centimetre-scale reference.", "¢"),
+    c("house key", "object", "#aeb7c4", "A key's thin teeth create an especially uneven protrusion.", "⚿"),
+    c("six-sided die", "object", "#f2eee5", "A standard gaming die is a small cube with numbered faces.", "⚄"),
+    c("glass marble", "stone", "#65d6d0", "A marble is a manufactured glass sphere, often around a centimetre across.", "●"),
+  ],
+  "Everyday Kingdom": [
+    c("guitar", "object", "#d99055", "An acoustic guitar's hollow body amplifies vibrating strings.", "♪"),
+    c("kitchen table", "chair", "#b97b50", "A table is mostly empty space bounded by a top and supporting legs.", "T"),
+    c("television", "object", "#586a82", "A modern flat-panel display is thin relative to its width.", "▣"),
+    c("potted plant", "object", "#76c66f", "A potted plant combines living tissue, soil, water, air, and a container.", "♣"),
+  ],
+  "Vehicle Yard": [
+    c("motorcycle", "car", "#ef6f62", "A motorcycle is much narrower and lighter than a car of similar length.", "M"),
+    c("pickup truck", "car", "#6aa4d8", "A pickup combines a passenger cab with an open cargo bed.", "P"),
+    c("sailboat", "car", "#f3f0df", "A sailboat converts aerodynamic force on its sails into motion through water.", "⛵"),
+    c("fire engine", "car", "#ef4f47", "Emergency vehicles carry specialized equipment and large water or ladder systems.", "F"),
+  ],
+  "Built Environment": [
+    c("townhouse", "house", "#e88e76", "Attached townhouses share walls while remaining separate dwellings.", "⌂"),
+    c("lighthouse", "house", "#f2e5c4", "Lighthouses elevate a navigational light above surrounding terrain and water.", "L"),
+    c("suspension bridge", "house", "#8da7b9", "Suspension bridges carry their deck using cables anchored at both ends.", "⌒"),
+    c("skyscraper", "house", "#91bdd7", "Tall buildings must resist wind as well as support their own weight.", "▥"),
+  ],
+  "Landscape Scale": [
+    c("volcano", "mountain", "#a26f5d", "A volcano is a geological vent and the landform built around it.", "△"),
+    c("glacier", "mountain", "#a7e1ed", "Glaciers are flowing bodies of compacted ice.", "≋"),
+    c("canyon", "mountain", "#c69560", "Canyons are erosional landforms rather than separate solid objects.", "V"),
+    c("megacity", "house", "#e8c865", "A megacity is a dense human system whose boundary depends on the definition used.", "▦"),
+  ],
+  "Planetary Pantry": [
+    c("asteroid", "stone", "#a8a29a", "Most asteroids are irregular rocky or metallic bodies.", "◆"),
+    c("comet nucleus", "stone", "#d8eef2", "A comet nucleus is a dark mixture of ice, dust, and rock.", "☄"),
+    c("Mars", "planet", "#e17655", "Mars is a rocky planet with a diameter a little over half Earth's.", "♂"),
+    c("Saturn", "planet", "#e6c77c", "Saturn is a gas giant surrounded by a broad, thin ring system.", "♄"),
+  ],
+  "Stellar Buffet": [
+    c("white dwarf", "star", "#eef5ff", "A white dwarf is the dense remnant core left by many low- and medium-mass stars.", "W"),
+    c("neutron star", "star", "#b9d8ff", "Neutron stars pack more mass than the Sun into a city-sized sphere.", "N"),
+    c("orange subgiant", "star", "#ffae68", "A subgiant has exhausted hydrogen in its core and begun expanding.", "K"),
+    c("blue hypergiant", "star", "#73bfff", "Hypergiants are extremely luminous, massive, and short-lived stars.", "H"),
+  ],
+  "System Sweep": [
+    c("asteroid belt", "system", "#b1a69a", "An asteroid belt is a broad population of separate orbiting objects, not a dense ring.", "⋯"),
+    c("protoplanetary disk", "system", "#e8b98b", "Planets form within rotating disks of gas and dust around young stars.", "⊙"),
+    c("triple-star system", "system", "#ffe2a6", "Stable hierarchical systems can contain three or more gravitationally bound stars.", "3"),
+    c("Kuiper-belt analogue", "system", "#9ad7e8", "Icy small bodies can occupy broad regions beyond a system's major planets.", "K"),
+  ],
+  "Galaxy Garden": [
+    c("irregular galaxy", "galaxy", "#8db8ff", "Irregular galaxies lack a dominant spiral or elliptical structure.", "≈"),
+    c("barred spiral", "galaxy", "#c5a8ff", "Many spiral galaxies have a central bar-shaped stellar structure.", "S"),
+    c("active galaxy", "galaxy", "#ff9bd6", "An active galactic nucleus is powered by matter falling toward a supermassive black hole.", "✦"),
+    c("galaxy group", "galaxy", "#f0c99c", "Galaxy groups are smaller gravitationally bound collections than rich clusters.", "∴"),
+  ],
+  "Observable Universe": [
+    c("cosmic filament", "universe", "#9790ff", "Galaxies and dark matter trace enormous filaments around cosmic voids.", "⌁"),
+    c("supercluster region", "universe", "#d1a5ff", "Superclusters describe large associations that are not generally bound as single objects.", "∷"),
+    c("last-scattering patch", "universe", "#ffb0d9", "The cosmic microwave background comes from the era when the universe became transparent.", "C"),
+    c("Hubble volume", "universe", "#7d86ff", "A Hubble volume is a cosmological scale related to the universe's expansion rate.", "H"),
+  ],
+  "Metaversal Beyond": [
+    c("brane bubble", "universe", "#bd83ff", "Branes appear in some speculative physical models; this collectible is fiction.", "B"),
+    c("timeline braid", "system", "#ff87d5", "A timeline braid is playful visual language, not established cosmology.", "≋"),
+    c("simulation shard", "universe", "#76e4ff", "The simulation hypothesis does not currently supply a measurable outer scale.", "◇"),
+    c("reality seed", "spark", "#fff08a", "This marks the fully fictional infinite-play region beyond the science atlas.", "✦"),
+  ],
+};
+
+export const ERAS: Era[] = BASE_ERAS.map((era) => ({
+  ...era,
+  curios: [...era.curios, ...(EXTRA_CURIOS[era.name] ?? [])],
+}));
 
 export function eraAt(hours: number) {
   for (let i = ERAS.length - 1; i >= 0; i -= 1) {
