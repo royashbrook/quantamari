@@ -15,14 +15,13 @@ import {
 type Pickup = {
   root: THREE.Group;
   visual: THREE.Object3D;
-  marker: THREE.Sprite;
+  marker: THREE.Sprite | null;
   curio: Curio;
   sourceEra: number;
   curioIndex: number;
   size: number;
   visualRadius: number;
   big: boolean;
-  growthFactor: number;
   baseY: number;
   wiggle: number;
 };
@@ -607,10 +606,22 @@ export default function Home() {
       return mesh;
     };
 
-    const makeVisual = (curio: Curio) => {
+    const makeVisual = (curio: Curio, rich = true) => {
       const group = new THREE.Group();
+      const curioSeed = [...curio.name].reduce(
+        (total, character) => total + character.charCodeAt(0),
+        0,
+      );
+      const variant = curioSeed % 4;
       const material = createMaterial(
         curio.color,
+        ["spark", "quark", "star", "galaxy", "universe"].includes(curio.shape),
+      );
+      const accentColor = new THREE.Color(curio.color)
+        .offsetHSL((variant - 1.5) * 0.045, 0.08, 0.12)
+        .getStyle();
+      const accent = createMaterial(
+        accentColor,
         ["spark", "quark", "star", "galaxy", "universe"].includes(curio.shape),
       );
       const dark = createMaterial("#261b38");
@@ -629,29 +640,90 @@ export default function Home() {
         });
         addPart(group, new THREE.SphereGeometry(0.75, 22, 16), bubbleMaterial, [0, 0, 0]);
         addPart(group, new THREE.SphereGeometry(0.22, 14, 10), material, [-0.38, 0.35, 0.3]);
+        if (rich) {
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.15 + variant * 0.025, 12, 9),
+            accent,
+            [0.42, -0.26, -0.28],
+          );
+        }
       } else if (shape === "spark") {
-        addPart(group, new THREE.OctahedronGeometry(0.72, 1), material, [0, 0, 0], [0.55, 1.2, 0.55]);
+        const sparkGeometry =
+          variant % 2 === 0
+            ? new THREE.OctahedronGeometry(0.72, 1)
+            : new THREE.TetrahedronGeometry(0.8, 1);
+        addPart(group, sparkGeometry, material, [0, 0, 0], [0.55, 1.2, 0.55]);
+        if (rich) {
+          addPart(group, new THREE.OctahedronGeometry(0.2, 0), accent, [0.58, 0.26, 0.28]);
+          addPart(group, new THREE.OctahedronGeometry(0.13, 0), pale, [-0.52, -0.3, -0.22]);
+        }
       } else if (shape === "quark") {
         addPart(group, new THREE.SphereGeometry(0.52, 20, 14), material, [0, 0, 0]);
         addPart(group, new THREE.TorusGeometry(0.7, 0.045, 8, 32), pale, [0, 0, 0], [1, 1, 1], [1.1, 0.4, 0]);
+        if (rich) {
+          addPart(
+            group,
+            new THREE.TorusGeometry(0.58, 0.035, 7, 28),
+            accent,
+            [0, 0, 0],
+            [1, 1, 1],
+            [0.18, 1.08, 0.72],
+          );
+        }
       } else if (shape === "hadron") {
         addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#ff5e72", true), [-0.3, 0.18, 0.08]);
         addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#58a7ff", true), [0.3, 0.18, -0.08]);
         addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#f7db56", true), [0, -0.26, 0]);
+        if (rich) {
+          addPart(
+            group,
+            new THREE.TorusGeometry(0.72, 0.035, 7, 30),
+            pale,
+            [0, 0, 0],
+            [1, 0.72, 1],
+            [0.55, 0.2, 0],
+          );
+        }
       } else if (shape === "atom") {
         addPart(group, new THREE.SphereGeometry(0.22, 18, 12), material, [0, 0, 0]);
         for (let i = 0; i < 3; i += 1) {
           addPart(group, new THREE.TorusGeometry(0.68, 0.025, 6, 38), pale, [0, 0, 0], [1, 1, 1], [i * 1.05, i * 0.7, 0]);
         }
+        if (rich) {
+          [
+            [0.58, 0.12, 0.26],
+            [-0.38, 0.44, -0.36],
+            [0.08, -0.55, 0.34],
+          ].forEach((position, index) =>
+            addPart(
+              group,
+              new THREE.SphereGeometry(0.085 + index * 0.01, 10, 8),
+              index === variant % 3 ? accent : material,
+              position as [number, number, number],
+            ),
+          );
+        }
       } else if (shape === "molecule") {
         addPart(group, new THREE.SphereGeometry(0.38, 16, 12), material, [0, 0, 0]);
         addPart(group, new THREE.SphereGeometry(0.27, 16, 12), pale, [0.5, 0.15, 0.1]);
         addPart(group, new THREE.SphereGeometry(0.27, 16, 12), pale, [-0.38, 0.37, -0.1]);
+        if (rich) {
+          addPart(group, new THREE.SphereGeometry(0.22, 14, 10), accent, [-0.35, -0.42, 0.32]);
+          if (variant > 1) {
+            addPart(group, new THREE.SphereGeometry(0.16, 12, 9), material, [0.4, -0.35, -0.3]);
+          }
+        }
       } else if (shape === "virus") {
         addPart(group, new THREE.IcosahedronGeometry(0.58, 2), material, [0, 0, 0]);
-        for (let i = 0; i < 10; i += 1) {
-          const angle = (i / 10) * Math.PI * 2;
+        const spikeCount = rich ? 8 + variant * 2 : 6;
+        for (let i = 0; i < spikeCount; i += 1) {
+          const angle = (i / spikeCount) * Math.PI * 2;
           addPart(group, new THREE.ConeGeometry(0.07, 0.28, 6), pale, [Math.cos(angle) * 0.69, Math.sin(angle) * 0.69, 0], [1, 1, 1], [0, 0, angle - Math.PI / 2]);
+        }
+        if (rich) {
+          addPart(group, new THREE.ConeGeometry(0.08, 0.3, 6), accent, [0, 0, 0.72], [1, 1, 1], [Math.PI / 2, 0, 0]);
+          addPart(group, new THREE.ConeGeometry(0.08, 0.3, 6), accent, [0, 0, -0.72], [1, 1, 1], [-Math.PI / 2, 0, 0]);
         }
       } else if (shape === "cell") {
         const membrane = new THREE.MeshPhysicalMaterial({
@@ -664,46 +736,125 @@ export default function Home() {
         addPart(group, new THREE.SphereGeometry(0.72, 24, 18), membrane, [0, 0, 0], [1.05, 0.82, 1]);
         addPart(group, new THREE.SphereGeometry(0.25, 18, 12), dark, [0.18, 0.05, 0.18]);
         addPart(group, new THREE.SphereGeometry(0.1, 12, 8), pale, [-0.3, 0.22, 0.2]);
+        if (rich) {
+          addPart(group, new THREE.CapsuleGeometry(0.07, 0.24, 3, 8), accent, [-0.32, -0.2, 0.25], [1, 1, 1], [0.5, 0.2, 0.8]);
+          addPart(group, new THREE.SphereGeometry(0.09, 10, 8), pale, [0.34, 0.25, -0.28]);
+          addPart(group, new THREE.SphereGeometry(0.07, 9, 7), accent, [-0.12, 0.34, -0.32]);
+        }
       } else if (shape === "fiber") {
         addPart(group, new THREE.CapsuleGeometry(0.18, 1.25, 5, 12), material, [0, 0, 0], [1, 1, 1], [0.2, 0.2, 1.08]);
+        if (rich) {
+          addPart(group, new THREE.CapsuleGeometry(0.1, 0.9, 4, 10), accent, [0.08, 0.02, 0.08], [1, 1, 1], [1.04, -0.35, 0.18]);
+        }
       } else if (shape === "dust") {
-        addPart(group, new THREE.DodecahedronGeometry(0.62, 1), material, [0, 0, 0], [1, 0.62, 0.75]);
+        const dustGeometry =
+          variant % 2 === 0
+            ? new THREE.DodecahedronGeometry(0.62, 1)
+            : new THREE.IcosahedronGeometry(0.64, 1);
+        addPart(group, dustGeometry, material, [0, 0, 0], [1, 0.62, 0.75]);
+        if (rich) {
+          addPart(group, new THREE.TetrahedronGeometry(0.2, 0), accent, [0.46, 0.12, -0.18]);
+          addPart(group, new THREE.DodecahedronGeometry(0.13, 0), pale, [-0.38, -0.2, 0.25]);
+        }
       } else if (shape === "stone" || shape === "mountain") {
-        addPart(group, new THREE.DodecahedronGeometry(0.66, 1), material, [0, 0, 0], shape === "mountain" ? [1.1, 1.5, 0.9] : [1, 0.72, 0.86]);
+        const rockGeometry =
+          variant % 2 === 0
+            ? new THREE.DodecahedronGeometry(0.66, 1)
+            : new THREE.IcosahedronGeometry(0.68, 1);
+        addPart(group, rockGeometry, material, [0, 0, 0], shape === "mountain" ? [1.1, 1.5, 0.9] : [1, 0.72, 0.86]);
+        if (rich && shape === "mountain") {
+          addPart(group, new THREE.ConeGeometry(0.36, 0.38, 5), pale, [0, 0.72, 0], [1, 1, 0.86]);
+        } else if (rich) {
+          addPart(group, new THREE.DodecahedronGeometry(0.23, 0), accent, [0.44, -0.18, 0.15]);
+        }
       } else if (shape === "chair") {
         addPart(group, new THREE.BoxGeometry(0.95, 0.16, 0.82), material, [0, 0, 0]);
         addPart(group, new THREE.BoxGeometry(0.95, 1.05, 0.15), material, [0, 0.48, 0.35]);
         [-0.36, 0.36].forEach((x) => [-0.28, 0.28].forEach((z) => addPart(group, new THREE.BoxGeometry(0.13, 0.7, 0.13), dark, [x, -0.4, z])));
+        if (rich && variant % 2 === 0) {
+          [-0.5, 0.5].forEach((x) =>
+            addPart(group, new THREE.BoxGeometry(0.12, 0.12, 0.82), accent, [x, 0.18, 0]),
+          );
+        }
       } else if (shape === "car") {
         addPart(group, new THREE.BoxGeometry(1.45, 0.46, 0.72), material, [0, 0, 0]);
         addPart(group, new THREE.BoxGeometry(0.75, 0.38, 0.67), pale, [-0.1, 0.38, 0]);
         [-0.48, 0.48].forEach((x) => [-0.39, 0.39].forEach((z) => addPart(group, new THREE.CylinderGeometry(0.18, 0.18, 0.12, 16), dark, [x, -0.27, z], [1, 1, 1], [Math.PI / 2, 0, 0])));
+        if (rich) {
+          [-0.24, 0.24].forEach((z) =>
+            addPart(group, new THREE.SphereGeometry(0.09, 10, 8), accent, [-0.72, 0.02, z]),
+          );
+        }
       } else if (shape === "house") {
         addPart(group, new THREE.BoxGeometry(1.15, 0.85, 0.95), material, [0, 0, 0]);
         addPart(group, new THREE.ConeGeometry(0.88, 0.55, 4), createMaterial("#d05e57"), [0, 0.7, 0], [1, 1, 1], [0, Math.PI / 4, 0]);
         addPart(group, new THREE.BoxGeometry(0.25, 0.48, 0.08), dark, [0, -0.18, 0.51]);
+        if (rich) {
+          [-0.38, 0.38].forEach((x) =>
+            addPart(group, new THREE.BoxGeometry(0.2, 0.2, 0.07), accent, [x, 0.16, 0.51]),
+          );
+          if (variant > 1) {
+            addPart(group, new THREE.BoxGeometry(0.16, 0.48, 0.16), dark, [0.34, 0.86, -0.12]);
+          }
+        }
       } else if (shape === "planet") {
         addPart(group, new THREE.SphereGeometry(0.67, 28, 20), material, [0, 0, 0]);
         addPart(group, new THREE.TorusGeometry(0.9, 0.055, 8, 44), pale, [0, 0, 0], [1, 0.42, 1], [0.25, 0, 0.15]);
+        if (rich) {
+          addPart(group, new THREE.SphereGeometry(0.12 + variant * 0.015, 12, 9), accent, [0.94, 0.32, -0.18]);
+        }
       } else if (shape === "star") {
         addPart(group, new THREE.IcosahedronGeometry(0.72, 3), material, [0, 0, 0]);
         addPart(group, new THREE.SphereGeometry(0.96, 20, 14), new THREE.MeshBasicMaterial({ color: curio.color, transparent: true, opacity: 0.12, side: THREE.BackSide }), [0, 0, 0]);
+        if (rich) {
+          addPart(group, new THREE.TorusGeometry(0.86, 0.025, 6, 30), accent, [0, 0, 0], [1, 0.62, 1], [0.4, 0.2, 0]);
+        }
       } else if (shape === "system") {
         addPart(group, new THREE.SphereGeometry(0.2, 16, 12), material, [0, 0, 0]);
         [0.45, 0.72, 0.98].forEach((radius, index) => {
           addPart(group, new THREE.TorusGeometry(radius, 0.018, 5, 42), pale, [0, 0, 0], [1, 0.35 + index * 0.12, 1], [0.3 * index, 0.15, 0]);
         });
+        if (rich) {
+          addPart(group, new THREE.SphereGeometry(0.1, 10, 8), accent, [0.56, 0.04, 0.16]);
+          addPart(group, new THREE.SphereGeometry(0.075, 9, 7), material, [-0.78, -0.05, -0.12]);
+        }
       } else if (shape === "galaxy") {
         addPart(group, new THREE.SphereGeometry(0.18, 14, 10), pale, [0, 0, 0]);
         for (let i = 0; i < 3; i += 1) {
           addPart(group, new THREE.TorusGeometry(0.38 + i * 0.2, 0.09, 6, 42), material, [0, 0, 0], [1, 0.22, 1], [0.2, i * 0.6, 0]);
         }
+        if (rich) {
+          addPart(group, new THREE.SphereGeometry(0.07, 9, 7), accent, [0.72, 0.14, 0.2]);
+          addPart(group, new THREE.SphereGeometry(0.055, 8, 6), pale, [-0.62, -0.2, -0.28]);
+        }
       } else if (shape === "universe") {
         addPart(group, new THREE.IcosahedronGeometry(0.76, 2), new THREE.MeshBasicMaterial({ color: curio.color, wireframe: true, transparent: true, opacity: 0.72 }), [0, 0, 0]);
         addPart(group, new THREE.SphereGeometry(0.28, 16, 12), material, [0, 0, 0]);
+        if (rich) {
+          addPart(group, new THREE.TorusGeometry(0.55, 0.035, 7, 30), accent, [0, 0, 0], [1, 0.75, 1], [0.8, 0.3, 0.4]);
+        }
       } else {
-        addPart(group, new THREE.BoxGeometry(0.9, 0.72, 0.62), material, [0, 0, 0], [1, 1, 1], [0.15, 0.25, 0.08]);
+        if (variant === 0) {
+          addPart(group, new THREE.BoxGeometry(0.9, 0.72, 0.62), material, [0, 0, 0], [1, 1, 1], [0.15, 0.25, 0.08]);
+        } else if (variant === 1) {
+          addPart(group, new THREE.CylinderGeometry(0.52, 0.58, 0.72, 12), material, [0, 0, 0], [1, 1, 0.82], [0.2, 0.1, Math.PI / 2]);
+        } else if (variant === 2) {
+          addPart(group, new THREE.CapsuleGeometry(0.34, 0.66, 5, 12), material, [0, 0, 0], [1, 1, 1], [0.2, 0.1, 0.9]);
+        } else {
+          addPart(group, new THREE.TorusGeometry(0.48, 0.19, 8, 20), material, [0, 0, 0], [1, 0.8, 1], [0.45, 0.18, 0]);
+        }
+        if (rich) {
+          addPart(group, new THREE.SphereGeometry(0.16, 12, 9), accent, [0.36, 0.3, 0.28]);
+        }
       }
+      const stretch = new THREE.Vector3(
+        0.92 + variant * 0.045,
+        1.08 - variant * 0.03,
+        0.94 + ((variant + 2) % 4) * 0.035,
+      );
+      group.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.scale.multiply(stretch);
+      });
       return group;
     };
 
@@ -807,7 +958,10 @@ export default function Home() {
         ];
       }
       const visual = makeVisual(curio);
-      visual.add(makeMarker(curio.symbol));
+      const restoredMarker = makeMarker(curio.symbol);
+      restoredMarker.visible = record.sourceEra >= activeIndex;
+      visual.add(restoredMarker);
+      visual.userData.sourceEra = record.sourceEra;
       visual.position.copy(restoredPosition);
       visual.rotation.set(...record.rotation);
       visual.scale.set(...record.scale);
@@ -836,43 +990,53 @@ export default function Home() {
       }
     };
 
-    const spawnPickup = (seed: number) => {
-      const radius = 4.6 + pseudo(seed + game.id * 7) * 18;
-      const angle = pseudo(seed + 13) * Math.PI * 2;
-      const sourceEra =
-        activeIndex > 0 && pseudo(seed + 97) > 0.45
-          ? Math.floor(pseudo(seed + 103) * activeIndex)
-          : activeIndex;
-      const scaleGap = activeIndex - sourceEra;
+    const spawnPickup = (seed: number, forcedSourceEra?: number) => {
+      const bandRoll = pseudo(seed + 97);
+      const bandDepth = 1 + Math.floor(pseudo(seed + 103) * 3);
+      const chosenEra =
+        bandRoll < 0.37
+          ? activeIndex - bandDepth
+          : bandRoll > 0.92
+            ? activeIndex + bandDepth
+            : activeIndex;
+      const sourceEra = Math.max(
+        0,
+        Math.min(ERAS.length - 1, forcedSourceEra ?? chosenEra),
+      );
+      const levelDelta = sourceEra - activeIndex;
       const source = ERAS[sourceEra];
       const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
       const curio = source.curios[curioIndex];
-      let big = scaleGap === 0 && pseudo(seed + 29) > 0.9;
-      const legacyScale = scaleGap === 0 ? 1 : Math.max(0.24, 0.72 ** scaleGap);
-      let size = big
-        ? game.radius * (1.1 + pseudo(seed + 41) * 0.78)
-        : Math.max(
-            0.14,
-            (0.2 + pseudo(seed + 53) * game.radius * 0.58) * legacyScale,
-          );
-      const growthFactor =
-        scaleGap === 0 ? 1 : Math.max(0.0002, 0.14 ** scaleGap);
+      let big = levelDelta > 0;
+      const scaleBand =
+        levelDelta < 0
+          ? Math.max(0.2, 0.68 ** Math.abs(levelDelta))
+          : levelDelta > 0
+            ? 1 + levelDelta * 0.4
+            : 1;
+      let size = Math.max(
+        0.11,
+        (0.18 + pseudo(seed + 53) * game.radius * 0.56) * scaleBand,
+      );
       const root = new THREE.Group();
-      const visual = makeVisual(curio);
+      const visual = makeVisual(curio, sourceEra >= activeIndex);
+      visual.userData.sourceEra = sourceEra;
       visual.scale.setScalar(size);
       visual.updateMatrixWorld(true);
       const visualDimensions = new THREE.Vector3();
       new THREE.Box3().setFromObject(visual).getSize(visualDimensions);
       let visualRadius =
         Math.max(visualDimensions.x, visualDimensions.y, visualDimensions.z) / 2;
-      if (!big && visualRadius > game.radius * 0.92) {
+      if (levelDelta <= 0 && visualRadius > game.radius * 0.92) {
         const targetRadius = game.radius * (0.5 + pseudo(seed + 139) * 0.38);
         const fit = targetRadius / visualRadius;
         size *= fit;
         visualRadius *= fit;
         visual.scale.multiplyScalar(fit);
-      } else if (big && visualRadius <= game.radius * 1.08) {
-        const targetRadius = game.radius * (1.1 + pseudo(seed + 149) * 0.38);
+      } else if (levelDelta > 0) {
+        const targetRadius =
+          game.radius *
+          (1.12 + (levelDelta - 1) * 0.5 + pseudo(seed + 149) * 0.26);
         const enlarge = targetRadius / Math.max(0.01, visualRadius);
         size *= enlarge;
         visualRadius *= enlarge;
@@ -885,14 +1049,45 @@ export default function Home() {
           child.receiveShadow = false;
         }
       });
-      const marker = makeMarker(curio.symbol);
-      visual.add(marker);
+      const marker = sourceEra >= activeIndex ? makeMarker(curio.symbol) : null;
+      if (marker) visual.add(marker);
       root.add(visual);
-      root.position.set(
-        game.x + Math.cos(angle) * radius,
-        Math.max(0.22, size * 0.48),
-        game.z + Math.sin(angle) * radius,
-      );
+      let spawnX = game.x;
+      let spawnZ = game.z;
+      let bestClearance = Number.NEGATIVE_INFINITY;
+      const attempts = big ? 18 : 1;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const candidateRadius = big
+          ? Math.max(
+              game.radius + visualRadius + 3.2,
+              8 + pseudo(seed + game.id * 7 + attempt * 31) * 36,
+            )
+          : 4.6 + pseudo(seed + game.id * 7) * 24;
+        const candidateAngle = pseudo(seed + 13 + attempt * 19) * Math.PI * 2;
+        const candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
+        const candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
+        const clearance = big
+          ? pickups.reduce((minimum, other) => {
+              if (!other.big) return minimum;
+              const separation = Math.hypot(
+                other.root.position.x - candidateX,
+                other.root.position.z - candidateZ,
+              );
+              const required =
+                visualRadius +
+                other.visualRadius +
+                Math.max(1.8, game.radius * 1.35);
+              return Math.min(minimum, separation - required);
+            }, Number.POSITIVE_INFINITY)
+          : Number.POSITIVE_INFINITY;
+        if (clearance > bestClearance) {
+          bestClearance = clearance;
+          spawnX = candidateX;
+          spawnZ = candidateZ;
+        }
+        if (clearance >= 0) break;
+      }
+      root.position.set(spawnX, Math.max(0.22, size * 0.48), spawnZ);
       const baseY = root.position.y;
       const wiggle = pseudo(seed + 181) * Math.PI * 2;
       root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
@@ -907,7 +1102,6 @@ export default function Home() {
         size,
         visualRadius,
         big,
-        growthFactor,
         baseY,
         wiggle,
       });
@@ -950,17 +1144,21 @@ export default function Home() {
     const collect = (pickup: Pickup, now: number) => {
       game.picked += 1;
       game.lastPickup = now / 1000;
+      const isOlderScale = pickup.sourceEra < activeIndex;
+      const liveScaleGap = Math.max(0, activeIndex - pickup.sourceEra);
+      const growthFactor =
+        liveScaleGap === 0 ? 1 : Math.max(0.0002, 0.14 ** liveScaleGap);
       const sourceRealm = ERAS[pickup.sourceEra].realm;
       const massEnergyFactor = MASS_ENERGY_FACTORS[pickup.curio.shape];
       const rawContribution =
         pickup.visualRadius ** 3 *
         massEnergyFactor *
-        pickup.growthFactor *
+        growthFactor *
         0.42;
       const contribution = Math.min(game.radius ** 3 * 0.014, rawContribution);
       game.radius = Math.cbrt(game.radius ** 3 + Math.max(0.000008, contribution));
       const contributionLabel =
-        pickup.growthFactor < 0.02
+        growthFactor < 0.02
           ? "trace contribution"
           : sourceRealm === "prephysical"
             ? "field energy"
@@ -971,26 +1169,33 @@ export default function Home() {
                 : massEnergyFactor < 0.35
                   ? "light mass"
                   : "mass";
-      const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
-      setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
-      setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
-      playPickupSound(pickup.curio, pickup.sourceEra);
-      faceReactionUntil = now + 240;
-      ballFaceMaterial.map = chompFaceTexture;
-      ballFaceMaterial.needsUpdate = true;
-      const popBurst = new THREE.Mesh(
-        new THREE.TorusGeometry(Math.max(0.32, pickup.visualRadius * 0.72), 0.055, 6, 28),
-        new THREE.MeshBasicMaterial({
-          color: pickup.curio.color,
-          transparent: true,
-          opacity: 0.86,
-          depthWrite: false,
-        }),
-      );
-      popBurst.position.copy(pickup.root.position);
-      popBurst.rotation.x = Math.PI / 2;
-      scene.add(popBurst);
-      popBursts.push({ mesh: popBurst, born: now });
+      if (!isOlderScale) {
+        const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
+        setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
+        setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
+        playPickupSound(pickup.curio, pickup.sourceEra);
+        faceReactionUntil = now + 240;
+        ballFaceMaterial.map = chompFaceTexture;
+        ballFaceMaterial.needsUpdate = true;
+        const popBurst = new THREE.Mesh(
+          new THREE.TorusGeometry(
+            Math.max(0.32, pickup.visualRadius * 0.72),
+            0.055,
+            6,
+            28,
+          ),
+          new THREE.MeshBasicMaterial({
+            color: pickup.curio.color,
+            transparent: true,
+            opacity: 0.86,
+            depthWrite: false,
+          }),
+        );
+        popBurst.position.copy(pickup.root.position);
+        popBurst.rotation.x = Math.PI / 2;
+        scene.add(popBurst);
+        popBursts.push({ mesh: popBurst, born: now });
+      }
 
       pickup.root.remove(pickup.visual);
       removePickup(pickup, true);
@@ -1056,6 +1261,9 @@ export default function Home() {
             }
           });
         }
+      }
+      if (isOlderScale) {
+        spawnPickup(now * 0.013 + game.id * 73, pickup.sourceEra);
       }
 
       if (game.radius >= 2.3) {
@@ -1159,6 +1367,21 @@ export default function Home() {
       const nextActiveIndex = labEra ?? eraAt(game.hours);
       if (nextActiveIndex !== activeIndex) {
         applyEraTheme(nextActiveIndex, true);
+        pickups = pickups.filter((pickup) => {
+          const inActiveBand =
+            pickup.sourceEra >= activeIndex - 3 && pickup.sourceEra <= activeIndex + 3;
+          if (!inActiveBand) removePickup(pickup);
+          return inActiveBand;
+        });
+        pickups.forEach((pickup) => {
+          if (pickup.marker) pickup.marker.visible = pickup.sourceEra >= activeIndex;
+        });
+        attachments.forEach((attachment) => {
+          const sourceEra = Number(attachment.userData.sourceEra ?? activeIndex);
+          attachment.traverse((child) => {
+            if (child instanceof THREE.Sprite) child.visible = sourceEra >= activeIndex;
+          });
+        });
       }
 
       spawnClock += dt;
@@ -1206,7 +1429,10 @@ export default function Home() {
           pickup.root.position.x - game.x,
           pickup.root.position.z - game.z,
         );
-        pickup.marker.visible = distance < 20;
+        if (pickup.marker) {
+          pickup.marker.visible = pickup.sourceEra >= activeIndex && distance < 20;
+        }
+        pickup.big = pickup.visualRadius > game.radius * 1.02;
         pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
         pickup.root.rotation.z = Math.sin(now * 0.0012 + pickup.wiggle) * 0.075;
         pickup.root.position.y =
@@ -1373,7 +1599,7 @@ export default function Home() {
               <b>ON A ROLL</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V10 · EXTRA CUTE</span>
+            <span className="version-badge">V11 · DEEPER WORLD</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
@@ -1468,7 +1694,7 @@ export default function Home() {
               <b>→</b>
             </button>
             <div className="welcome-foot">
-              <span>NO CHARACTER</span><span>•</span>
+              <span>7 ACTIVE SCALE BANDS</span><span>•</span>
               <span>REAL 3D ROLLING</span><span>•</span>
               <span>INFINITE AFTER 500H</span>
             </div>
