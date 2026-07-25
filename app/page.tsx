@@ -60,6 +60,30 @@ function confidenceClass(confidence: Era["confidence"]) {
   return confidence.toLowerCase().replaceAll(" ", "-");
 }
 
+const MASS_ENERGY_FACTORS: Record<Curio["shape"], number> = {
+  bubble: 0.18,
+  spark: 0.38,
+  quark: 0.72,
+  hadron: 1.05,
+  atom: 0.9,
+  molecule: 0.68,
+  virus: 0.48,
+  cell: 0.62,
+  fiber: 0.24,
+  dust: 0.52,
+  stone: 1.25,
+  object: 0.58,
+  chair: 0.32,
+  car: 0.7,
+  house: 0.18,
+  mountain: 1.25,
+  planet: 1,
+  star: 1.08,
+  system: 0.52,
+  galaxy: 0.6,
+  universe: 0.5,
+};
+
 export default function Home() {
   const mountRef = useRef<HTMLDivElement>(null);
   const showAtlasRef = useRef(false);
@@ -625,7 +649,7 @@ export default function Home() {
     };
 
     const spawnPickup = (seed: number) => {
-      const radius = 5.2 + pseudo(seed + game.id * 7) * 19.5;
+      const radius = 4.6 + pseudo(seed + game.id * 7) * 18;
       const angle = pseudo(seed + 13) * Math.PI * 2;
       const sourceEra =
         activeIndex > 0 && pseudo(seed + 97) > 0.58
@@ -635,9 +659,9 @@ export default function Home() {
       const source = ERAS[sourceEra];
       const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
       const curio = source.curios[curioIndex];
-      const big = scaleGap === 0 && pseudo(seed + 29) > 0.78;
+      let big = scaleGap === 0 && pseudo(seed + 29) > 0.9;
       const legacyScale = scaleGap === 0 ? 1 : Math.max(0.24, 0.72 ** scaleGap);
-      const size = big
+      let size = big
         ? game.radius * (1.1 + pseudo(seed + 41) * 0.78)
         : Math.max(
             0.14,
@@ -651,8 +675,22 @@ export default function Home() {
       visual.updateMatrixWorld(true);
       const visualDimensions = new THREE.Vector3();
       new THREE.Box3().setFromObject(visual).getSize(visualDimensions);
-      const visualRadius =
+      let visualRadius =
         Math.max(visualDimensions.x, visualDimensions.y, visualDimensions.z) / 2;
+      if (!big && visualRadius > game.radius * 0.92) {
+        const targetRadius = game.radius * (0.5 + pseudo(seed + 139) * 0.38);
+        const fit = targetRadius / visualRadius;
+        size *= fit;
+        visualRadius *= fit;
+        visual.scale.multiplyScalar(fit);
+      } else if (big && visualRadius <= game.radius * 1.08) {
+        const targetRadius = game.radius * (1.1 + pseudo(seed + 149) * 0.38);
+        const enlarge = targetRadius / Math.max(0.01, visualRadius);
+        size *= enlarge;
+        visualRadius *= enlarge;
+        visual.scale.multiplyScalar(enlarge);
+      }
+      big = visualRadius > game.radius * 1.02;
       const marker = makeMarker(curio.symbol, curio.color);
       const markerSize = Math.max(0.28, Math.min(0.62, size * 0.62));
       marker.scale.set(markerSize, markerSize, 1);
@@ -681,7 +719,7 @@ export default function Home() {
     };
 
     const populate = () => {
-      const desiredPickupCount = width <= 860 ? 86 : 118;
+      const desiredPickupCount = width <= 860 ? 98 : 136;
       pickups = pickups.filter((pickup) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
@@ -716,13 +754,28 @@ export default function Home() {
     const collect = (pickup: Pickup, now: number) => {
       game.picked += 1;
       game.lastPickup = now / 1000;
-      const growth =
-        Math.min(0.055, 0.026 + pickup.visualRadius * 0.018) *
+      const sourceRealm = ERAS[pickup.sourceEra].realm;
+      const massEnergyFactor = MASS_ENERGY_FACTORS[pickup.curio.shape];
+      const rawContribution =
+        pickup.visualRadius ** 3 *
+        massEnergyFactor *
         pickup.growthFactor *
-        0.24;
-      game.radius += Math.max(0.000002, growth);
-      const trace = pickup.growthFactor < 0.02 ? " · trace growth" : "";
-      setToast(`${pickup.curio.name} joined the mash${trace}.`);
+        0.42;
+      const contribution = Math.min(game.radius ** 3 * 0.014, rawContribution);
+      game.radius = Math.cbrt(game.radius ** 3 + Math.max(0.000008, contribution));
+      const contributionLabel =
+        pickup.growthFactor < 0.02
+          ? "trace contribution"
+          : sourceRealm === "prephysical"
+            ? "field energy"
+            : sourceRealm === "particle"
+              ? "bound energy"
+              : massEnergyFactor >= 1
+                ? "dense mass"
+                : massEnergyFactor < 0.35
+                  ? "light mass"
+                  : "mass";
+      setToast(`${pickup.curio.name} joined the mash · ${contributionLabel}.`);
       setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
       ping(290 + (game.picked % 12) * 38);
 
@@ -890,7 +943,7 @@ export default function Home() {
       }
 
       spawnClock += dt;
-      const lowPickupThreshold = width <= 860 ? 70 : 98;
+      const lowPickupThreshold = width <= 860 ? 82 : 114;
       if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
         populate();
         spawnClock = 0;
@@ -1070,7 +1123,7 @@ export default function Home() {
               <b>EVERYTHING ROLL</b>
               <small>a very small adventure</small>
             </div>
-            <span className="version-badge">V7 · 3D</span>
+            <span className="version-badge">V8 · 3D</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
@@ -1157,6 +1210,8 @@ export default function Home() {
               <b>Scientific honesty:</b> quantum foam is a speculative visualization,
               and “rolling” before matter exists is a navigation metaphor. The game
               labels every scale as measured, supported, unknown, or speculative.
+              Visible size decides what sticks; era-appropriate energy or mass
+              determines how much the mash grows.
             </div>
             <button className="start" onClick={begin}>
               <span>Begin becoming</span>
