@@ -73,28 +73,28 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
   {
     at: 0,
     logMeters: Math.log10(1.616255e-35),
-    name: "Planck Regime",
-    quip: "Where our map of physics runs out",
+    name: "Theory Playground",
+    quip: "Foam, strings, notes—and a very honest question mark",
     confidence: "SPECULATIVE",
     realm: "prephysical",
     palette: ["#07041d", "#281754", "#ff62c7"],
-    lesson: "The Planck length is well defined, but spacetime foam is an unobserved visualization. Here, rolling is deliberately shown as a navigation metaphor.",
+    lesson: "The Planck length is well defined; what lies below present knowledge is not. This entire opening layer is a playful gallery of unconfirmed ideas—foam, strings, vibration, topology—not a claim that any of them are real objects.",
     curios: [
-      c("spacetime fluctuation", "bubble", "#ff76c8", "A fluctuation is a game metaphor here; no experiment has imaged Planck-scale spacetime."),
-      c("curvature ripple", "bubble", "#8b8cff", "General relativity describes curved spacetime, but not a confirmed granular texture at this scale."),
-      c("energy uncertainty", "spark", "#ffe875", "Quantum systems can fluctuate, but this is not a little solid object."),
-      c("vacuum shimmer", "spark", "#63e7ff", "A quantum vacuum is not empty, though 'shimmer' is purely visual language."),
+      c("foam bubble", "bubble", "#ff76c8", "Spacetime foam is a speculative image for Planck-scale geometry; no experiment has photographed it."),
+      c("vibrating string", "fiber", "#8b8cff", "Fundamental strings are a mathematical proposal, not experimentally observed threads."),
+      c("resonance note", "spark", "#ffe875", "The music note is a joke about vibration modes, not evidence that spacetime literally makes sound.", "♪"),
+      c("vacuum shimmer", "spark", "#63e7ff", "A quantum vacuum is not classical emptiness, though this visible shimmer is purely playful language."),
     ],
   },
   {
     at: 0.01,
-    logMeters: -24,
-    name: "The Unresolved Gap",
-    quip: "Eleven orders of honest uncertainty",
+    logMeters: -20,
+    name: "Particle Probe Frontier",
+    quip: "The map resumes at the edge of experiment",
     confidence: "UNKNOWN",
     realm: "prephysical",
     palette: ["#07142c", "#173d6e", "#65dbff"],
-    lesson: "There is no experimentally confirmed ladder of smaller constituents filling the enormous gap between the Planck scale and current particle probes.",
+    lesson: "There is no confirmed ladder of constituents between the Planck scale and present particle probes. This frontier marks experimental limits without inventing material to fill the gap.",
     curios: [
       c("field ripple", "bubble", "#65dbff", "Modern particle physics describes fields extending through space."),
       c("energy packet", "spark", "#ffe37a", "Particles are excitations of fields—not tiny classical beads."),
@@ -104,13 +104,13 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
   },
   {
     at: 0.03,
-    logMeters: -20,
-    name: "Quark–Gluon Droplet",
-    quip: "Confined, colorful, and never alone",
+    logMeters: -18,
+    name: "Quarks & Gluons",
+    quip: "Point-like in probes, confined in matter",
     confidence: "MEASURED",
     realm: "particle",
     palette: ["#170526", "#58185e", "#ff5c9e"],
-    lesson: "Quarks are consistent with point-like particles down to current probe scales. They are never observed alone; quarks and gluons remain confined in composite matter.",
+    lesson: "Quarks and gluons are experimentally established, while quarks remain consistent with point-like particles at current resolution. This field is a scale metaphor—not a claim that ordinary space is filled with quark–gluon plasma.",
     curios: [
       c("up-quark trace", "quark", "#ff5575", "Up quarks help make protons and neutrons, but cannot be collected as isolated free objects."),
       c("down-quark trace", "quark", "#57a7ff", "Down quarks are confined by the strong interaction."),
@@ -409,19 +409,19 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
 ];
 
 const EXTRA_CURIOS: Record<string, Curio[]> = {
-  "Planck Regime": [
+  "Theory Playground": [
     c("geometry pulse", "bubble", "#ff9bdd", "This pulse is a visual metaphor for unknown Planck-scale geometry, not an observed object.", "≈"),
     c("causal uncertainty", "spark", "#fff18a", "Known physics does not yet provide an experimentally tested description of causality at the Planck scale.", "?"),
     c("topology question", "bubble", "#9ea1ff", "Quantum gravity might alter how geometry is described, but no microscopic topology has been observed.", "∩"),
-    c("minimum-length marker", "spark", "#78f2ff", "The Planck length is a derived natural scale, not a proven smallest pixel of space.", "ℓ"),
+    c("extra-dimensional chord", "fiber", "#78f2ff", "Extra dimensions appear in some theories, but this glowing chord is delighted speculation.", "♫"),
   ],
-  "The Unresolved Gap": [
+  "Particle Probe Frontier": [
     c("symmetry echo", "spark", "#8de8ff", "Symmetries organize modern particle theories, but unknown new physics may lie beyond present experiments.", "◇"),
     c("field excitation", "bubble", "#6fc9ff", "In quantum field theory, particles are excitations of underlying fields.", "∿"),
     c("unknown resonance", "spark", "#ff92c9", "This deliberately unnamed resonance represents possibilities that experiments have not established.", "?"),
     c("probe limit", "bubble", "#d5a8ff", "Smaller structure requires higher-energy probes; present measurements set limits rather than revealing a ladder.", "⊣"),
   ],
-  "Quark–Gluon Droplet": [
+  "Quarks & Gluons": [
     c("strange-quark trace", "quark", "#9b7cff", "Strange quarks appear in short-lived hadrons but are not isolated as free particles.", "s"),
     c("charm-quark trace", "quark", "#ff9a61", "Charm quarks are heavy quarks produced in energetic interactions.", "c"),
     c("color-field knot", "spark", "#68f0c1", "Color charge is the charge of the strong interaction; it is unrelated to visible color.", "3"),
@@ -549,11 +549,11 @@ const source = (
  * direct path out of the game and into the underlying science.
  */
 const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
-  "Planck Regime": [
+  "Theory Playground": [
     source(
       "CODATA Planck length",
       "NIST",
-      "https://physics.nist.gov/cgi-bin/cuu/Value?plkl=",
+      "https://physics.nist.gov/cgi-bin/cuu/Value?plkl",
     ),
     source(
       "SI base-unit definitions",
@@ -561,7 +561,7 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://www.nist.gov/si-redefinition/definitions-si-base-units",
     ),
   ],
-  "The Unresolved Gap": [
+  "Particle Probe Frontier": [
     source(
       "The Standard Model",
       "CERN",
@@ -573,7 +573,7 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://physics.nist.gov/cuu/Constants/",
     ),
   ],
-  "Quark–Gluon Droplet": [
+  "Quarks & Gluons": [
     source(
       "ALICE experiment",
       "CERN",
@@ -803,19 +803,49 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
   ],
 };
 
+const SOURCE_OVERRIDES: Record<string, number> = {
+  "small virus": 1,
+  "giant virus": 1,
+  "virus capsid": 1,
+  "viral envelope": 1,
+  "yeast cell": 1,
+  "sand grain": 1,
+  pebble: 1,
+};
+
 export const ERAS: Era[] = BASE_ERAS.map((era) => ({
   ...era,
   sources: SCIENCE_SOURCES[era.name],
   curios: [...era.curios, ...(EXTRA_CURIOS[era.name] ?? [])].map(
-    (curio, index) => ({
+    (curio) => ({
       ...curio,
       source:
-        SCIENCE_SOURCES[era.name][
-          index % SCIENCE_SOURCES[era.name].length
-        ],
+        SCIENCE_SOURCES[era.name][SOURCE_OVERRIDES[curio.name] ?? 0],
     }),
   ),
 }));
+
+export function journeyHoursForEraProgress(index: number, progress: number) {
+  const current = ERAS[Math.max(0, Math.min(ERAS.length - 1, index))];
+  const next = ERAS[Math.min(ERAS.length - 1, index + 1)];
+  if (current === next) return JOURNEY_HOURS;
+  return current.at + (next.at - current.at) * Math.max(0, Math.min(1, progress));
+}
+
+export function formatEraScale(index: number, progress: number) {
+  const current = ERAS[Math.max(0, Math.min(ERAS.length - 1, index))];
+  if (current.realm === "speculative") return "FICTIONAL · UNBOUNDED";
+  const next = ERAS[Math.min(ERAS.length - 1, index + 1)];
+  const t = Math.max(0, Math.min(1, progress));
+  const eased = t * t * (3 - 2 * t);
+  const log =
+    current === next
+      ? current.logMeters
+      : current.logMeters + (next.logMeters - current.logMeters) * eased;
+  const exponent = Math.floor(log);
+  const mantissa = 10 ** (log - exponent);
+  return `${mantissa.toFixed(exponent < -30 ? 3 : 2)} × 10^${exponent} m`;
+}
 
 export function eraAt(hours: number) {
   for (let i = ERAS.length - 1; i >= 0; i -= 1) {

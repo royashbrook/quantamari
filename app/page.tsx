@@ -1,27 +1,33 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as THREE from "three";
+import type * as THREE from "three";
 import {
   Curio,
   ERAS,
   Era,
-  JOURNEY_HOURS,
   ScienceSource,
   eraAt,
-  formatHours,
-  formatScale,
+  formatEraScale,
+  journeyHoursForEraProgress,
 } from "./scale-data";
 import {
+  CORE_RADIUS_MIN,
+  CORE_RADIUS_MAX,
+  MAX_ROLL_ENVELOPE_FACTOR,
   CollectibleIdentity,
   QualityTier,
   canCollectPickup,
+  collectionProgressGain,
   collectibleIdentityFor,
-  growthContribution,
-  lowPickupBudget,
+  nextLayerObstacleRadius,
+  obstacleCenterGap,
   pickupBudget,
   pixelRatioCap,
   qualityTierForFps,
+  radiusForLayerProgress,
+  resolveCircularCollision,
+  scaleTransitionFrame,
 } from "./game-rules";
 
 type Pickup = {
@@ -50,14 +56,20 @@ type MashRecord = {
 };
 
 type SaveData = {
-  hours: number;
+  version: 3;
+  era: number;
+  progress: number;
   picked: number;
   x: number;
   z: number;
-  radius: number;
   zooms: number;
   sound: boolean;
   mash: MashRecord[];
+};
+
+type LegacySaveData = Partial<SaveData> & {
+  hours?: number;
+  radius?: number;
 };
 
 function pseudo(seed: number) {
@@ -65,17 +77,11 @@ function pseudo(seed: number) {
   return value - Math.floor(value);
 }
 
-function scaleFromLog(log: number) {
-  const exponent = Math.floor(log);
-  const mantissa = 10 ** (log - exponent);
-  return `${mantissa.toFixed(exponent < -30 ? 3 : 2)} × 10^${exponent} m`;
-}
-
 function confidenceClass(confidence: Era["confidence"]) {
   return confidence.toLowerCase().replaceAll(" ", "-");
 }
 
-const MASS_ENERGY_FACTORS: Record<Curio["shape"], number> = {
+const GAMEPLAY_BULK_FACTORS: Record<Curio["shape"], number> = {
   bubble: 0.18,
   spark: 0.38,
   quark: 0.72,
@@ -154,8 +160,8 @@ export default function Home() {
     z: 0,
     vx: 0,
     vz: 0,
-    radius: 1.12,
-    hours: 0,
+    radius: CORE_RADIUS_MIN,
+    progress: 0,
     picked: 0,
     zooms: 0,
     era: 0,
@@ -168,6 +174,7 @@ export default function Home() {
 
   const [started, setStarted] = useState(false);
   const [showAtlas, setShowAtlas] = useState(false);
+  const [atlasEra, setAtlasEra] = useState(0);
   const [labEra, setLabEra] = useState<number | null>(null);
   const [sound, setSound] = useState(true);
   const [toast, setToast] = useState(
@@ -182,14 +189,30 @@ export default function Home() {
     hours: 0,
     picked: 0,
     era: 0,
+    journeyEra: 0,
     progress: 0,
-    radius: 1.12,
+    radius: CORE_RADIUS_MIN,
+    zooms: 0,
     quality: "high" as QualityTier,
   });
 
   useEffect(() => {
     showAtlasRef.current = showAtlas;
+    if (showAtlas) {
+      window.setTimeout(() => {
+        document.querySelector<HTMLButtonElement>(".atlas > header button")?.focus();
+      }, 0);
+    }
   }, [showAtlas]);
+
+  useEffect(() => {
+    if (
+      process.env.NODE_ENV === "production" &&
+      "serviceWorker" in navigator
+    ) {
+      void navigator.serviceWorker.register("/sw.js");
+    }
+  }, []);
 
   const ping = useCallback((pitch = 440, fanfare = false) => {
     if (!gameRef.current.sound) return;
@@ -329,30 +352,53 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("everything-roll-save-v2");
+      const raw =
+        localStorage.getItem("everything-roll-save-v3") ??
+        localStorage.getItem("everything-roll-save-v2");
       if (!raw) return;
-      const saved = JSON.parse(raw) as Partial<SaveData>;
+      const saved = JSON.parse(raw) as LegacySaveData;
       const game = gameRef.current;
-      game.hours = Number(saved.hours) || 0;
+      if (saved.version === 3) {
+        game.era = Math.max(
+          0,
+          Math.min(ERAS.length - 1, Number(saved.era) || 0),
+        );
+        game.progress = Math.max(0, Math.min(1, Number(saved.progress) || 0));
+      } else {
+        const hours = Math.max(0, Number(saved.hours) || 0);
+        game.era = eraAt(hours);
+        const current = ERAS[game.era];
+        const next = ERAS[Math.min(ERAS.length - 1, game.era + 1)];
+        game.progress =
+          current === next
+            ? 0
+            : Math.max(
+                0,
+                Math.min(1, (hours - current.at) / (next.at - current.at)),
+              );
+      }
       game.picked = Number(saved.picked) || 0;
       game.x = Number(saved.x) || 0;
       game.z = Number(saved.z) || 0;
-      game.radius = Math.max(0.8, Number(saved.radius) || game.radius);
+      game.radius = radiusForLayerProgress(game.progress);
       game.zooms = Number(saved.zooms) || 0;
       game.sound = saved.sound ?? true;
-      game.era = eraAt(game.hours);
       mashHistoryRef.current = Array.isArray(saved.mash)
         ? saved.mash.slice(-96)
         : [];
       setSound(game.sound);
       setHud((current) => ({
         ...current,
-        hours: game.hours,
+        hours: journeyHoursForEraProgress(game.era, game.progress),
         picked: game.picked,
         era: game.era,
+        journeyEra: game.era,
+        progress: game.progress,
         radius: game.radius,
+        zooms: game.zooms,
       }));
     } catch {
+      localStorage.removeItem("everything-roll-save-v3");
       localStorage.removeItem("everything-roll-save-v2");
     }
   }, []);
@@ -360,6 +406,15 @@ export default function Home() {
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+      const target = event.target as HTMLElement | null;
+      const interactive = target?.closest(
+        "button, a, input, select, textarea, [contenteditable='true']",
+      );
+      if (key === "escape" && showAtlasRef.current) {
+        setShowAtlas(false);
+        return;
+      }
+      if (interactive) return;
       keysRef.current[key] = true;
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
         event.preventDefault();
@@ -380,9 +435,15 @@ export default function Home() {
   }, [begin, toggleSound]);
 
   useEffect(() => {
+    if (!started) return;
     const mount = mountRef.current;
     if (!mount) return;
 
+    let disposed = false;
+    let disposeScene: (() => void) | undefined;
+    const bootScene = async () => {
+    const THREE = await import("three");
+    if (disposed) return;
     const game = gameRef.current;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
@@ -396,15 +457,14 @@ export default function Home() {
       ),
     );
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
     renderer.domElement.className = "three-canvas";
     mount.prepend(renderer.domElement);
 
-    let activeIndex = labEra ?? eraAt(game.hours);
-    game.era = activeIndex;
+    let activeIndex = labEra ?? game.era;
     let activeEra = ERAS[activeIndex];
     let early =
       activeEra.realm === "prephysical" || activeEra.realm === "particle";
@@ -481,6 +541,51 @@ export default function Home() {
 
     const environmentGroup = new THREE.Group();
     scene.add(environmentGroup);
+    const substrateGroup = new THREE.Group();
+    scene.add(substrateGroup);
+
+    const buildSubstrate = (index: number) => {
+      substrateGroup.traverse((object) => {
+        if (object instanceof THREE.Points) {
+          object.geometry.dispose();
+          object.material.dispose();
+        }
+      });
+      substrateGroup.clear();
+      const oldestVisible = Math.max(0, index - 5);
+      for (let layer = oldestVisible; layer < index; layer += 1) {
+        const depth = index - layer;
+        const positions: number[] = [];
+        const colors: number[] = [];
+        const color = new THREE.Color(ERAS[layer].palette[2]);
+        const count = compactGpu ? 28 : 44;
+        for (let point = 0; point < count; point += 1) {
+          const angle = pseudo(layer * 317 + point * 11.3) * Math.PI * 2;
+          const radius = 3 + pseudo(layer * 97 + point * 7.1) * 68;
+          positions.push(
+            Math.cos(angle) * radius,
+            0.025 - depth * 0.002,
+            Math.sin(angle) * radius,
+          );
+          const faded = color.clone().lerp(new THREE.Color("#fff4d6"), depth * 0.08);
+          colors.push(faded.r, faded.g, faded.b);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(positions, 3),
+        );
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+        const material = new THREE.PointsMaterial({
+          size: Math.max(0.018, 0.12 / depth),
+          transparent: true,
+          opacity: Math.max(0.12, 0.48 - depth * 0.055),
+          vertexColors: true,
+          depthWrite: false,
+        });
+        substrateGroup.add(new THREE.Points(geometry, material));
+      }
+    };
 
     const playerRoot = new THREE.Group();
     const rollGroup = new THREE.Group();
@@ -686,7 +791,7 @@ export default function Home() {
     };
 
     const sceneryToon = (color: THREE.ColorRepresentation) =>
-      new THREE.MeshToonMaterial({ color, flatShading: true });
+      new THREE.MeshToonMaterial({ color });
 
     const sceneryGlow = (
       color: THREE.ColorRepresentation,
@@ -1370,7 +1475,7 @@ export default function Home() {
     const applyEraTheme = (index: number, announce = false) => {
       activeIndex = index;
       activeEra = ERAS[index];
-      game.era = index;
+      if (labEra === null) game.era = index;
       early =
         activeEra.realm === "prephysical" || activeEra.realm === "particle";
 
@@ -1408,6 +1513,7 @@ export default function Home() {
       core.castShadow = !early;
       core.receiveShadow = !early;
       buildEnvironment(index);
+      buildSubstrate(index);
 
       if (announce) {
         eraTransitionAge = 0;
@@ -1424,6 +1530,7 @@ export default function Home() {
     };
 
     buildEnvironment(activeIndex);
+    buildSubstrate(activeIndex);
 
     const createMaterial = (color: string, emissive = false) => {
       const toyColor = new THREE.Color(color).lerp(new THREE.Color("#fff4fb"), 0.08);
@@ -1431,7 +1538,6 @@ export default function Home() {
         color: toyColor,
         emissive: emissive ? color : 0x000000,
         emissiveIntensity: emissive ? 0.68 : 0,
-        flatShading: true,
         transparent: false,
       });
     };
@@ -1454,7 +1560,7 @@ export default function Home() {
       return mesh;
     };
 
-    const makeVisual = (curio: Curio, rich = true) => {
+    const buildVisual = (curio: Curio, rich = true) => {
       const group = new THREE.Group();
       const identity = collectibleIdentityFor(curio.name, curio.shape);
       const curioSeed = identity.seed;
@@ -1992,6 +2098,19 @@ export default function Home() {
       return group;
     };
 
+    const visualTemplates = new Map<string, THREE.Object3D>();
+    const makeVisual = (curio: Curio, rich = true) => {
+      const key = `${curio.name}:${rich ? "rich" : "simple"}`;
+      let template = visualTemplates.get(key);
+      if (!template) {
+        template = buildVisual(curio, rich);
+        visualTemplates.set(key, template);
+      }
+      const visual = template.clone(true);
+      visual.userData.sharedResources = true;
+      return visual;
+    };
+
     const markerTextures = new Map<string, THREE.CanvasTexture>();
 
     const getMarkerTexture = (symbol: string) => {
@@ -2059,6 +2178,10 @@ export default function Home() {
     const makeFieldLike = (visual: THREE.Object3D) => {
       visual.traverse((child) => {
         if (child instanceof THREE.Mesh) {
+          child.material = Array.isArray(child.material)
+            ? child.material.map((material) => material.clone())
+            : child.material.clone();
+          child.userData.ownsMaterial = true;
           const materials = Array.isArray(child.material) ? child.material : [child.material];
           materials.forEach((material) => {
             material.transparent = true;
@@ -2070,6 +2193,19 @@ export default function Home() {
     };
 
     const disposeVisual = (visual: THREE.Object3D) => {
+      if (visual.userData.sharedResources) {
+        visual.traverse((child) => {
+          if (child instanceof THREE.Sprite) {
+            child.material.dispose();
+          } else if (child instanceof THREE.Mesh && child.userData.ownsMaterial) {
+            const materials = Array.isArray(child.material)
+              ? child.material
+              : [child.material];
+            materials.forEach((material) => material.dispose());
+          }
+        });
+        return;
+      }
       visual.traverse((child) => {
         if (
           child instanceof THREE.Mesh ||
@@ -2149,13 +2285,18 @@ export default function Home() {
 
     const spawnPickup = (seed: number, forcedSourceEra?: number) => {
       const bandRoll = pseudo(seed + 97);
-      const bandDepth = 1 + Math.floor(pseudo(seed + 103) * 3);
-      const chosenEra =
-        bandRoll < 0.37
-          ? activeIndex - bandDepth
-          : bandRoll > 0.92
-            ? activeIndex + bandDepth
-            : activeIndex;
+      let chosenEra =
+        bandRoll > 0.84 && activeIndex < ERAS.length - 1
+          ? activeIndex + 1
+          : activeIndex;
+      const obstacleLimit = compactGpu ? 3 : 5;
+      if (
+        chosenEra > activeIndex &&
+        pickups.filter((pickup) => pickup.sourceEra > activeIndex).length >=
+          obstacleLimit
+      ) {
+        chosenEra = activeIndex;
+      }
       const sourceEra = Math.max(
         0,
         Math.min(ERAS.length - 1, forcedSourceEra ?? chosenEra),
@@ -2166,15 +2307,9 @@ export default function Home() {
       const curio = source.curios[curioIndex];
       const identity = collectibleIdentityFor(curio.name, curio.shape);
       let big = levelDelta > 0;
-      const scaleBand =
-        levelDelta < 0
-          ? Math.max(0.2, 0.68 ** Math.abs(levelDelta))
-          : levelDelta > 0
-            ? 1 + levelDelta * 0.4
-            : 1;
       let size = Math.max(
         0.11,
-        (0.18 + pseudo(seed + 53) * game.radius * 0.56) * scaleBand,
+        0.18 + pseudo(seed + 53) * game.radius * 0.52,
       );
       const root = new THREE.Group();
       const visual = makeVisual(curio, sourceEra >= activeIndex);
@@ -2184,7 +2319,7 @@ export default function Home() {
       const visualDimensions = new THREE.Vector3();
       new THREE.Box3().setFromObject(visual).getSize(visualDimensions);
       let visualRadius =
-        Math.max(visualDimensions.x, visualDimensions.y, visualDimensions.z) / 2;
+        Math.max(visualDimensions.x, visualDimensions.z) / 2;
       let bulkRadius =
         Math.cbrt(
           Math.max(
@@ -2192,18 +2327,21 @@ export default function Home() {
             visualDimensions.x * visualDimensions.y * visualDimensions.z,
           ),
         ) / 2;
-      if (levelDelta <= 0 && visualRadius > game.radius * 0.92) {
-        const targetRadius = game.radius * (0.5 + pseudo(seed + 139) * 0.38);
+      if (levelDelta <= 0 && visualRadius > game.radius * 0.82) {
+        const targetRadius = game.radius * (0.42 + pseudo(seed + 139) * 0.34);
         const fit = targetRadius / visualRadius;
         size *= fit;
         visualRadius *= fit;
         bulkRadius *= fit;
         visual.scale.multiplyScalar(fit);
       } else if (levelDelta > 0) {
-        const targetRadius =
-          game.radius *
-          (1.12 + (levelDelta - 1) * 0.5 + pseudo(seed + 149) * 0.26);
-        const enlarge = targetRadius / Math.max(0.01, visualRadius);
+        const targetRadius = nextLayerObstacleRadius(
+          CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR,
+        );
+        const enlarge = Math.max(
+          targetRadius / Math.max(0.01, visualRadius),
+          targetRadius / Math.max(0.01, bulkRadius),
+        );
         size *= enlarge;
         visualRadius *= enlarge;
         bulkRadius *= enlarge;
@@ -2222,7 +2360,8 @@ export default function Home() {
       let spawnX = game.x;
       let spawnZ = game.z;
       let bestClearance = Number.NEGATIVE_INFINITY;
-      const attempts = big ? 18 : 1;
+      const attempts = big ? 36 : 1;
+      const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         const candidateRadius = big
           ? Math.max(
@@ -2240,10 +2379,11 @@ export default function Home() {
                 other.root.position.x - candidateX,
                 other.root.position.z - candidateZ,
               );
-              const required =
-                visualRadius +
-                other.visualRadius +
-                Math.max(1.8, game.radius * 1.35);
+              const required = obstacleCenterGap(
+                visualRadius,
+                other.visualRadius,
+                rollingEnvelope,
+              );
               return Math.min(minimum, separation - required);
             }, Number.POSITIVE_INFINITY)
           : Number.POSITIVE_INFINITY;
@@ -2253,6 +2393,10 @@ export default function Home() {
           spawnZ = candidateZ;
         }
         if (clearance >= 0) break;
+      }
+      if (big && bestClearance < 0) {
+        disposeVisual(visual);
+        return false;
       }
       root.position.set(spawnX, Math.max(0.22, size * 0.48), spawnZ);
       const baseY = root.position.y;
@@ -2275,10 +2419,18 @@ export default function Home() {
         identity,
       });
       game.id += 1;
+      return true;
+    };
+
+    const activePickupBudget = () => {
+      const base = pickupBudget(width, qualityTier);
+      if (activeIndex === 0) return Math.floor(base * 0.32);
+      if (activeIndex <= 3) return Math.floor(base * 0.55);
+      return base;
     };
 
     const populate = () => {
-      const desiredPickupCount = pickupBudget(width, qualityTier);
+      const desiredPickupCount = activePickupBudget();
       pickups = pickups.filter((pickup) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
@@ -2288,55 +2440,38 @@ export default function Home() {
         removePickup(pickup);
         return false;
       });
-      while (pickups.length < desiredPickupCount) {
-        spawnPickup(performance.now() * 0.002 + pickups.length * 101);
+      let attempts = 0;
+      while (pickups.length < desiredPickupCount && attempts < 18) {
+        spawnPickup(
+          performance.now() * 0.002 + (pickups.length + attempts) * 101,
+        );
+        attempts += 1;
       }
     };
 
-    const shrinkHistory = () => {
-      attachments.forEach((attachment, index) => {
-        attachment.position.multiplyScalar(0.55);
-        attachment.scale.multiplyScalar(0.68);
-        const record = historyEnabled ? mashHistoryRef.current[index] : undefined;
-        if (record) {
-          record.position = attachment.position.toArray() as [number, number, number];
-          record.scale = record.scale.map((value) => value * 0.68) as [
-            number,
-            number,
-            number,
-          ];
-        }
-      });
-      stickingPieces.forEach((piece) => piece.targetScale.multiplyScalar(0.68));
-    };
+    let scaleTransitionStarted = -1;
 
     const collect = (pickup: Pickup, now: number) => {
       game.picked += 1;
       game.lastPickup = now / 1000;
-      const isOlderScale = pickup.sourceEra < activeIndex;
       const isCurrentScale = pickup.sourceEra === activeIndex;
-      const liveScaleGap = Math.max(0, activeIndex - pickup.sourceEra);
-      const sourceRealm = ERAS[pickup.sourceEra].realm;
-      const massEnergyFactor = MASS_ENERGY_FACTORS[pickup.curio.shape];
-      const { growthFactor, contribution } = growthContribution(
-        game.radius,
-        pickup.bulkRadius,
-        massEnergyFactor,
-        liveScaleGap,
+      const gameplayBulkFactor = GAMEPLAY_BULK_FACTORS[pickup.curio.shape];
+      game.progress = Math.min(
+        1,
+        game.progress +
+          collectionProgressGain(
+            game.radius,
+            pickup.bulkRadius,
+            gameplayBulkFactor,
+          ),
       );
-      game.radius = Math.cbrt(game.radius ** 3 + contribution);
+      game.radius = radiusForLayerProgress(game.progress);
       const contributionLabel =
-        growthFactor < 0.02
-          ? "trace contribution"
-          : sourceRealm === "prephysical"
-            ? "field energy"
-            : sourceRealm === "particle"
-              ? "bound energy"
-              : massEnergyFactor >= 1
-                ? "dense mass"
-                : massEnergyFactor < 0.35
-                  ? "light mass"
-                  : "mass";
+        gameplayBulkFactor >= 1
+          ? "chunky gameplay bulk"
+          : gameplayBulkFactor < 0.35
+            ? "light gameplay bulk"
+            : "gameplay bulk";
       if (isCurrentScale) {
         const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
         setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
@@ -2432,21 +2567,10 @@ export default function Home() {
       } else {
         disposeVisual(pickup.visual);
       }
-      if (isOlderScale) {
-        spawnPickup(now * 0.013 + game.id * 73, pickup.sourceEra);
-      }
-
-      if (game.radius >= 2.3) {
-        game.radius = 1.14;
-        game.zooms += 1;
-        shrinkHistory();
-        pickups.forEach((item) => {
-          item.size *= 0.72;
-          item.visualRadius *= 0.72;
-          item.bulkRadius *= 0.72;
-          item.visual.scale.multiplyScalar(0.72);
-        });
-        setToast(`ZOOM OUT #${game.zooms} — your current-scale clump stayed together.`);
+      if (game.progress >= 1 && scaleTransitionStarted < 0) {
+        scaleTransitionStarted = now;
+        eraTransitionAge = 0;
+        setToast("Scale shift! You grow while this whole layer settles beneath you.");
         ping(350 + activeIndex * 18, true);
       }
     };
@@ -2484,10 +2608,17 @@ export default function Home() {
     const rollDimensions = new THREE.Vector3();
     const desiredCamera = new THREE.Vector3();
     const cameraTarget = new THREE.Vector3();
+    let transitionWorldScale = 1;
 
     const animate = (now: number) => {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
+      if (document.hidden || showAtlasRef.current) {
+        performanceWindowStarted = now;
+        performanceFrames = 0;
+        frame = requestAnimationFrame(animate);
+        return;
+      }
       performanceFrames += 1;
       const performanceWindow = now - performanceWindowStarted;
       if (performanceWindow >= 5000) {
@@ -2504,7 +2635,7 @@ export default function Home() {
           renderer.setSize(width, height, false);
           renderer.shadowMap.enabled = qualityTier !== "battery";
           keyLight.castShadow = qualityTier !== "battery";
-          const nextBudget = pickupBudget(width, qualityTier);
+          const nextBudget = activePickupBudget();
           while (pickups.length > nextBudget) {
             const pickup = pickups.pop();
             if (pickup) removePickup(pickup);
@@ -2526,7 +2657,7 @@ export default function Home() {
         rollRadiusClock = 0;
       }
 
-      if (game.running && !showAtlasRef.current) {
+      if (game.running && scaleTransitionStarted < 0) {
         let inputX = 0;
         let inputZ = 0;
         if (keysRef.current.w || keysRef.current.arrowup) inputZ -= 1;
@@ -2545,10 +2676,6 @@ export default function Home() {
           const boost = keysRef.current[" "] ? 1.26 : 1;
           game.vx += inputX * 17.8125 * boost * dt;
           game.vz += inputZ * 17.8125 * boost * dt;
-          if (labEra === null) {
-            const engagement = Math.max(0, 1 - (now / 1000 - game.lastPickup) / 8);
-            game.hours += (dt * (0.72 + engagement * 0.28)) / 3600;
-          }
         }
         const drag = Math.pow(0.09, dt);
         game.vx *= drag;
@@ -2568,20 +2695,34 @@ export default function Home() {
           const dx = pickup.root.position.x - game.x;
           const dz = pickup.root.position.z - game.z;
           const distance = Math.hypot(dx, dz);
-          if (distance < effectiveRollRadius + pickup.visualRadius) {
+          if (
+            labEra === null &&
+            distance < effectiveRollRadius + pickup.visualRadius
+          ) {
             if (
               canCollectPickup(
                 pickup.sourceEra,
                 activeIndex,
-                pickup.bulkRadius,
+                pickup.visualRadius,
                 effectiveRollRadius,
               )
             ) {
               collect(pickup, now);
               pickup.root.position.x = Number.POSITIVE_INFINITY;
-            } else if (distance > 0) {
-              game.vx -= (dx / distance) * 2.4;
-              game.vz -= (dz / distance) * 2.4;
+            } else {
+              const collision = resolveCircularCollision(
+                game.x,
+                game.z,
+                game.vx,
+                game.vz,
+                pickup.root.position.x,
+                pickup.root.position.z,
+                effectiveRollRadius + pickup.visualRadius,
+              );
+              game.x = collision.x;
+              game.z = collision.z;
+              game.vx = collision.vx;
+              game.vz = collision.vz;
               if (now / 1000 - game.lastPickup > 0.8) {
                 setToast(`Oof! ${pickup.curio.name} is still too chunky. Snack smaller first.`);
               }
@@ -2591,7 +2732,41 @@ export default function Home() {
         pickups = pickups.filter((pickup) => Number.isFinite(pickup.root.position.x));
       }
 
-      const nextActiveIndex = labEra ?? eraAt(game.hours);
+      if (scaleTransitionStarted >= 0) {
+        const progress = Math.min(1, (now - scaleTransitionStarted) / 1800);
+        const transition = scaleTransitionFrame(progress);
+        transitionWorldScale = transition.worldScale;
+        playerRoot.scale.setScalar(transition.playerScale);
+        environmentGroup.scale.setScalar(transitionWorldScale);
+        substrateGroup.scale.setScalar(transitionWorldScale);
+        ground.scale.setScalar(transitionWorldScale);
+        grid.scale.setScalar(transitionWorldScale);
+        dustField.scale.setScalar(transitionWorldScale);
+        if (progress >= 1) {
+          const nextIndex = Math.min(ERAS.length - 1, game.era + 1);
+          game.era = nextIndex;
+          game.progress = 0;
+          game.radius = CORE_RADIUS_MIN;
+          game.zooms += 1;
+          game.vx *= 0.25;
+          game.vz *= 0.25;
+          playerRoot.scale.setScalar(1);
+          transitionWorldScale = 1;
+          environmentGroup.scale.setScalar(1);
+          substrateGroup.scale.setScalar(1);
+          ground.scale.setScalar(1);
+          grid.scale.setScalar(1);
+          dustField.scale.setScalar(1);
+          retireVisibleMash();
+          pickups.forEach((pickup) => removePickup(pickup));
+          pickups = [];
+          applyEraTheme(nextIndex, true);
+          scaleTransitionStarted = -1;
+          populate();
+        }
+      }
+
+      const nextActiveIndex = labEra ?? game.era;
       if (nextActiveIndex !== activeIndex) {
         retireVisibleMash();
         applyEraTheme(nextActiveIndex, true);
@@ -2613,7 +2788,7 @@ export default function Home() {
       }
 
       spawnClock += dt;
-      const lowPickupThreshold = lowPickupBudget(width, qualityTier);
+      const lowPickupThreshold = Math.floor(activePickupBudget() * 0.84);
       if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
         populate();
         spawnClock = 0;
@@ -2623,6 +2798,7 @@ export default function Home() {
         game.radius * 0.94 + (early ? Math.sin(now * 0.0017) * 0.035 : 0);
       playerRoot.position.set(game.x, floatHeight, game.z);
       environmentGroup.position.set(game.x, 0, game.z);
+      substrateGroup.position.set(game.x, 0, game.z);
       ground.position.set(game.x, 0, game.z);
       if (groundTexture) {
         groundTexture.offset.set(game.x * 0.018, -game.z * 0.018);
@@ -2672,7 +2848,7 @@ export default function Home() {
         if (pickup.marker) {
           pickup.marker.visible = pickup.sourceEra >= activeIndex && distance < 20;
         }
-        pickup.big = pickup.bulkRadius > effectiveRollRadius * 1.1;
+        pickup.big = pickup.visualRadius > effectiveRollRadius * 1.08;
         const identity = pickup.identity;
         const motionTime =
           now * 0.001 * identity.motionRate + pickup.wiggle + index * 0.017;
@@ -2684,11 +2860,11 @@ export default function Home() {
           pickup.root.rotation.x *= Math.pow(0.002, dt);
         }
         pickup.root.rotation.z *= Math.pow(0.002, dt);
-        pickup.root.scale.setScalar(
+        const motionScale =
           identity.motion === "pulse"
             ? 1 + Math.sin(motionTime * 3.1) * 0.045
-            : 1,
-        );
+            : 1;
+        pickup.root.scale.setScalar(motionScale * transitionWorldScale);
 
         switch (identity.motion) {
           case "bob":
@@ -2781,22 +2957,20 @@ export default function Home() {
 
       hudClock += dt;
       if (hudClock > 0.14) {
-        const journeyEra = eraAt(game.hours);
+        const journeyEra = game.era;
         const displayIndex = labEra ?? journeyEra;
-        const current = ERAS[journeyEra];
-        const next = ERAS[Math.min(journeyEra + 1, ERAS.length - 1)];
         const progress =
           labEra !== null
             ? 0
-            : current === next
-              ? 1
-              : Math.max(0, Math.min(1, (game.hours - current.at) / (next.at - current.at)));
+            : game.progress;
         setHud({
-          hours: game.hours,
+          hours: journeyHoursForEraProgress(journeyEra, game.progress),
           picked: game.picked,
           era: displayIndex,
+          journeyEra,
           progress,
           radius: game.radius,
+          zooms: game.zooms,
           quality: qualityTier,
         });
         hudClock = 0;
@@ -2804,16 +2978,17 @@ export default function Home() {
 
       if (labEra === null && now - game.lastSave > 5000) {
         const save: SaveData = {
-          hours: game.hours,
+          version: 3,
+          era: game.era,
+          progress: game.progress,
           picked: game.picked,
           x: game.x,
           z: game.z,
-          radius: game.radius,
           zooms: game.zooms,
           sound: game.sound,
           mash: mashHistoryRef.current,
         };
-        localStorage.setItem("everything-roll-save-v2", JSON.stringify(save));
+        localStorage.setItem("everything-roll-save-v3", JSON.stringify(save));
         game.lastSave = now;
       }
 
@@ -2827,6 +3002,12 @@ export default function Home() {
       window.removeEventListener("resize", resize);
       pickups.forEach((pickup) => removePickup(pickup));
       disposeEnvironment();
+      substrateGroup.traverse((object) => {
+        if (object instanceof THREE.Points) {
+          object.geometry.dispose();
+          object.material.dispose();
+        }
+      });
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
@@ -2837,6 +3018,8 @@ export default function Home() {
         }
       });
       markerTextures.forEach((texture) => texture.dispose());
+      visualTemplates.forEach((template) => disposeVisual(template));
+      visualTemplates.clear();
       happyFaceTexture.dispose();
       chompFaceTexture.dispose();
       groundTexture?.dispose();
@@ -2846,7 +3029,16 @@ export default function Home() {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [labEra, ping, playPickupSound]);
+    };
+    void bootScene().then((cleanup) => {
+      if (disposed) cleanup?.();
+      else disposeScene = cleanup;
+    });
+    return () => {
+      disposed = true;
+      disposeScene?.();
+    };
+  }, [started, labEra, ping, playPickupSound]);
 
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -2877,16 +3069,19 @@ export default function Home() {
   };
 
   const era = ERAS[hud.era];
-  const journeyIndex = eraAt(hud.hours);
+  const journeyIndex = hud.journeyEra;
   const nextEra = ERAS[Math.min(journeyIndex + 1, ERAS.length - 1)];
-  const remaining = Math.max(0, JOURNEY_HOURS - hud.hours);
-  const scale = labEra === null ? formatScale(hud.hours) : scaleFromLog(era.logMeters);
+  const scale =
+    labEra === null
+      ? formatEraScale(journeyIndex, hud.progress)
+      : formatEraScale(labEra, 0);
+  const atlasItem = ERAS[atlasEra];
 
   return (
     <main className="shell">
       <div
         ref={mountRef}
-        className="world"
+        className={`world ${started ? "started" : "awaiting-start"}`}
         style={
           {
             "--pop": era.palette[2],
@@ -2905,10 +3100,14 @@ export default function Home() {
               <b>QUARKATAMARI</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V15 · BACKLOG COMPLETE</span>
           </div>
           <div className="actions">
-            <button onClick={() => setShowAtlas(true)}>
+            <button
+              onClick={() => {
+                setAtlasEra(journeyIndex);
+                setShowAtlas(true);
+              }}
+            >
               <span aria-hidden="true">⌁</span> <span>Scale & science</span>
             </button>
             <button
@@ -2928,7 +3127,7 @@ export default function Home() {
           </div>
         )}
 
-        <section className="scale-card hud" aria-live="polite">
+        <section className="scale-card hud">
           <div className="kicker">
             <span>{era.name}</span>
             <span className={`confidence ${confidenceClass(era.confidence)}`}>
@@ -2949,12 +3148,9 @@ export default function Home() {
         <aside className="stats hud">
           <div><b>{hud.picked.toLocaleString()}</b><small>things collected</small></div>
           <i />
-          <div><b>{formatHours(hud.hours)}</b><small>deep journey</small></div>
+          <div><b>{journeyIndex}</b><small>layers underfoot</small></div>
           <i />
-          <div>
-            <b>{remaining > 0 ? `${Math.ceil(remaining)}h` : "∞"}</b>
-            <small>{remaining > 0 ? "to beyond" : "past science"}</small>
-          </div>
+          <div><b>{hud.zooms}</b><small>scale shifts</small></div>
         </aside>
 
         <aside className="fact-card hud">
@@ -2971,7 +3167,7 @@ export default function Home() {
           </a>
         </aside>
 
-        <div className="toast hud" role="status">
+        <div className="toast hud" role="status" aria-live="polite">
           <span>✦</span>
           {toast}
         </div>
@@ -2986,24 +3182,24 @@ export default function Home() {
 
         {!started && (
           <section className="welcome modal">
-            <div className="eyebrow">BEGIN AT THE PLANCK REGIME</div>
+            <div className="eyebrow">BEGIN WHERE THE MAP RUNS OUT</div>
             <h1>
               You are not a ball.
               <br />
               <em>Not yet.</em>
             </h1>
             <p className="welcome-lead">
-              Begin as a small cluster of foam-like spacetime fluctuations. Current-scale
-              things snap onto the outside and reshape your silhouette. Older scales still
-              add mass, but dissolve into the material beneath you as the universe zooms out.
+              Start in a deliberately silly theory playground: foam bubbles,
+              vibrating strings, topology questions, even musical notes. Collect
+              enough of the current layer to grow. At each scale shift, the old
+              world shrinks into the textured field beneath you.
             </p>
             <div className="science-caveat">
-              <b>Scientific honesty:</b> quantum foam is a speculative visualization,
-              and “rolling” before matter exists is a navigation metaphor. The game
-              labels every scale as measured, supported, unknown, or speculative.
-              Visible size decides what can be collected; era-appropriate energy or
-              mass determines how much the mash grows. Atomic electron clouds are
-              probability-inspired visualizations, not little planetary orbits.
+              <b>Scientific honesty:</b> everything in the opening playground is
+              explicitly speculative. “Rolling” before matter exists is a navigation
+              metaphor. Physical footprint alone decides what fits; shape-specific
+              gameplay bulk only tunes growth. Measured science resumes at the
+              particle frontier, and metre labels stop when known cosmology does.
             </div>
             <button className="start" onClick={begin}>
               <span>Begin becoming</span>
@@ -3011,8 +3207,8 @@ export default function Home() {
             </button>
             <div className="welcome-foot">
               <span>168 UNIQUE PICKUP VOICES</span><span>•</span>
-              <span>SOURCED SCALE ATLAS</span><span>•</span>
-              <span>INFINITE AFTER 500H</span>
+              <span>~62 SCIENCE-ANCHORED ORDERS</span><span>•</span>
+              <span>THEORY ON BOTH ENDS</span>
             </div>
           </section>
         )}
@@ -3032,41 +3228,55 @@ export default function Home() {
                 <button onClick={() => setShowAtlas(false)} aria-label="Close atlas">×</button>
               </header>
               <div className="era-list">
-                {ERAS.map((item, index) => {
-                  const reached = hud.hours >= item.at;
-                  const current = index === hud.era;
-                  return (
-                    <article
-                      key={item.name}
-                      className={`${reached ? "reached" : ""} ${current ? "current" : ""}`}
+                <div className="scale-scrubber">
+                  <div>
+                    <span>UNKNOWN BELOW</span>
+                    <b>drag across all 21 layers</b>
+                    <span>FICTION BEYOND</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max={ERAS.length - 1}
+                    step="1"
+                    value={atlasEra}
+                    onChange={(event) => setAtlasEra(Number(event.target.value))}
+                    aria-label="Choose a scale layer"
+                  />
+                  <div className="scrubber-meta">
+                    <span>Layer {atlasEra + 1} of {ERAS.length}</span>
+                    <span>{atlasEra <= journeyIndex ? "REACHED" : "AHEAD"}</span>
+                  </div>
+                </div>
+                <article className="era-feature current">
+                  <div
+                    className="era-dot"
+                    style={{ background: atlasItem.palette[2] }}
+                  >
+                    {atlasEra + 1}
+                  </div>
+                  <div className="era-copy">
+                    <span>{atlasEra === 0 ? "THEORY PLAYGROUND" : "SCALE LAYER"}</span>
+                    <h3>{atlasItem.name}</h3>
+                    <p>{atlasItem.lesson}</p>
+                    <div className={`confidence ${confidenceClass(atlasItem.confidence)}`}>
+                      {atlasItem.confidence}
+                    </div>
+                  </div>
+                  <div className="era-actions">
+                    <code>{formatEraScale(atlasEra, 0)}</code>
+                    <a
+                      href={atlasItem.sources[0].url}
+                      target="_blank"
+                      rel="noreferrer"
                     >
-                      <div className="era-dot" style={{ background: item.palette[2] }}>
-                        {index + 1}
-                      </div>
-                      <div className="era-copy">
-                        <span>{item.at ? `~${formatHours(item.at)}` : "START"}</span>
-                        <h3>{item.name}</h3>
-                        <p>{item.lesson}</p>
-                        <div className={`confidence ${confidenceClass(item.confidence)}`}>
-                          {item.confidence}
-                        </div>
-                      </div>
-                      <div className="era-actions">
-                        <code>{scaleFromLog(item.logMeters)}</code>
-                        <a
-                          href={item.sources[0].url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {item.sources[0].organization} source ↗
-                        </a>
-                        <button onClick={() => previewEra(index)}>
-                          {labEra === index ? "Viewing" : "Preview in 3D"}
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
+                      {atlasItem.sources[0].organization} source ↗
+                    </a>
+                    <button onClick={() => previewEra(atlasEra)}>
+                      {labEra === atlasEra ? "Viewing" : "Preview in 3D"}
+                    </button>
+                  </div>
+                </article>
                 <article className="sources">
                   <div>
                     <span>PRIMARY SOURCES</span>
@@ -3079,7 +3289,7 @@ export default function Home() {
                     </p>
                   </div>
                   <div className="source-links">
-                    <a href="https://physics.nist.gov/cgi-bin/cuu/Value?plkl=" target="_blank" rel="noreferrer">NIST · Planck length ↗</a>
+                    <a href="https://physics.nist.gov/cgi-bin/cuu/Value?plkl" target="_blank" rel="noreferrer">NIST · Planck length ↗</a>
                     <a href="https://home.cern/partons-hadrons/" target="_blank" rel="noreferrer">CERN · Quark confinement ↗</a>
                     <a href="https://home.cern/science/experiments/alice/" target="_blank" rel="noreferrer">CERN ALICE · Matter ↗</a>
                     <a href="https://home.cern/science/physics/standard-model" target="_blank" rel="noreferrer">CERN · Standard Model ↗</a>

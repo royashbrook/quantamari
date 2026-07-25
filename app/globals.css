@@ -8,6 +8,8 @@
   --pink: #ff6faf;
   --yellow: #ffe170;
   --sky: #9ce7ff;
+  --font-geist-sans: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  --font-geist-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
 * {
@@ -32,6 +34,14 @@ button,
 a {
   color: inherit;
   font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 3px solid #fff4a8;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px #4b2868;
 }
 
 .shell,
@@ -91,11 +101,21 @@ a {
 
 .hud {
   pointer-events: none;
+  transition: opacity 220ms ease;
 }
 
 .hud button,
 .hud a {
   pointer-events: auto;
+}
+
+.awaiting-start .hud {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.awaiting-start .three-canvas {
+  opacity: 0.48;
 }
 
 .topbar {
@@ -154,18 +174,6 @@ a {
   font: 650 9px var(--font-geist-mono), monospace;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
-.version-badge {
-  margin-left: 7px;
-  padding: 5px 8px;
-  border: 2px solid #4b2868;
-  border-radius: 999px;
-  background: var(--yellow);
-  box-shadow: 0 3px 0 #4b2868;
-  color: #4b2868;
-  font: 800 8px var(--font-geist-mono), monospace;
-  letter-spacing: 0.08em;
 }
 
 .actions {
@@ -288,7 +296,7 @@ a {
   padding: 4px 7px;
   border: 1px solid currentColor;
   border-radius: 999px;
-  font: 850 7px var(--font-geist-mono), monospace;
+  font: 850 8px var(--font-geist-mono), monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -353,7 +361,7 @@ a {
 .meta {
   margin-top: 7px;
   color: #806b91;
-  font: 8px var(--font-geist-mono), monospace;
+  font: 9px var(--font-geist-mono), monospace;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -389,7 +397,7 @@ a {
 .stats small {
   margin-top: 3px;
   color: #7e6a8e;
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 780;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -418,7 +426,7 @@ a {
 
 .fact-kicker {
   color: #b13c73;
-  font: 800 7px var(--font-geist-mono), monospace;
+  font: 800 8px var(--font-geist-mono), monospace;
   letter-spacing: 0.11em;
 }
 
@@ -439,7 +447,7 @@ a {
   display: inline-block;
   margin-top: 7px;
   color: #9d3d70;
-  font: 760 7px var(--font-geist-mono), monospace;
+  font: 760 8px var(--font-geist-mono), monospace;
   letter-spacing: 0.02em;
   text-decoration: none;
 }
@@ -483,7 +491,7 @@ a {
   gap: 16px;
   color: rgba(255, 250, 240, 0.82);
   text-shadow: 0 2px 4px #29183d;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 680;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -689,6 +697,44 @@ kbd {
   padding: 10px 20px 23px;
 }
 
+.scale-scrubber {
+  margin: 8px 3px 14px;
+  padding: 18px 20px 15px;
+  border: 2px solid #4b2868;
+  border-radius: 19px 23px 17px 21px;
+  background:
+    linear-gradient(90deg, rgba(255, 111, 175, 0.16), rgba(156, 231, 255, 0.28), rgba(126, 84, 255, 0.15)),
+    #fff;
+  box-shadow: 0 4px 0 #4b2868;
+}
+
+.scale-scrubber > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #9d4774;
+  font: 800 9px var(--font-geist-mono), monospace;
+  letter-spacing: 0.08em;
+}
+
+.scale-scrubber > div b {
+  color: #4b2868;
+  font-size: 11px;
+}
+
+.scale-scrubber input {
+  width: 100%;
+  margin: 16px 0 12px;
+  accent-color: #e84d94;
+  cursor: ew-resize;
+}
+
+.scale-scrubber .scrubber-meta {
+  color: #766481;
+  font-size: 8px;
+}
+
 .era-list > article {
   position: relative;
   display: grid;
@@ -746,7 +792,7 @@ kbd {
 .era-copy > span,
 .sources span {
   color: #b15b78;
-  font: 800 7px var(--font-geist-mono), monospace;
+  font: 800 8px var(--font-geist-mono), monospace;
   letter-spacing: 0.12em;
 }
 
@@ -763,14 +809,14 @@ kbd {
   max-width: 660px;
   margin: 0;
   color: #817483;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.42;
 }
 
 .era-copy .confidence {
   margin-top: 6px;
   padding: 2px 5px;
-  font-size: 6px;
+  font-size: 8px;
 }
 
 .era-actions {
@@ -782,12 +828,12 @@ kbd {
 
 .era-actions code {
   color: #9b8f9f;
-  font: 700 8px var(--font-geist-mono), monospace;
+  font: 700 9px var(--font-geist-mono), monospace;
 }
 
 .era-actions a {
   color: #9d4774;
-  font: 720 7px var(--font-geist-mono), monospace;
+  font: 720 9px var(--font-geist-mono), monospace;
   text-decoration: none;
 }
 
@@ -835,7 +881,7 @@ kbd {
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.7);
   color: #80556f;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 800;
   text-decoration: none;
 }
@@ -865,11 +911,6 @@ kbd {
 
   .brand small {
     display: none;
-  }
-
-  .version-badge {
-    margin-left: 2px;
-    font-size: 7px;
   }
 
   .actions button:first-child {
@@ -904,12 +945,12 @@ kbd {
 
   .kicker {
     gap: 7px;
-    font-size: 8px;
+    font-size: 9px;
   }
 
   .confidence {
     padding: 3px 5px;
-    font-size: 6px;
+    font-size: 8px;
   }
 
   .scale {
@@ -928,7 +969,7 @@ kbd {
 
   .meta {
     margin-top: 5px;
-    font-size: 6px;
+    font-size: 9px;
   }
 
   .stats {
@@ -956,7 +997,7 @@ kbd {
 
   .toast {
     bottom: 76px;
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .controls {
@@ -970,7 +1011,7 @@ kbd {
     bottom: 103px;
     display: block;
     color: rgba(255, 255, 255, 0.48);
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 750;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -986,7 +1027,7 @@ kbd {
   }
 
   .science-caveat {
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .welcome-foot {
@@ -1011,12 +1052,24 @@ kbd {
   }
 
   .atlas > header p {
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .era-list {
     max-height: calc(100dvh - 137px);
     padding: 8px 8px 17px;
+  }
+
+  .scale-scrubber {
+    padding: 14px 12px 12px;
+  }
+
+  .scale-scrubber > div {
+    font-size: 8px;
+  }
+
+  .scale-scrubber > div b {
+    display: none;
   }
 
   .era-list > article {

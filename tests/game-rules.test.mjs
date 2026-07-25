@@ -8,13 +8,20 @@ import {
   logMetersAt,
 } from "../app/scale-data.ts";
 import {
+  CORE_RADIUS_MAX,
+  CORE_RADIUS_MIN,
   canCollectPickup,
+  collectionProgressGain,
   collectibleIdentityFor,
-  growthContribution,
   lowPickupBudget,
+  nextLayerObstacleRadius,
+  obstacleCenterGap,
   pickupBudget,
   pixelRatioCap,
   qualityTierForFps,
+  radiusForLayerProgress,
+  resolveCircularCollision,
+  scaleTransitionFrame,
 } from "../app/game-rules.ts";
 
 const curios = ERAS.flatMap((era) =>
@@ -58,20 +65,51 @@ test("every collectible has a stable, distinct audiovisual identity", () => {
   }
 });
 
-test("pickup fit follows visible bulk while older scales remain collectible", () => {
-  assert.equal(canCollectPickup(7, 7, 1.09, 1), true);
+test("pickup fit is purely physical instead of secretly gated by era", () => {
+  assert.equal(canCollectPickup(7, 7, 1.07, 1), true);
   assert.equal(canCollectPickup(4, 7, 0.7, 1), true);
-  assert.equal(canCollectPickup(8, 7, 0.2, 1), false);
-  assert.equal(canCollectPickup(7, 7, 1.11, 1), false);
+  assert.equal(canCollectPickup(8, 7, 0.2, 1), true);
+  assert.equal(canCollectPickup(7, 7, 1.09, 1), false);
 });
 
-test("older scales contribute less growth without disappearing", () => {
-  const current = growthContribution(1.2, 0.42, 1, 0);
-  const oneEraOld = growthContribution(1.2, 0.42, 1, 1);
-  const sixErasOld = growthContribution(1.2, 0.42, 1, 6);
-  assert.ok(current.contribution > oneEraOld.contribution);
-  assert.ok(oneEraOld.contribution > sixErasOld.contribution);
-  assert.ok(sixErasOld.contribution > 0);
+test("collection drives one bounded logarithmic layer transition", () => {
+  assert.equal(radiusForLayerProgress(0), CORE_RADIUS_MIN);
+  assert.equal(radiusForLayerProgress(1), CORE_RADIUS_MAX);
+  assert.equal(radiusForLayerProgress(-2), CORE_RADIUS_MIN);
+  assert.equal(radiusForLayerProgress(3), CORE_RADIUS_MAX);
+  const light = collectionProgressGain(1.2, 0.35, 0.3);
+  const chunky = collectionProgressGain(1.2, 0.7, 1.2);
+  assert.ok(light > 0);
+  assert.ok(chunky > light);
+  assert.ok(chunky <= 0.095);
+});
+
+test("next-layer obstacles are unmistakable and leave a full rolling corridor", () => {
+  const envelope = 1.72;
+  const obstacle = nextLayerObstacleRadius(envelope);
+  assert.ok(obstacle >= envelope * 1.9);
+  assert.ok(
+    obstacleCenterGap(obstacle, obstacle, envelope) >
+      obstacle * 2 + envelope * 2,
+  );
+});
+
+test("obstacle response depenetrates and preserves tangent sliding", () => {
+  const result = resolveCircularCollision(0.5, 0, -4, 3, 0, 0, 1);
+  assert.ok(result.x > 0.99);
+  assert.equal(result.vx, 0);
+  assert.equal(result.vz, 3);
+});
+
+test("scale shift grows the player while shrinking the outgoing world", () => {
+  const start = scaleTransitionFrame(0);
+  const middle = scaleTransitionFrame(0.5);
+  const finish = scaleTransitionFrame(1);
+  assert.deepEqual(start, { playerScale: 1, worldScale: 1 });
+  assert.ok(middle.playerScale > 1.5);
+  assert.ok(middle.worldScale < 0.7);
+  assert.ok(finish.worldScale < 0.25);
+  assert.ok(middle.playerScale / middle.worldScale > 2);
 });
 
 test("the authored scale increases and infinite play has no scale cap", () => {

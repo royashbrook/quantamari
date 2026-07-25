@@ -12,6 +12,11 @@ export type PickupMotion =
 
 export type SoundWave = "sine" | "square" | "sawtooth" | "triangle";
 
+export const CORE_RADIUS_MIN = 1.12;
+export const CORE_RADIUS_MAX = 2.28;
+export const MAX_ROLL_ENVELOPE_FACTOR = 1.72;
+export const NEXT_LAYER_OBSTACLE_FACTOR = 1.9;
+
 export type CollectibleIdentity = {
   id: string;
   seed: number;
@@ -86,29 +91,87 @@ export function collectibleIdentityFor(name: string, shape: string): Collectible
 }
 
 export function canCollectPickup(
-  sourceEra: number,
-  activeEra: number,
+  _sourceEra: number,
+  _activeEra: number,
   pickupBulkRadius: number,
   rollingRadius: number,
 ) {
-  return sourceEra <= activeEra && pickupBulkRadius <= rollingRadius * 1.1;
+  return pickupBulkRadius <= rollingRadius * 1.08;
 }
 
-export function growthContribution(
+export function radiusForLayerProgress(progress: number) {
+  const t = Math.max(0, Math.min(1, progress));
+  return Math.cbrt(
+    CORE_RADIUS_MIN ** 3 +
+      (CORE_RADIUS_MAX ** 3 - CORE_RADIUS_MIN ** 3) * t,
+  );
+}
+
+export function collectionProgressGain(
   rollingRadius: number,
   pickupBulkRadius: number,
-  massEnergyFactor: number,
-  scaleGap: number,
+  gameplayBulkFactor: number,
 ) {
-  const growthFactor = scaleGap === 0 ? 1 : Math.max(0.0002, 0.14 ** scaleGap);
-  const rawContribution =
-    pickupBulkRadius ** 3 * massEnergyFactor * growthFactor * 0.42;
+  const relativeBulk = pickupBulkRadius / Math.max(0.001, rollingRadius);
+  return Math.max(
+    0.022,
+    Math.min(0.095, relativeBulk ** 2 * gameplayBulkFactor * 0.15),
+  );
+}
+
+export function nextLayerObstacleRadius(rollingEnvelope: number) {
+  return rollingEnvelope * NEXT_LAYER_OBSTACLE_FACTOR;
+}
+
+export function obstacleCenterGap(
+  firstRadius: number,
+  secondRadius: number,
+  rollingEnvelope: number,
+) {
+  return (
+    firstRadius +
+    secondRadius +
+    rollingEnvelope * 2 +
+    Math.max(0.8, rollingEnvelope * 0.24)
+  );
+}
+
+export function resolveCircularCollision(
+  playerX: number,
+  playerZ: number,
+  velocityX: number,
+  velocityZ: number,
+  obstacleX: number,
+  obstacleZ: number,
+  combinedRadius: number,
+) {
+  const dx = playerX - obstacleX;
+  const dz = playerZ - obstacleZ;
+  const distance = Math.hypot(dx, dz);
+  const normalX = distance > 0.0001 ? dx / distance : 1;
+  const normalZ = distance > 0.0001 ? dz / distance : 0;
+  const overlap = Math.max(0, combinedRadius - distance + 0.002);
+  const normalVelocity = velocityX * normalX + velocityZ * normalZ;
   return {
-    growthFactor,
-    contribution: Math.min(
-      rollingRadius ** 3 * 0.014,
-      Math.max(0.000008, rawContribution),
-    ),
+    x: playerX + normalX * overlap,
+    z: playerZ + normalZ * overlap,
+    vx:
+      normalVelocity < 0
+        ? velocityX - normalVelocity * normalX
+        : velocityX,
+    vz:
+      normalVelocity < 0
+        ? velocityZ - normalVelocity * normalZ
+        : velocityZ,
+  };
+}
+
+export function scaleTransitionFrame(progress: number) {
+  const t = Math.max(0, Math.min(1, progress));
+  const eased = t * t * (3 - 2 * t);
+  return {
+    playerScale: 1 + Math.sin(t * Math.PI) * 0.58,
+    worldScale: 1 - eased * 0.78,
   };
 }
 
@@ -131,9 +194,9 @@ export function qualityTierForFps(
 
 export function pickupBudget(viewportWidth: number, tier: QualityTier) {
   const mobile = viewportWidth <= 860;
-  if (tier === "high") return mobile ? 392 : 544;
-  if (tier === "balanced") return mobile ? 304 : 424;
-  return mobile ? 224 : 312;
+  if (tier === "high") return mobile ? 160 : 220;
+  if (tier === "balanced") return mobile ? 120 : 170;
+  return mobile ? 88 : 120;
 }
 
 export function lowPickupBudget(viewportWidth: number, tier: QualityTier) {

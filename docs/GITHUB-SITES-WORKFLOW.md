@@ -38,8 +38,8 @@ unless they were created as part of a deliberate release.
 
 ## Recovery
 
-- Roll back production with a saved Sites version; V14 is the checkpoint before
-  the V15 backlog release.
+- Roll back production with a saved Sites version; `v15.0.0` is the tagged
+  checkpoint before the V16 scale-layer rewrite.
 - If the two histories diverge, fetch both and reconcile them on a temporary
   branch. Do not use `--force`, `reset --hard`, or delete either remote branch.
 - A connector that cannot see the private personal repository cannot mirror it.

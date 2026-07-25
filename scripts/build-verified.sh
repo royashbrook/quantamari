@@ -25,4 +25,12 @@ timeout \
   "${SITES_BUILD_TIMEOUT:-3m}" \
   "${vinext}" build
 
+# Static export needs the app router only while prerendering. Never deploy it.
+cp \
+  "${SITES_PROJECT_ROOT}/worker/static-worker.js" \
+  "${SITES_PROJECT_ROOT}/dist/server/index.js"
+node \
+  "${SITES_PROJECT_ROOT}/scripts/finalize-static-artifact.mjs" \
+  "${SITES_PROJECT_ROOT}"
+
 "${script_dir}/validate-artifact.sh"

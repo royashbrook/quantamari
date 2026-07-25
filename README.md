@@ -2,32 +2,40 @@
 
 Quarkatamari is an untimed, browser-based 3D rolling game about the scale of
 everything. Begin with a deliberately speculative visualization near the
-Planck regime, roll through particles, atoms, cells, dust, rooms, planets, and
-galaxies, then continue forever into a clearly fictional beyond.
+edge of known physics, roll through particles, atoms, cells, dust, rooms,
+planets, and galaxies, then continue forever into a clearly fictional beyond.
 
-The current release contains 21 eras and 168 collectible identities across a
-500-hour authored journey. Progress is saved locally and Scale Lab can preview
-any era without changing that save.
+The current release contains 21 scale layers and 168 collectible identities.
+Progress is driven only by collection, saved locally, and Scale Lab can preview
+any layer without changing that save. The shipped game is a static, offline-
+capable PWA; all gameplay and persistence stay in the browser.
 
 ## Gameplay contract
 
 - Visible size determines whether a pickup fits. If it looks smaller than the
   mash, it can be rolled up.
-- Mass or energy weighting determines growth. Older scales remain collectible
-  but contribute progressively less.
-- Only current-scale pickups remain visible on the mash. Older pickups dissolve
-  silently into its mass and replenish their scale band.
-- The world keeps three smaller and three larger neighboring scale bands alive.
-  Oversized obstacles are separated during spawning so they cannot form cages.
+- Shape-specific gameplay bulk tunes growth; it is not presented as physical
+  mass or energy.
+- Collection fills one logarithmic layer. A scale-shift animation grows the
+  player, shrinks the outgoing world, and bakes prior layers into a
+  non-colliding substrate underfoot.
+- Current-layer pickups are interactive. The next layer is at least 1.9 times
+  the maximum rolling envelope, and its obstacles are spawned only when a full
+  player-width corridor remains; failed placements are declined.
+- Obstacles use depenetration plus tangent sliding instead of frame-dependent
+  bounce impulses.
 - Every named collectible has a deterministic model signature, motion
   personality, and synthesized three-note pickup voice.
 - Rendering adapts pickup density, pixel ratio, and shadows from measured frame
-  rate, with mobile-specific budgets.
+  rate, with quieter early layers, mobile budgets, shared visual templates,
+  incremental spawning, and lazy-loaded Three.js.
 
 ## Science contract
 
-The game compresses roughly 95 orders of magnitude into play, so scale changes
-are logarithmic and time is a game progression axis—not physical time.
+The scientifically anchored path spans roughly 62 orders of magnitude, so
+scale changes are logarithmic. Deliberate theory/fantasy bookends extend below
+current knowledge and beyond the observable universe without displaying
+fictional metre measurements.
 Authoritative references from NIST, CERN, NIH, CDC, EPA, USGS, and NASA are
 attached to every era and collectible fact. Confidence labels distinguish
 measured science, supported models, unresolved territory, and deliberate
@@ -67,5 +75,5 @@ surface. Never force-push either remote.
 See [docs/GITHUB-SITES-WORKFLOW.md](docs/GITHUB-SITES-WORKFLOW.md), or run
 `npm run sync:remotes` after both remotes are configured and the tree is clean.
 
-The release record is in [BACKLOG.md](BACKLOG.md). V14 remains the rollback
-point for the V15 backlog-completion release.
+The release record is in [BACKLOG.md](BACKLOG.md). The annotated `v15.0.0` tag
+is the rollback point before the V16 scale-layer architecture.

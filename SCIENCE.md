@@ -10,15 +10,18 @@ literal physics.
 
 - **Scale** is the characteristic length of the active era. The authored
   journey interpolates logarithmically between scale anchors.
-- **Fit** is geometric: visible bulk determines whether an item can be
+- **Fit** is geometric: the ground-plane footprint determines whether an item can be
   collected.
-- **Growth** is weighted: current-era mass or energy matters most, while older
-  scales add a rapidly diminishing amount.
-- **Journey hours** are a progression target, not elapsed cosmic time. The
-  authored path reaches the fictional beyond at 500 engaged hours, then the
-  scale function continues without a cap.
-- **Quantum foam, pre-matter rolling, magical adhesion, and the metaversal
-  region are visual/game metaphors.** They are labeled unknown or speculative.
+- **Growth** is collection-driven. Shape-specific “gameplay bulk” creates
+  satisfying variation but is not a physical mass or energy calculation.
+- **Earlier layers** aggregate into a non-interactive visual substrate once the
+  player no longer meaningfully interacts with their individual structures.
+- **The Theory Playground, pre-matter rolling, magical adhesion, and the
+  metaversal region are visual/game metaphors.** Foam, strings, musical notes,
+  topology, and extra dimensions are deliberately mixed together as a playful
+  speculative opening—not a proposed ladder of matter.
+- **Metre labels stop after the observable universe.** The final layer says
+  `FICTIONAL · UNBOUNDED`.
 
 ## Confidence labels
 
@@ -54,12 +57,14 @@ missing source a test failure.
 
 - Electron clouds are probability-inspired art, never planetary electron
   tracks.
-- Quarks are not shown as collectable isolated classical beads; early pickup
-  art represents traces or field activity.
+- Quarks are not shown as collectable isolated classical beads; pickup art
+  represents traces or field activity. “Quarks & Gluons” is not presented as a
+  quark–gluon-plasma substrate.
 - Cells and organisms use stylized, recognizable silhouettes rather than
   anatomical models.
 - Macroscopic and cosmic bodies are not drawn at mutually exact ratios inside
-  one playfield. The active seven-band window preserves readability.
+  one playfield. Current-layer interaction plus a clearly oversized next-layer
+  preview preserves readability.
 - The game does not claim a confirmed physical structure below current particle
   probes or beyond the observable universe.
 
