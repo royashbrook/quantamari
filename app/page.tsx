@@ -157,7 +157,9 @@ export default function Home() {
   const [showAtlas, setShowAtlas] = useState(false);
   const [labEra, setLabEra] = useState<number | null>(null);
   const [sound, setSound] = useState(true);
-  const [toast, setToast] = useState("Roll over anything smaller and stick it to your mash.");
+  const [toast, setToast] = useState(
+    "Current-scale things stick. Older specks dissolve quietly into mass.",
+  );
   const [lastFact, setLastFact] = useState({
     name: "Spacetime fluctuation",
     fact: ERAS[0].lesson,
@@ -327,7 +329,7 @@ export default function Home() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     const compactGpu = window.innerWidth <= 860;
     renderer.setPixelRatio(
-      Math.min(window.devicePixelRatio || 1, compactGpu ? 1.25 : 1.6),
+      Math.min(window.devicePixelRatio || 1, compactGpu ? 1.75 : 2),
     );
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -353,7 +355,7 @@ export default function Home() {
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
     keyLight.position.set(-7, 12, 8);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(compactGpu ? 512 : 1024, compactGpu ? 512 : 1024);
+    keyLight.shadow.mapSize.set(compactGpu ? 1024 : 2048, compactGpu ? 1024 : 2048);
     keyLight.shadow.camera.left = -22;
     keyLight.shadow.camera.right = 22;
     keyLight.shadow.camera.top = 22;
@@ -554,6 +556,29 @@ export default function Home() {
       planet: "a whole curved world",
       cosmic: "deep space",
     };
+    const eraWorldNames = [
+      "a foaming spacetime void",
+      "an unresolved measurement abyss",
+      "a quark–gluon plasma storm",
+      "a crowded hadron forge",
+      "a soft electron-cloud world",
+      "a bonded molecular lattice",
+      "a folded macromolecule reef",
+      "a living cellular sea",
+      "a forest of fibers and pollen",
+      "a sunlit country of dust",
+      "a giant tabletop world",
+      "a very rollable house",
+      "a busy vehicle yard",
+      "a growing neighborhood",
+      "a curved living landscape",
+      "the horizon of a whole planet",
+      "a blazing stellar field",
+      "an ocean of orbital systems",
+      "a garden of galaxies",
+      "the luminous cosmic web",
+      "a speculative infinity of realities",
+    ];
 
     let environmentMode = environmentModeFor(activeIndex);
     let eraTransitionAge = 99;
@@ -639,8 +664,349 @@ export default function Home() {
       environmentGroup.add(new THREE.Points(geometry, material));
     };
 
+    let groundTexture: THREE.CanvasTexture | null = null;
+    let coreSurfaceTexture: THREE.CanvasTexture | null = null;
+
+    const makeScalePatternTexture = (index: number, forCore = false) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = forCore ? 384 : 512;
+      canvas.height = forCore ? 384 : 512;
+      const context = canvas.getContext("2d")!;
+      const size = canvas.width;
+      const palette = ERAS[index].palette;
+      const base = new THREE.Color(palette[1]).lerp(
+        new THREE.Color(forCore ? "#fff0c7" : "#d8f2e4"),
+        forCore ? 0.36 : 0.18,
+      );
+      const ink = new THREE.Color(palette[2]).lerp(
+        new THREE.Color("#ffffff"),
+        0.2,
+      );
+      const shadow = new THREE.Color(palette[0]).lerp(
+        new THREE.Color("#20102e"),
+        0.3,
+      );
+      const inkRgba = (alpha: number) =>
+        `rgba(${Math.round(ink.r * 255)}, ${Math.round(ink.g * 255)}, ${Math.round(ink.b * 255)}, ${alpha})`;
+      context.fillStyle = base.getStyle();
+      context.fillRect(0, 0, size, size);
+      context.lineCap = "round";
+      context.lineJoin = "round";
+
+      const dot = (x: number, y: number, radius: number, color = ink.getStyle()) => {
+        context.fillStyle = color;
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fill();
+      };
+
+      if (index <= 1) {
+        for (let motif = 0; motif < 44; motif += 1) {
+          const x = pseudo(motif + index * 17) * size;
+          const y = pseudo(motif * 3.7 + index * 31) * size;
+          const radius = 5 + pseudo(motif * 6.1) * 24;
+          context.strokeStyle = motif % 2 ? ink.getStyle() : "#a8efff";
+          context.globalAlpha = 0.18 + pseudo(motif + 7) * 0.28;
+          context.lineWidth = 2 + pseudo(motif + 9) * 5;
+          context.beginPath();
+          context.arc(x, y, radius, 0, Math.PI * 2);
+          context.stroke();
+        }
+      } else if (index <= 3) {
+        for (let motif = 0; motif < 72; motif += 1) {
+          const x = pseudo(motif * 2.3 + index) * size;
+          const y = pseudo(motif * 5.9 + index) * size;
+          const colors = ["#ff667d", "#63b8ff", "#ffe36c"];
+          dot(x, y, 2.5 + pseudo(motif) * 7, colors[motif % 3]);
+          if (motif % 3 === 0) {
+            context.strokeStyle = ink.getStyle();
+            context.globalAlpha = 0.28;
+            context.lineWidth = 2;
+            context.beginPath();
+            context.arc(x, y, 12 + pseudo(motif + 4) * 16, 0, Math.PI * 2);
+            context.stroke();
+          }
+        }
+      } else if (index === 4) {
+        for (let cloud = 0; cloud < 34; cloud += 1) {
+          const x = pseudo(cloud * 4.7) * size;
+          const y = pseudo(cloud * 8.2) * size;
+          const radius = 10 + pseudo(cloud + 4) * 25;
+          const gradient = context.createRadialGradient(x, y, 1, x, y, radius);
+          gradient.addColorStop(0, inkRgba(0.8));
+          gradient.addColorStop(0.35, inkRgba(0.34));
+          gradient.addColorStop(1, inkRgba(0));
+          context.fillStyle = gradient;
+          context.beginPath();
+          context.arc(x, y, radius, 0, Math.PI * 2);
+          context.fill();
+          dot(x, y, 2.5, "#fff3a5");
+        }
+      } else if (index <= 6) {
+        context.strokeStyle = shadow.getStyle();
+        context.globalAlpha = 0.34;
+        context.lineWidth = index === 5 ? 5 : 8;
+        for (let chain = 0; chain < 24; chain += 1) {
+          const x = pseudo(chain * 4.3) * size;
+          const y = pseudo(chain * 9.7) * size;
+          const angle = pseudo(chain + 11) * Math.PI * 2;
+          context.beginPath();
+          context.moveTo(x, y);
+          context.lineTo(x + Math.cos(angle) * 45, y + Math.sin(angle) * 45);
+          context.stroke();
+          dot(x, y, 6 + (chain % 3) * 2);
+          dot(
+            x + Math.cos(angle) * 45,
+            y + Math.sin(angle) * 45,
+            5 + ((chain + 1) % 3) * 2,
+            chain % 2 ? "#fff0b2" : ink.getStyle(),
+          );
+        }
+      } else if (index === 7) {
+        for (let cell = 0; cell < 26; cell += 1) {
+          const x = pseudo(cell * 6.7) * size;
+          const y = pseudo(cell * 2.9) * size;
+          const radius = 12 + pseudo(cell + 5) * 24;
+          context.strokeStyle = cell % 2 ? ink.getStyle() : "#f4b4dd";
+          context.globalAlpha = 0.38;
+          context.lineWidth = 5;
+          context.beginPath();
+          context.ellipse(x, y, radius * 1.3, radius, pseudo(cell) * Math.PI, 0, Math.PI * 2);
+          context.stroke();
+          dot(x + radius * 0.2, y, radius * 0.22, shadow.getStyle());
+        }
+      } else if (index === 8) {
+        context.globalAlpha = 0.38;
+        context.lineWidth = 6;
+        for (let fiber = -8; fiber < 18; fiber += 1) {
+          context.strokeStyle = fiber % 3 ? ink.getStyle() : "#fff2c5";
+          context.beginPath();
+          context.moveTo(-40, fiber * 28);
+          context.bezierCurveTo(120, fiber * 28 + 45, 360, fiber * 28 - 45, size + 40, fiber * 28 + 8);
+          context.stroke();
+        }
+      } else if (index === 9) {
+        for (let speck = 0; speck < 620; speck += 1) {
+          dot(
+            pseudo(speck * 3.71) * size,
+            pseudo(speck * 8.33) * size,
+            0.5 + pseudo(speck + 9) * 3.2,
+            speck % 5 ? shadow.getStyle() : ink.getStyle(),
+          );
+        }
+      } else if (index <= 11) {
+        context.globalAlpha = 0.34;
+        for (let grain = 0; grain < 28; grain += 1) {
+          context.strokeStyle = grain % 2 ? shadow.getStyle() : ink.getStyle();
+          context.lineWidth = 2 + (grain % 4);
+          context.beginPath();
+          const y = grain * 20 + pseudo(grain) * 8;
+          context.moveTo(0, y);
+          context.bezierCurveTo(size * 0.3, y - 12, size * 0.7, y + 15, size, y - 3);
+          context.stroke();
+        }
+      } else {
+        context.globalAlpha = 0.32;
+        context.strokeStyle = shadow.getStyle();
+        context.lineWidth = index === 12 ? 5 : 3;
+        const step = index === 12 ? 64 : 38;
+        for (let line = 0; line <= size; line += step) {
+          context.beginPath();
+          context.moveTo(line, 0);
+          context.lineTo(line, size);
+          context.moveTo(0, line);
+          context.lineTo(size, line);
+          context.stroke();
+        }
+      }
+
+      context.globalAlpha = 1;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(forCore ? 1.8 : index <= 8 ? 22 : 12, forCore ? 1.8 : index <= 8 ? 22 : 12);
+      texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+      return texture;
+    };
+
+    const applyScaleTextures = (index: number) => {
+      groundTexture?.dispose();
+      coreSurfaceTexture?.dispose();
+      groundTexture = makeScalePatternTexture(index);
+      coreSurfaceTexture = makeScalePatternTexture(index, true);
+      groundMaterial.map = groundTexture;
+      groundMaterial.needsUpdate = true;
+      coreMaterial.map = coreSurfaceTexture;
+      coreMaterial.needsUpdate = true;
+    };
+
+    const addEraSignature = (index: number) => {
+      if (index === 0) {
+        for (let bubble = 0; bubble < 18; bubble += 1) {
+          addScenery(
+            new THREE.SphereGeometry(0.6 + pseudo(bubble) * 2.2, 18, 12),
+            sceneryGlow(bubble % 2 ? "#ff73ca" : "#75e8ff", 0.1, true),
+            [
+              (pseudo(bubble * 3.7) - 0.5) * 54,
+              1.5 + pseudo(bubble * 8.1) * 15,
+              (pseudo(bubble * 5.2) - 0.5) * 56,
+            ],
+          );
+        }
+      } else if (index === 1) {
+        [-16, 0, 16].forEach((x, plane) => {
+          addScenery(
+            new THREE.PlaneGeometry(22, 22, 9, 9),
+            sceneryGlow(plane === 1 ? "#67ddff" : "#a993ff", 0.13, true),
+            [x, 8 + plane * 2, -28 - plane * 5],
+            [0.15, plane * 0.45, 0],
+          );
+        });
+      } else if (index === 2) {
+        for (let knot = 0; knot < 12; knot += 1) {
+          const angle = (knot / 12) * Math.PI * 2;
+          addScenery(
+            new THREE.TorusKnotGeometry(1.2 + (knot % 3) * 0.45, 0.09, 72, 7, 2, 3),
+            sceneryGlow(["#ff5575", "#57a7ff", "#ffd94f"][knot % 3], 0.5),
+            [Math.cos(angle) * 28, 3 + (knot % 4) * 2.2, Math.sin(angle) * 28],
+            [pseudo(knot) * Math.PI, pseudo(knot + 8) * Math.PI, 0],
+          );
+        }
+      } else if (index === 3) {
+        for (let cluster = 0; cluster < 13; cluster += 1) {
+          const angle = (cluster / 13) * Math.PI * 2;
+          const parent = new THREE.Group();
+          parent.position.set(Math.cos(angle) * 31, 3 + (cluster % 4) * 2, Math.sin(angle) * 31);
+          environmentGroup.add(parent);
+          [
+            [-0.7, 0.2, 0.1],
+            [0.7, 0.2, -0.1],
+            [0, -0.65, 0],
+          ].forEach((position, part) => {
+            addScenery(
+              new THREE.SphereGeometry(0.72, 18, 12),
+              sceneryGlow(["#ff657c", "#62aaff", "#ffe06b"][part], 0.5),
+              position as [number, number, number],
+              [0, 0, 0],
+              [1, 1, 1],
+              parent,
+            );
+          });
+        }
+      } else if (index === 4) {
+        for (let cloud = 0; cloud < 16; cloud += 1) {
+          const angle = (cloud / 16) * Math.PI * 2;
+          addScenery(
+            new THREE.SphereGeometry(1.5 + (cloud % 3) * 0.7, 20, 14),
+            sceneryGlow(cloud % 2 ? "#6ee8be" : "#b9fff0", 0.12, true),
+            [Math.cos(angle) * 31, 2 + (cloud % 5) * 1.7, Math.sin(angle) * 31],
+            [0, cloud * 0.3, 0],
+            [1.4, 0.75 + (cloud % 2) * 0.35, 1],
+          );
+        }
+      } else if (index === 5) {
+        for (let molecule = 0; molecule < 18; molecule += 1) {
+          const angle = (molecule / 18) * Math.PI * 2;
+          const parent = new THREE.Group();
+          parent.position.set(Math.cos(angle) * 30, 2.5 + (molecule % 4), Math.sin(angle) * 30);
+          parent.rotation.set(pseudo(molecule), pseudo(molecule + 3) * Math.PI, pseudo(molecule + 9));
+          environmentGroup.add(parent);
+          for (let atom = 0; atom < 4; atom += 1) {
+            addScenery(
+              new THREE.SphereGeometry(0.34 + atom * 0.05, 14, 10),
+              sceneryGlow(atom % 2 ? "#f7f0c6" : activeEra.palette[2], 0.62),
+              [(atom - 1.5) * 0.75, Math.sin(atom * 2.2) * 0.45, 0],
+              [0, 0, 0],
+              [1, 1, 1],
+              parent,
+            );
+          }
+        }
+      } else if (index === 6) {
+        for (let helix = 0; helix < 12; helix += 1) {
+          const angle = (helix / 12) * Math.PI * 2;
+          addScenery(
+            new THREE.TorusKnotGeometry(1.8, 0.14, 96, 8, 2, 5),
+            sceneryGlow(helix % 2 ? "#ff9ac4" : "#8be8ff", 0.42),
+            [Math.cos(angle) * 29, 3 + (helix % 4) * 2.1, Math.sin(angle) * 29],
+            [Math.PI / 2, angle, 0],
+            [0.7, 1.35, 0.7],
+          );
+        }
+      } else if (index === 7) {
+        for (let cell = 0; cell < 14; cell += 1) {
+          const angle = (cell / 14) * Math.PI * 2;
+          addScenery(
+            new THREE.IcosahedronGeometry(2.2 + (cell % 4) * 0.45, 3),
+            sceneryGlow(cell % 3 ? "#8ee69e" : "#ff8295", 0.14, true),
+            [Math.cos(angle) * 30, 2.5 + (cell % 3) * 2.6, Math.sin(angle) * 30],
+            [pseudo(cell), angle, pseudo(cell + 5)],
+            [1.2, 0.72, 1],
+          );
+        }
+      } else if (index === 8) {
+        for (let fiber = 0; fiber < 22; fiber += 1) {
+          const angle = (fiber / 22) * Math.PI * 2;
+          addScenery(
+            new THREE.CapsuleGeometry(0.16 + (fiber % 3) * 0.06, 5 + (fiber % 4), 5, 10),
+            sceneryGlow(fiber % 3 ? "#e8dfcf" : "#f5dd54", 0.42),
+            [Math.cos(angle) * (25 + (fiber % 3) * 4), 3.5, Math.sin(angle) * (25 + (fiber % 3) * 4)],
+            [0.2 + pseudo(fiber) * 0.5, angle, 0.25],
+          );
+        }
+      } else if (index === 9) {
+        for (let mote = 0; mote < 38; mote += 1) {
+          addScenery(
+            new THREE.DodecahedronGeometry(0.14 + pseudo(mote) * 0.24, 0),
+            sceneryGlow(mote % 3 ? "#f1cf83" : "#d9a2ab", 0.5),
+            [
+              (pseudo(mote * 4.1) - 0.5) * 48,
+              0.4 + pseudo(mote * 8.3) * 7,
+              (pseudo(mote * 2.7) - 0.5) * 48,
+            ],
+          );
+        }
+      } else if (index === 10) {
+        addScenery(new THREE.CylinderGeometry(17, 17, 0.7, 48), sceneryToon("#b97861"), [0, -0.34, 0]);
+      } else if (index === 11) {
+        addScenery(new THREE.BoxGeometry(18, 9, 4), sceneryToon("#ec9d69"), [-28, 4.5, -29]);
+      } else if (index === 12) {
+        for (let barrier = -4; barrier <= 4; barrier += 1) {
+          addScenery(new THREE.BoxGeometry(3.5, 0.5, 0.5), sceneryToon(barrier % 2 ? "#fff0d1" : "#ff7469"), [barrier * 5, 0.4, -28]);
+        }
+      } else if (index === 13) {
+        for (let tower = 0; tower < 9; tower += 1) {
+          addScenery(
+            new THREE.BoxGeometry(3 + (tower % 3), 9 + (tower % 4) * 4, 3 + ((tower + 1) % 3)),
+            sceneryToon(["#a9b7d0", "#ffb19f", "#91d5c4"][tower % 3]),
+            [-28 + tower * 7, 4.5 + (tower % 4) * 2, -34],
+          );
+        }
+      } else if (index === 16) {
+        for (let flare = 0; flare < 9; flare += 1) {
+          const angle = (flare / 9) * Math.PI * 2;
+          addScenery(
+            new THREE.IcosahedronGeometry(1.2 + (flare % 3) * 0.8, 3),
+            sceneryGlow(["#ff765f", "#ffe374", "#78caff"][flare % 3], 0.72),
+            [Math.cos(angle) * 35, 8 + (flare % 4) * 6, Math.sin(angle) * 35],
+          );
+        }
+      } else if (index === 17) {
+        [13, 22, 34, 48].forEach((radius, orbit) => {
+          addScenery(
+            new THREE.TorusGeometry(radius, 0.04 + orbit * 0.015, 5, 96),
+            sceneryGlow(orbit % 2 ? "#bca6ff" : "#8ce9ff", 0.24),
+            [0, 6 + orbit * 2, 0],
+            [Math.PI / 2 + orbit * 0.12, orbit * 0.35, 0],
+          );
+        });
+      }
+    };
+
     const buildEnvironment = (index: number) => {
       disposeEnvironment();
+      applyScaleTextures(index);
       environmentMode = environmentModeFor(index);
       ground.visible = true;
       grid.visible = false;
@@ -685,6 +1051,7 @@ export default function Home() {
             ],
           );
         }
+        addEraSignature(index);
         return;
       }
 
@@ -741,6 +1108,7 @@ export default function Home() {
             [pseudo(strand) * Math.PI, pseudo(strand + 2) * Math.PI, 0],
           );
         }
+        addEraSignature(index);
         return;
       }
 
@@ -794,6 +1162,7 @@ export default function Home() {
             addScenery(new THREE.BoxGeometry(0.8, 8, 0.8), sceneryToon("#56304f"), [x, 4.2, z], [0, 0, 0], [1, 1, 1], furniture);
           });
         });
+        addEraSignature(index);
         return;
       }
 
@@ -826,6 +1195,7 @@ export default function Home() {
           addScenery(new THREE.CylinderGeometry(0.45, 0.62, 4, 7), sceneryToon("#7c5138"), [treeX, 2, 0], [0, 0, 0], [1, 1, 1], houseGroup);
           addScenery(new THREE.IcosahedronGeometry(2.1, 1), sceneryToon("#45a957"), [treeX, 5.1, 0], [0, 0, 0], [1, 1, 1], houseGroup);
         }
+        addEraSignature(index);
         return;
       }
 
@@ -864,6 +1234,7 @@ export default function Home() {
           );
         }
         if (index >= 15) addStarField(compactGpu ? 260 : 430, 100, 315);
+        addEraSignature(index);
         return;
       }
 
@@ -926,6 +1297,7 @@ export default function Home() {
           );
         }
       }
+      addEraSignature(index);
     };
 
     const applyEraTheme = (index: number, announce = false) => {
@@ -973,7 +1345,7 @@ export default function Home() {
       if (announce) {
         eraTransitionAge = 0;
         setToast(
-          `ZOOMING OUT! ${activeEra.name} opens into ${environmentNames[environmentMode]}.`,
+          `ZOOMING OUT! ${activeEra.name} opens into ${eraWorldNames[index] ?? environmentNames[environmentMode]}.`,
         );
         setLastFact({ name: activeEra.name, fact: activeEra.lesson });
         ping(360 + index * 18, true);
@@ -1018,6 +1390,7 @@ export default function Home() {
         0,
       );
       const variant = curioSeed % 4;
+      const name = curio.name.toLowerCase();
       const material = createMaterial(
         curio.color,
         ["spark", "quark", "star", "galaxy", "universe"].includes(curio.shape),
@@ -1064,60 +1437,168 @@ export default function Home() {
           addPart(group, new THREE.OctahedronGeometry(0.13, 0), pale, [-0.52, -0.3, -0.22]);
         }
       } else if (shape === "quark") {
-        addPart(group, new THREE.SphereGeometry(0.52, 20, 14), material, [0, 0, 0]);
-        addPart(group, new THREE.TorusGeometry(0.7, 0.045, 8, 32), pale, [0, 0, 0], [1, 1, 1], [1.1, 0.4, 0]);
-        if (rich) {
+        if (name.includes("pair")) {
+          addPart(group, new THREE.SphereGeometry(0.38, 22, 16), material, [-0.36, 0, 0]);
+          addPart(group, new THREE.SphereGeometry(0.38, 22, 16), accent, [0.36, 0, 0]);
           addPart(
             group,
-            new THREE.TorusGeometry(0.58, 0.035, 7, 28),
-            accent,
-            [0, 0, 0],
-            [1, 1, 1],
-            [0.18, 1.08, 0.72],
-          );
-        }
-      } else if (shape === "hadron") {
-        addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#ff5e72", true), [-0.3, 0.18, 0.08]);
-        addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#58a7ff", true), [0.3, 0.18, -0.08]);
-        addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#f7db56", true), [0, -0.26, 0]);
-        if (rich) {
-          addPart(
-            group,
-            new THREE.TorusGeometry(0.72, 0.035, 7, 30),
+            new THREE.TorusGeometry(0.48, 0.035, 7, 32),
             pale,
             [0, 0, 0],
-            [1, 0.72, 1],
-            [0.55, 0.2, 0],
+            [1, 1, 1],
+            [Math.PI / 2, 0, 0],
+          );
+        } else {
+          addPart(
+            group,
+            variant % 2
+              ? new THREE.IcosahedronGeometry(0.5, 3)
+              : new THREE.SphereGeometry(0.52, 24, 18),
+            material,
+            [0, 0, 0],
+          );
+          addPart(group, new THREE.TorusGeometry(0.7, 0.045, 8, 40), pale, [0, 0, 0], [1, 1, 1], [1.1, 0.4, 0]);
+          if (rich) {
+            addPart(
+              group,
+              new THREE.TorusKnotGeometry(0.42, 0.026, 64, 6, 2 + (variant % 2), 3),
+              accent,
+              [0, 0, 0],
+              [1, 1, 1],
+              [0.18, 1.08, 0.72],
+            );
+          }
+        }
+      } else if (shape === "hadron") {
+        const meson =
+          name.includes("pion") ||
+          name.includes("kaon") ||
+          name.includes("rho");
+        const antimatter = name.includes("anti");
+        const constituentPositions: [number, number, number][] = meson
+          ? [[-0.32, 0, 0], [0.32, 0, 0]]
+          : [[-0.3, 0.18, 0.08], [0.3, 0.18, -0.08], [0, -0.28, 0]];
+        const constituentColors = antimatter
+          ? ["#b68cff", "#78edc5", "#ff9a73"]
+          : name.includes("neutron")
+            ? ["#58a7ff", "#58a7ff", "#ff5e72"]
+            : ["#ff5e72", "#ff5e72", "#58a7ff"];
+        constituentPositions.forEach((position, part) => {
+          addPart(
+            group,
+            new THREE.SphereGeometry(meson ? 0.44 : 0.4, 22, 16),
+            createMaterial(constituentColors[part] ?? "#f7db56", true),
+            position,
+          );
+        });
+        if (rich) {
+          addPart(
+            group,
+            meson
+              ? new THREE.TorusGeometry(0.62, 0.035, 7, 36)
+              : new THREE.IcosahedronGeometry(0.78, 2),
+            sceneryGlow(curio.color, meson ? 0.46 : 0.18, !meson),
+            [0, 0, 0],
+            meson ? [1, 0.72, 1] : [1, 1, 1],
+            meson ? [0.55, 0.2, 0] : [0, 0, 0],
           );
         }
       } else if (shape === "atom") {
-        addPart(group, new THREE.SphereGeometry(0.22, 18, 12), material, [0, 0, 0]);
-        for (let i = 0; i < 3; i += 1) {
-          addPart(group, new THREE.TorusGeometry(0.68, 0.025, 6, 38), pale, [0, 0, 0], [1, 1, 1], [i * 1.05, i * 0.7, 0]);
-        }
-        if (rich) {
-          [
-            [0.58, 0.12, 0.26],
-            [-0.38, 0.44, -0.36],
-            [0.08, -0.55, 0.34],
-          ].forEach((position, index) =>
-            addPart(
-              group,
-              new THREE.SphereGeometry(0.085 + index * 0.01, 10, 8),
-              index === variant % 3 ? accent : material,
-              position as [number, number, number],
-            ),
+        const atomicNumbers: Record<string, number> = {
+          hydrogen: 1,
+          helium: 2,
+          carbon: 6,
+          nitrogen: 7,
+          oxygen: 8,
+          silicon: 14,
+          iron: 26,
+          uranium: 92,
+        };
+        const elementKey = Object.keys(atomicNumbers).find((key) => name.includes(key));
+        const atomicNumber = elementKey ? atomicNumbers[elementKey] : 3 + (curioSeed % 20);
+        const shownNucleons = Math.min(10, Math.max(1, Math.round(Math.log2(atomicNumber + 1) * 2.2)));
+        for (let nucleon = 0; nucleon < shownNucleons; nucleon += 1) {
+          const angle = nucleon * 2.399;
+          const radius = 0.035 + 0.045 * Math.sqrt(nucleon);
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.1, 12, 9),
+            nucleon % 2 ? material : accent,
+            [
+              Math.cos(angle) * radius,
+              (pseudo(nucleon + atomicNumber) - 0.5) * 0.24,
+              Math.sin(angle) * radius,
+            ],
           );
         }
-      } else if (shape === "molecule") {
-        addPart(group, new THREE.SphereGeometry(0.38, 16, 12), material, [0, 0, 0]);
-        addPart(group, new THREE.SphereGeometry(0.27, 16, 12), pale, [0.5, 0.15, 0.1]);
-        addPart(group, new THREE.SphereGeometry(0.27, 16, 12), pale, [-0.38, 0.37, -0.1]);
+        const shellCount = atomicNumber <= 2 ? 1 : atomicNumber <= 10 ? 2 : atomicNumber <= 18 ? 3 : 4;
+        for (let shell = 0; shell < shellCount; shell += 1) {
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.38 + shell * 0.13, 22, 16),
+            new THREE.MeshBasicMaterial({
+              color: shell % 2 ? curio.color : "#eaffff",
+              transparent: true,
+              opacity: 0.075 + shell * 0.018,
+              wireframe: shell === shellCount - 1,
+              depthWrite: false,
+            }),
+            [0, 0, 0],
+            [
+              1.15 + (shell % 2) * 0.18,
+              0.76 + ((shell + 1) % 2) * 0.2,
+              1.05,
+            ],
+            [shell * 0.57, shell * 0.38, shell * 0.21],
+          );
+        }
         if (rich) {
-          addPart(group, new THREE.SphereGeometry(0.22, 14, 10), accent, [-0.35, -0.42, 0.32]);
-          if (variant > 1) {
-            addPart(group, new THREE.SphereGeometry(0.16, 12, 9), material, [0.4, -0.35, -0.3]);
+          const electronCount = Math.min(8, Math.max(1, shellCount * 2));
+          for (let electron = 0; electron < electronCount; electron += 1) {
+            const theta = pseudo(electron * 7.7 + atomicNumber) * Math.PI * 2;
+            const phi = Math.acos(2 * pseudo(electron * 4.3 + atomicNumber) - 1);
+            const radius = 0.48 + pseudo(electron + atomicNumber) * 0.18;
+            addPart(
+              group,
+              new THREE.SphereGeometry(0.055, 10, 8),
+              electron % 2 ? pale : accent,
+              [
+                Math.sin(phi) * Math.cos(theta) * radius,
+                Math.cos(phi) * radius,
+                Math.sin(phi) * Math.sin(theta) * radius,
+              ],
+            );
           }
+        }
+      } else if (shape === "molecule") {
+        const atomPositions: [number, number, number][] =
+          name.includes("water")
+            ? [[0, 0, 0], [0.48, 0.3, 0], [-0.48, 0.3, 0]]
+            : name.includes("carbon dioxide")
+              ? [[0, 0, 0], [-0.62, 0, 0], [0.62, 0, 0]]
+              : name.includes("methane")
+                ? [[0, 0, 0], [0.46, 0.36, 0.36], [-0.46, 0.36, -0.36], [0.36, -0.44, -0.36], [-0.36, -0.44, 0.36]]
+                : name.includes("glucose")
+                  ? Array.from({ length: 6 }, (_, atom) => {
+                      const angle = (atom / 6) * Math.PI * 2;
+                      return [Math.cos(angle) * 0.56, Math.sin(angle) * 0.56, (atom % 2) * 0.12] as [number, number, number];
+                    })
+                  : Array.from({ length: 3 + (curioSeed % 4) }, (_, atom) => [
+                      (atom - 1.5) * 0.27,
+                      Math.sin(atom * 2.1) * 0.38,
+                      Math.cos(atom * 1.7) * 0.3,
+                    ] as [number, number, number]);
+        atomPositions.forEach((position, atom) => {
+          addPart(
+            group,
+            new THREE.SphereGeometry(atom === 0 ? 0.3 : 0.22, 18, 13),
+            atom === 0 ? material : atom % 3 === 1 ? pale : accent,
+            position,
+          );
+        });
+        if (rich && name.includes("lipid")) {
+          addPart(group, new THREE.CapsuleGeometry(0.08, 0.9, 4, 8), accent, [0, -0.52, 0.1], [1, 1, 1], [0.15, 0.2, 0]);
+          addPart(group, new THREE.CapsuleGeometry(0.08, 0.9, 4, 8), material, [0.22, -0.52, -0.1], [1, 1, 1], [-0.1, -0.2, 0.08]);
         }
       } else if (shape === "virus") {
         addPart(group, new THREE.IcosahedronGeometry(0.58, 2), material, [0, 0, 0]);
@@ -1134,17 +1615,49 @@ export default function Home() {
         const membrane = new THREE.MeshPhysicalMaterial({
           color: curio.color,
           transparent: true,
-          opacity: 0.7,
+          opacity: 0.72,
           roughness: 0.3,
           transmission: 0.12,
         });
-        addPart(group, new THREE.SphereGeometry(0.72, 24, 18), membrane, [0, 0, 0], [1.05, 0.82, 1]);
-        addPart(group, new THREE.SphereGeometry(0.25, 18, 12), dark, [0.18, 0.05, 0.18]);
-        addPart(group, new THREE.SphereGeometry(0.1, 12, 8), pale, [-0.3, 0.22, 0.2]);
-        if (rich) {
-          addPart(group, new THREE.CapsuleGeometry(0.07, 0.24, 3, 8), accent, [-0.32, -0.2, 0.25], [1, 1, 1], [0.5, 0.2, 0.8]);
-          addPart(group, new THREE.SphereGeometry(0.09, 10, 8), pale, [0.34, 0.25, -0.28]);
-          addPart(group, new THREE.SphereGeometry(0.07, 9, 7), accent, [-0.12, 0.34, -0.32]);
+        if (name.includes("red blood")) {
+          addPart(group, new THREE.TorusGeometry(0.48, 0.22, 16, 32), membrane, [0, 0, 0], [1.15, 0.32, 1.15], [Math.PI / 2, 0, 0]);
+        } else if (name.includes("bacter")) {
+          addPart(group, new THREE.CapsuleGeometry(0.34, 0.78, 8, 18), membrane, [0, 0, 0], [1, 1, 1], [0.2, 0.2, Math.PI / 2]);
+          addPart(group, new THREE.TorusKnotGeometry(0.2, 0.025, 44, 5, 2, 3), accent, [0, 0, 0]);
+        } else if (name.includes("plant cell")) {
+          addPart(group, new THREE.BoxGeometry(1.25, 0.88, 0.86), membrane, [0, 0, 0]);
+          addPart(group, new THREE.SphereGeometry(0.3, 18, 12), sceneryGlow("#b5f3c5", 0.46), [0.12, 0.02, 0.06]);
+          [-0.38, 0.34].forEach((x) =>
+            addPart(group, new THREE.CapsuleGeometry(0.08, 0.2, 3, 8), accent, [x, -0.2, 0.25], [1, 1, 1], [0.4, 0.3, 0.8]),
+          );
+        } else if (name.includes("yeast")) {
+          addPart(group, new THREE.SphereGeometry(0.58, 24, 18), membrane, [-0.08, 0, 0]);
+          addPart(group, new THREE.SphereGeometry(0.28, 18, 12), membrane.clone(), [0.5, 0.25, 0]);
+          addPart(group, new THREE.SphereGeometry(0.18, 16, 11), dark, [-0.06, 0.04, 0.1]);
+        } else if (name.includes("neuron")) {
+          addPart(group, new THREE.SphereGeometry(0.38, 22, 16), membrane, [-0.2, 0, 0]);
+          for (let branch = 0; branch < 5; branch += 1) {
+            addPart(
+              group,
+              new THREE.CapsuleGeometry(0.045, 0.62 + branch * 0.08, 3, 8),
+              accent,
+              [Math.cos(branch * 1.25) * 0.38, Math.sin(branch * 1.25) * 0.38, 0],
+              [1, 1, 1],
+              [0, 0, branch * 1.25],
+            );
+          }
+          addPart(group, new THREE.CapsuleGeometry(0.055, 1.15, 4, 9), material, [0.76, 0, 0], [1, 1, 1], [0, 0, Math.PI / 2]);
+        } else if (name.includes("sperm")) {
+          addPart(group, new THREE.SphereGeometry(0.3, 20, 14), membrane, [-0.35, 0, 0]);
+          addPart(group, new THREE.TorusKnotGeometry(0.34, 0.035, 62, 5, 2, 3), accent, [0.32, 0, 0], [1.35, 0.45, 0.45], [0, 0, Math.PI / 2]);
+        } else {
+          addPart(group, new THREE.IcosahedronGeometry(0.68, name.includes("amoeba") ? 2 : 4), membrane, [0, 0, 0], [1.05 + variant * 0.04, 0.78, 1]);
+          addPart(group, new THREE.SphereGeometry(0.24, 18, 12), dark, [0.18, 0.05, 0.18]);
+          addPart(group, new THREE.SphereGeometry(0.1, 12, 8), pale, [-0.3, 0.22, 0.2]);
+        }
+        if (rich && !name.includes("neuron") && !name.includes("sperm")) {
+          addPart(group, new THREE.CapsuleGeometry(0.07, 0.24, 3, 8), accent, [-0.26, -0.2, 0.25], [1, 1, 1], [0.5, 0.2, 0.8]);
+          addPart(group, new THREE.SphereGeometry(0.075, 9, 7), pale, [0.3, 0.28, -0.25]);
         }
       } else if (shape === "fiber") {
         addPart(group, new THREE.CapsuleGeometry(0.18, 1.25, 5, 12), material, [0, 0, 0], [1, 1, 1], [0.2, 0.2, 1.08]);
@@ -1172,6 +1685,53 @@ export default function Home() {
         } else if (rich) {
           addPart(group, new THREE.DodecahedronGeometry(0.23, 0), accent, [0.44, -0.18, 0.15]);
         }
+      } else if (shape === "object" && name.includes("button")) {
+        addPart(group, new THREE.CylinderGeometry(0.58, 0.58, 0.16, 28), material, [0, 0, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+        [
+          [-0.18, 0.09, 0.17],
+          [0.18, 0.09, 0.17],
+          [-0.18, -0.09, 0.17],
+          [0.18, -0.09, 0.17],
+        ].forEach((position) =>
+          addPart(group, new THREE.CylinderGeometry(0.055, 0.055, 0.19, 10), dark, position as [number, number, number], [1, 1, 1], [Math.PI / 2, 0, 0]),
+        );
+      } else if (shape === "object" && name.includes("toy brick")) {
+        addPart(group, new THREE.BoxGeometry(1.2, 0.48, 0.72), material, [0, 0, 0]);
+        [-0.4, 0, 0.4].forEach((x) =>
+          [-0.22, 0.22].forEach((z) =>
+            addPart(group, new THREE.CylinderGeometry(0.12, 0.12, 0.14, 14), accent, [x, 0.31, z]),
+          ),
+        );
+      } else if (shape === "object" && name.includes("bottle cap")) {
+        addPart(group, new THREE.CylinderGeometry(0.58, 0.62, 0.3, 24), material, [0, 0, 0]);
+        addPart(group, new THREE.CylinderGeometry(0.42, 0.42, 0.06, 24), pale, [0, 0.18, 0]);
+        for (let ridge = 0; ridge < 12; ridge += 1) {
+          const angle = (ridge / 12) * Math.PI * 2;
+          addPart(group, new THREE.BoxGeometry(0.08, 0.28, 0.12), accent, [Math.cos(angle) * 0.61, 0, Math.sin(angle) * 0.61], [1, 1, 1], [0, -angle, 0]);
+        }
+      } else if (shape === "object" && name.includes("shoe")) {
+        addPart(group, new THREE.CapsuleGeometry(0.32, 0.82, 6, 14), material, [0.05, -0.08, 0], [1, 0.68, 1.2], [0.1, 0.1, Math.PI / 2]);
+        addPart(group, new THREE.BoxGeometry(0.66, 0.5, 0.62), accent, [0.25, 0.2, 0]);
+        addPart(group, new THREE.BoxGeometry(1.25, 0.09, 0.68), pale, [0, -0.35, 0]);
+      } else if (shape === "object" && name.includes("floor lamp")) {
+        addPart(group, new THREE.CylinderGeometry(0.3, 0.42, 0.12, 20), dark, [0, -0.7, 0]);
+        addPart(group, new THREE.CylinderGeometry(0.055, 0.055, 1.35, 10), material, [0, 0, 0]);
+        addPart(group, new THREE.ConeGeometry(0.5, 0.72, 20, 1, true), accent, [0, 0.85, 0]);
+        addPart(group, new THREE.SphereGeometry(0.12, 12, 9), pale, [0, 0.65, 0]);
+      } else if (shape === "object" && name.includes("couch")) {
+        addPart(group, new THREE.BoxGeometry(1.45, 0.48, 0.68), material, [0, -0.12, 0]);
+        addPart(group, new THREE.BoxGeometry(1.45, 0.7, 0.22), accent, [0, 0.38, 0.3]);
+        [-0.66, 0.66].forEach((x) =>
+          addPart(group, new THREE.BoxGeometry(0.2, 0.62, 0.7), material, [x, 0.06, 0]),
+        );
+        addPart(group, new THREE.BoxGeometry(0.62, 0.12, 0.58), pale, [-0.33, 0.17, -0.03]);
+        addPart(group, new THREE.BoxGeometry(0.62, 0.12, 0.58), pale, [0.33, 0.17, -0.03]);
+      } else if (shape === "object" && name.includes("bicycle")) {
+        [-0.54, 0.54].forEach((x) =>
+          addPart(group, new THREE.TorusGeometry(0.34, 0.055, 8, 28), dark, [x, -0.22, 0], [1, 1, 1], [0, 0, 0]),
+        );
+        addPart(group, new THREE.TorusGeometry(0.36, 0.045, 7, 20), material, [0, 0.03, 0], [1, 0.72, 1], [0, 0, 0]);
+        addPart(group, new THREE.CapsuleGeometry(0.045, 0.74, 3, 8), accent, [0.28, 0.18, 0], [1, 1, 1], [0, 0, -0.76]);
       } else if (shape === "chair") {
         addPart(group, new THREE.BoxGeometry(0.95, 0.16, 0.82), material, [0, 0, 0]);
         addPart(group, new THREE.BoxGeometry(0.95, 1.05, 0.15), material, [0, 0.48, 0.35]);
@@ -1191,22 +1751,54 @@ export default function Home() {
           );
         }
       } else if (shape === "house") {
-        addPart(group, new THREE.BoxGeometry(1.15, 0.85, 0.95), material, [0, 0, 0]);
-        addPart(group, new THREE.ConeGeometry(0.88, 0.55, 4), createMaterial("#d05e57"), [0, 0.7, 0], [1, 1, 1], [0, Math.PI / 4, 0]);
-        addPart(group, new THREE.BoxGeometry(0.25, 0.48, 0.08), dark, [0, -0.18, 0.51]);
-        if (rich) {
-          [-0.38, 0.38].forEach((x) =>
-            addPart(group, new THREE.BoxGeometry(0.2, 0.2, 0.07), accent, [x, 0.16, 0.51]),
+        if (name.includes("water tower")) {
+          addPart(group, new THREE.SphereGeometry(0.58, 24, 16), material, [0, 0.45, 0], [1.05, 0.82, 1.05]);
+          [-0.34, 0.34].forEach((x) =>
+            [-0.24, 0.24].forEach((z) =>
+              addPart(group, new THREE.CylinderGeometry(0.045, 0.055, 1.1, 8), dark, [x, -0.45, z], [1, 1, 1], [0, 0, x * 0.24]),
+            ),
           );
-          if (variant > 1) {
-            addPart(group, new THREE.BoxGeometry(0.16, 0.48, 0.16), dark, [0.34, 0.86, -0.12]);
+        } else if (name.includes("stadium")) {
+          addPart(group, new THREE.TorusGeometry(0.72, 0.24, 12, 32), material, [0, 0, 0], [1.25, 0.42, 0.88], [Math.PI / 2, 0, 0]);
+          addPart(group, new THREE.CylinderGeometry(0.5, 0.5, 0.08, 32), accent, [0, -0.04, 0]);
+        } else if (name.includes("office") || name.includes("megacity") || name.includes("metro")) {
+          const towerCount = name.includes("mega") || name.includes("metro") ? 7 : 3;
+          for (let tower = 0; tower < towerCount; tower += 1) {
+            const x = (tower % 3 - 1) * 0.42;
+            const z = (Math.floor(tower / 3) - 0.5) * 0.38;
+            const height = 0.65 + (tower % 4) * 0.2;
+            addPart(group, new THREE.BoxGeometry(0.34, height, 0.32), tower % 2 ? material : accent, [x, height / 2 - 0.35, z]);
+          }
+        } else {
+          addPart(group, new THREE.BoxGeometry(1.15, 0.85, 0.95), material, [0, 0, 0]);
+          addPart(group, new THREE.ConeGeometry(0.88, 0.55, 4), createMaterial("#d05e57"), [0, 0.7, 0], [1, 1, 1], [0, Math.PI / 4, 0]);
+          addPart(group, new THREE.BoxGeometry(0.25, 0.48, 0.08), dark, [0, -0.18, 0.51]);
+          if (rich) {
+            [-0.38, 0.38].forEach((x) =>
+              addPart(group, new THREE.BoxGeometry(0.2, 0.2, 0.07), accent, [x, 0.16, 0.51]),
+            );
           }
         }
       } else if (shape === "planet") {
-        addPart(group, new THREE.SphereGeometry(0.67, 28, 20), material, [0, 0, 0]);
-        addPart(group, new THREE.TorusGeometry(0.9, 0.055, 8, 44), pale, [0, 0, 0], [1, 0.42, 1], [0.25, 0, 0.15]);
-        if (rich) {
-          addPart(group, new THREE.SphereGeometry(0.12 + variant * 0.015, 12, 9), accent, [0.94, 0.32, -0.18]);
+        const irregular = name.includes("small moon") || name.includes("rogue");
+        addPart(
+          group,
+          irregular
+            ? new THREE.IcosahedronGeometry(0.68, 2)
+            : new THREE.SphereGeometry(0.67, 32, 24),
+          material,
+          [0, 0, 0],
+          name.includes("earth") ? [1, 0.97, 1] : [1, 1, 1],
+        );
+        if (name.includes("saturn") || name.includes("gas giant")) {
+          addPart(group, new THREE.TorusGeometry(0.92, name.includes("saturn") ? 0.11 : 0.055, 9, 52), pale, [0, 0, 0], [1, 0.42, 1], [0.25, 0, 0.15]);
+        } else if (name.includes("earth")) {
+          for (let land = 0; land < 6; land += 1) {
+            const angle = (land / 6) * Math.PI * 2;
+            addPart(group, new THREE.DodecahedronGeometry(0.14 + (land % 2) * 0.04, 1), accent, [Math.cos(angle) * 0.59, Math.sin(angle * 1.7) * 0.36, Math.sin(angle) * 0.34]);
+          }
+        } else if (rich) {
+          addPart(group, new THREE.SphereGeometry(0.11 + variant * 0.015, 12, 9), accent, [0.84, 0.3, -0.16]);
         }
       } else if (shape === "star") {
         addPart(group, new THREE.IcosahedronGeometry(0.72, 3), material, [0, 0, 0]);
@@ -1224,9 +1816,29 @@ export default function Home() {
           addPart(group, new THREE.SphereGeometry(0.075, 9, 7), material, [-0.78, -0.05, -0.12]);
         }
       } else if (shape === "galaxy") {
-        addPart(group, new THREE.SphereGeometry(0.18, 14, 10), pale, [0, 0, 0]);
-        for (let i = 0; i < 3; i += 1) {
-          addPart(group, new THREE.TorusGeometry(0.38 + i * 0.2, 0.09, 6, 42), material, [0, 0, 0], [1, 0.22, 1], [0.2, i * 0.6, 0]);
+        const irregular = name.includes("irregular") || name.includes("cluster") || name.includes("group");
+        addPart(group, new THREE.SphereGeometry(name.includes("active") ? 0.26 : 0.18, 16, 12), name.includes("active") ? accent : pale, [0, 0, 0]);
+        if (irregular) {
+          const galaxyBits = name.includes("cluster") ? 10 : 6;
+          for (let bit = 0; bit < galaxyBits; bit += 1) {
+            addPart(
+              group,
+              new THREE.IcosahedronGeometry(0.13 + (bit % 3) * 0.04, 1),
+              bit % 2 ? material : accent,
+              [
+                (pseudo(bit + curioSeed) - 0.5) * 1.25,
+                (pseudo(bit * 3 + curioSeed) - 0.5) * 0.46,
+                (pseudo(bit * 7 + curioSeed) - 0.5) * 0.85,
+              ],
+            );
+          }
+        } else {
+          for (let i = 0; i < 3; i += 1) {
+            addPart(group, new THREE.TorusGeometry(0.38 + i * 0.2, 0.075, 7, 52), material, [0, 0, 0], [1, 0.2, 1], [0.2, i * (name.includes("barred") ? 0.34 : 0.6), 0]);
+          }
+          if (name.includes("barred")) {
+            addPart(group, new THREE.CapsuleGeometry(0.075, 0.75, 4, 10), pale, [0, 0, 0], [1, 1, 1], [0, 0, Math.PI / 2]);
+          }
         }
         if (rich) {
           addPart(group, new THREE.SphereGeometry(0.07, 9, 7), accent, [0.72, 0.14, 0.2]);
@@ -1251,6 +1863,47 @@ export default function Home() {
         if (rich) {
           addPart(group, new THREE.SphereGeometry(0.16, 12, 9), accent, [0.36, 0.3, 0.28]);
         }
+      }
+      const needsSignatureDetail = [
+        "bubble",
+        "spark",
+        "fiber",
+        "dust",
+        "stone",
+        "object",
+        "car",
+        "house",
+        "mountain",
+        "star",
+        "system",
+        "universe",
+      ].includes(shape);
+      if (rich && needsSignatureDetail) {
+        const signature = curioSeed % 6;
+        const signatureGeometry: THREE.BufferGeometry =
+          signature === 0
+            ? new THREE.TorusGeometry(0.16, 0.045, 7, 18)
+            : signature === 1
+              ? new THREE.TetrahedronGeometry(0.2, 0)
+              : signature === 2
+                ? new THREE.OctahedronGeometry(0.18, 0)
+                : signature === 3
+                  ? new THREE.CapsuleGeometry(0.055, 0.24, 3, 7)
+                  : signature === 4
+                    ? new THREE.ConeGeometry(0.12, 0.28, 6)
+                    : new THREE.TorusKnotGeometry(0.12, 0.025, 32, 5, 2, 3);
+        addPart(
+          group,
+          signatureGeometry,
+          signature % 2 ? accent : pale,
+          [
+            0.38 + pseudo(curioSeed) * 0.2,
+            0.32 + (signature % 3) * 0.12,
+            0.3 - (signature % 2) * 0.55,
+          ],
+          [1, 1, 1],
+          [signature * 0.31, signature * 0.47, signature * 0.19],
+        );
       }
       const stretch = new THREE.Vector3(
         0.92 + variant * 0.045,
@@ -1319,6 +1972,7 @@ export default function Home() {
     };
 
     let pickups: Pickup[] = [];
+    const historyEnabled = labEra === null;
     const attachments: THREE.Object3D[] = [];
     const popBursts: {
       mesh: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
@@ -1339,7 +1993,29 @@ export default function Home() {
       });
     };
 
-    mashHistoryRef.current.forEach((record, recordIndex) => {
+    const disposeVisual = (visual: THREE.Object3D) => {
+      visual.traverse((child) => {
+        if (
+          child instanceof THREE.Mesh ||
+          child instanceof THREE.Points ||
+          child instanceof THREE.Line
+        ) {
+          child.geometry.dispose();
+          const materials = Array.isArray(child.material)
+            ? child.material
+            : [child.material];
+          materials.forEach((material) => material.dispose());
+        } else if (child instanceof THREE.Sprite) {
+          child.material.dispose();
+        }
+      });
+    };
+
+    const visibleMashRecords = mashHistoryRef.current.filter(
+      (record) => record.sourceEra === activeIndex,
+    );
+    if (historyEnabled) mashHistoryRef.current = visibleMashRecords;
+    visibleMashRecords.forEach((record, recordIndex) => {
       const sourceEra = ERAS[record.sourceEra];
       const curio = sourceEra?.curios[record.curioIndex];
       if (!curio) return;
@@ -1382,17 +2058,17 @@ export default function Home() {
 
     const removePickup = (pickup: Pickup, preserveVisual = false) => {
       scene.remove(pickup.root);
-      if (!preserveVisual) {
-        pickup.visual.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.geometry.dispose();
-            const materials = Array.isArray(child.material) ? child.material : [child.material];
-            materials.forEach((material) => material.dispose());
-          } else if (child instanceof THREE.Sprite) {
-            child.material.dispose();
-          }
-        });
-      }
+      if (!preserveVisual) disposeVisual(pickup.visual);
+    };
+
+    const retireVisibleMash = () => {
+      attachments.forEach((attachment) => {
+        mashGroup.remove(attachment);
+        disposeVisual(attachment);
+      });
+      attachments.length = 0;
+      stickingPieces.length = 0;
+      if (historyEnabled) mashHistoryRef.current = [];
     };
 
     const spawnPickup = (seed: number, forcedSourceEra?: number) => {
@@ -1543,7 +2219,7 @@ export default function Home() {
       attachments.forEach((attachment, index) => {
         attachment.position.multiplyScalar(0.55);
         attachment.scale.multiplyScalar(0.68);
-        const record = mashHistoryRef.current[index];
+        const record = historyEnabled ? mashHistoryRef.current[index] : undefined;
         if (record) {
           record.position = attachment.position.toArray() as [number, number, number];
           record.scale = record.scale.map((value) => value * 0.68) as [
@@ -1560,6 +2236,7 @@ export default function Home() {
       game.picked += 1;
       game.lastPickup = now / 1000;
       const isOlderScale = pickup.sourceEra < activeIndex;
+      const isCurrentScale = pickup.sourceEra === activeIndex;
       const liveScaleGap = Math.max(0, activeIndex - pickup.sourceEra);
       const growthFactor =
         liveScaleGap === 0 ? 1 : Math.max(0.0002, 0.14 ** liveScaleGap);
@@ -1584,7 +2261,7 @@ export default function Home() {
                 : massEnergyFactor < 0.35
                   ? "light mass"
                   : "mass";
-      if (!isOlderScale) {
+      if (isCurrentScale) {
         const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
         setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
         setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
@@ -1614,68 +2291,66 @@ export default function Home() {
 
       pickup.root.remove(pickup.visual);
       removePickup(pickup, true);
-      const direction = new THREE.Vector3(
-        Math.random() - 0.5,
-        Math.random() - 0.24,
-        Math.random() - 0.5,
-      ).normalize();
-      const fieldLike =
-        activeEra.realm === "prephysical" || activeEra.realm === "particle";
-      pickup.visual.position.copy(
-        direction.multiplyScalar(game.radius * (fieldLike ? 0.76 : 0.7)),
-      );
-      pickup.visual.scale.multiplyScalar(fieldLike ? 1.02 : 0.96);
-      pickup.visual.rotation.set(
-        Math.random() * Math.PI,
-        Math.random() * Math.PI,
-        Math.random() * Math.PI,
-      );
-      if (fieldLike) {
-        makeFieldLike(pickup.visual);
-      } else {
-        pickup.visual.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-      }
-      mashGroup.add(pickup.visual);
-      attachments.push(pickup.visual);
-      const targetScale = pickup.visual.scale.clone();
-      pickup.visual.scale.multiplyScalar(0.22);
-      stickingPieces.push({
-        visual: pickup.visual,
-        targetScale,
-        startedAt: now,
-      });
-      mashHistoryRef.current.push({
-        sourceEra: pickup.sourceEra,
-        curioIndex: pickup.curioIndex,
-        position: pickup.visual.position.toArray() as [number, number, number],
-        rotation: [
-          pickup.visual.rotation.x,
-          pickup.visual.rotation.y,
-          pickup.visual.rotation.z,
-        ],
-        scale: targetScale.toArray() as [number, number, number],
-        mergedInside: fieldLike,
-      });
-      if (attachments.length > 96) {
-        const oldest = attachments.shift();
-        mashHistoryRef.current.shift();
-        if (oldest) {
-          mashGroup.remove(oldest);
-          oldest.traverse((child) => {
+      if (isCurrentScale) {
+        const direction = new THREE.Vector3(
+          Math.random() - 0.5,
+          Math.random() - 0.24,
+          Math.random() - 0.5,
+        ).normalize();
+        const fieldLike =
+          activeEra.realm === "prephysical" || activeEra.realm === "particle";
+        pickup.visual.position.copy(
+          direction.multiplyScalar(game.radius * (fieldLike ? 0.76 : 0.7)),
+        );
+        pickup.visual.scale.multiplyScalar(fieldLike ? 1.02 : 0.96);
+        pickup.visual.rotation.set(
+          Math.random() * Math.PI,
+          Math.random() * Math.PI,
+          Math.random() * Math.PI,
+        );
+        if (fieldLike) {
+          makeFieldLike(pickup.visual);
+        } else {
+          pickup.visual.traverse((child) => {
             if (child instanceof THREE.Mesh) {
-              child.geometry.dispose();
-              const materials = Array.isArray(child.material) ? child.material : [child.material];
-              materials.forEach((material) => material.dispose());
-            } else if (child instanceof THREE.Sprite) {
-              child.material.dispose();
+              child.castShadow = true;
+              child.receiveShadow = true;
             }
           });
         }
+        mashGroup.add(pickup.visual);
+        attachments.push(pickup.visual);
+        const targetScale = pickup.visual.scale.clone();
+        pickup.visual.scale.multiplyScalar(0.22);
+        stickingPieces.push({
+          visual: pickup.visual,
+          targetScale,
+          startedAt: now,
+        });
+        if (historyEnabled) {
+          mashHistoryRef.current.push({
+            sourceEra: pickup.sourceEra,
+            curioIndex: pickup.curioIndex,
+            position: pickup.visual.position.toArray() as [number, number, number],
+            rotation: [
+              pickup.visual.rotation.x,
+              pickup.visual.rotation.y,
+              pickup.visual.rotation.z,
+            ],
+            scale: targetScale.toArray() as [number, number, number],
+            mergedInside: fieldLike,
+          });
+        }
+        if (attachments.length > 96) {
+          const oldest = attachments.shift();
+          if (historyEnabled) mashHistoryRef.current.shift();
+          if (oldest) {
+            mashGroup.remove(oldest);
+            disposeVisual(oldest);
+          }
+        }
+      } else {
+        disposeVisual(pickup.visual);
       }
       if (isOlderScale) {
         spawnPickup(now * 0.013 + game.id * 73, pickup.sourceEra);
@@ -1691,7 +2366,7 @@ export default function Home() {
           item.bulkRadius *= 0.72;
           item.visual.scale.multiplyScalar(0.72);
         });
-        setToast(`ZOOM OUT #${game.zooms} — the whole mixed-scale world stayed put.`);
+        setToast(`ZOOM OUT #${game.zooms} — your current-scale clump stayed together.`);
         ping(350 + activeIndex * 18, true);
       }
     };
@@ -1781,7 +2456,10 @@ export default function Home() {
           const dz = pickup.root.position.z - game.z;
           const distance = Math.hypot(dx, dz);
           if (distance < effectiveRollRadius + pickup.visualRadius) {
-            if (pickup.bulkRadius <= effectiveRollRadius * 1.1) {
+            if (
+              pickup.sourceEra <= activeIndex &&
+              pickup.bulkRadius <= effectiveRollRadius * 1.1
+            ) {
               collect(pickup, now);
               pickup.root.position.x = Number.POSITIVE_INFINITY;
             } else if (distance > 0) {
@@ -1798,6 +2476,7 @@ export default function Home() {
 
       const nextActiveIndex = labEra ?? eraAt(game.hours);
       if (nextActiveIndex !== activeIndex) {
+        retireVisibleMash();
         applyEraTheme(nextActiveIndex, true);
         pickups = pickups.filter((pickup) => {
           const inActiveBand =
@@ -1828,6 +2507,9 @@ export default function Home() {
       playerRoot.position.set(game.x, floatHeight, game.z);
       environmentGroup.position.set(game.x, 0, game.z);
       ground.position.set(game.x, 0, game.z);
+      if (groundTexture) {
+        groundTexture.offset.set(game.x * 0.018, -game.z * 0.018);
+      }
       const gridCell = 170 / 90;
       grid.position.set(
         game.x - THREE.MathUtils.euclideanModulo(game.x, gridCell),
@@ -1983,6 +2665,8 @@ export default function Home() {
       markerTextures.forEach((texture) => texture.dispose());
       happyFaceTexture.dispose();
       chompFaceTexture.dispose();
+      groundTexture?.dispose();
+      coreSurfaceTexture?.dispose();
       dustGeometry.dispose();
       dustMaterial.dispose();
       renderer.dispose();
@@ -2044,10 +2728,10 @@ export default function Home() {
           <div className="brand">
             <div className="brand-ball" aria-hidden="true">✦</div>
             <div>
-              <b>ON A ROLL</b>
+              <b>QUARKATAMARI</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V13 · CHANGING WORLDS</span>
+            <span className="version-badge">V14 · SCALE IDENTITIES</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
@@ -2089,7 +2773,7 @@ export default function Home() {
         </section>
 
         <aside className="stats hud">
-          <div><b>{hud.picked.toLocaleString()}</b><small>things in mash</small></div>
+          <div><b>{hud.picked.toLocaleString()}</b><small>things collected</small></div>
           <i />
           <div><b>{formatHours(hud.hours)}</b><small>deep journey</small></div>
           <i />
@@ -2126,16 +2810,17 @@ export default function Home() {
               <em>Not yet.</em>
             </h1>
             <p className="welcome-lead">
-              Begin as a small cluster of foam-like spacetime fluctuations. Every
-              smaller thing snaps onto the outside, reshapes your silhouette, and
-              rolls with you—the happy, lumpy pile never stops growing.
+              Begin as a small cluster of foam-like spacetime fluctuations. Current-scale
+              things snap onto the outside and reshape your silhouette. Older scales still
+              add mass, but dissolve into the material beneath you as the universe zooms out.
             </p>
             <div className="science-caveat">
               <b>Scientific honesty:</b> quantum foam is a speculative visualization,
               and “rolling” before matter exists is a navigation metaphor. The game
               labels every scale as measured, supported, unknown, or speculative.
-              Visible size decides what sticks; era-appropriate energy or mass
-              determines how much the mash grows.
+              Visible size decides what can be collected; era-appropriate energy or
+              mass determines how much the mash grows. Atomic electron clouds are
+              probability-inspired visualizations, not little planetary orbits.
             </div>
             <button className="start" onClick={begin}>
               <span>Begin becoming</span>

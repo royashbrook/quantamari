@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Everything Roll — From Planck to Metaverse",
+  title: "Quarkatamari — From Planck to Metaverse",
   description:
-    "A cozy infinite rolling game about collecting absolutely everything, one scale at a time.",
+    "A cozy infinite rolling game about collecting absolutely everything, one scientific scale at a time.",
   other: {
     "codex-preview": "development",
   },
