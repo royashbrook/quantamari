@@ -1,268 +1,996 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import {
+  Curio,
+  ERAS,
+  Era,
+  JOURNEY_HOURS,
+  eraAt,
+  formatHours,
+  formatScale,
+} from "./scale-data";
 
-type Curio = { name: string; glyph: string; color: string };
-type Era = {
-  at: number;
-  exp: number;
-  name: string;
-  quip: string;
-  palette: [string, string, string];
-  curios: Curio[];
+type Pickup = {
+  root: THREE.Group;
+  visual: THREE.Object3D;
+  label: THREE.Sprite;
+  curio: Curio;
+  size: number;
+  big: boolean;
 };
-type Thing = Curio & { id: number; x: number; y: number; r: number; big: boolean; a: number };
-type Sticker = Curio & { a: number; d: number; s: number; tilt: number };
 
-const JOURNEY = 1000;
-const C = (name: string, glyph: string, color: string): Curio => ({ name, glyph, color });
-const ERAS: Era[] = [
-  { at: 0, exp: -35, name: "Planck Playground", quip: "Reality is still buffering", palette: ["#171039", "#40266e", "#ff87c8"], curios: [C("space wrinkle","〰","#f9a8d4"),C("quantum fizz","✦","#c4b5fd"),C("tiny maybe","?","#fde68a"),C("vacuum bubble","○","#67e8f9"),C("Planck crumb","·","#fca5a5")] },
-  { at: .02, exp: -25, name: "Stringy Somewhere", quip: "Everything is wiggly", palette: ["#112342", "#24537d", "#54d7ff"], curios: [C("closed string","∞","#7dd3fc"),C("open string","∿","#f0abfc"),C("dimension curl","⌁","#fde68a"),C("gravity hum","♪","#a7f3d0"),C("brane flake","▱","#fda4af")] },
-  { at: .06, exp: -18, name: "Quark Park", quip: "Up, down, strange, adorable", palette: ["#24143f", "#6d236c", "#ff76ba"], curios: [C("up quark","u","#fb7185"),C("down quark","d","#60a5fa"),C("strange quark","s","#a3e635"),C("gluon","g","#facc15"),C("electron","e⁻","#c084fc")] },
-  { at: .2, exp: -15, name: "Particle Parade", quip: "Hadrons have entered the chat", palette: ["#1e2050", "#3e4f9d", "#67e8f9"], curios: [C("proton","p⁺","#fb7185"),C("neutron","n","#94a3b8"),C("neutrino","ν","#a7f3d0"),C("muon","μ","#f9a8d4"),C("photon","γ","#fde047")] },
-  { at: .5, exp: -10, name: "Atom Arcade", quip: "Now with actual matter!", palette: ["#0d394a", "#16776e", "#6ee7b7"], curios: [C("hydrogen","H","#f8fafc"),C("helium","He","#fde68a"),C("carbon","C","#a7f3d0"),C("oxygen","O","#7dd3fc"),C("gold atom","Au","#facc15")] },
-  { at: 2, exp: -8, name: "Molecule Meadows", quip: "Chemistry gets sticky", palette: ["#103a42", "#3c7757", "#c1e775"], curios: [C("water","H₂O","#7dd3fc"),C("sugar","◇","#fef3c7"),C("protein curl","〽","#f9a8d4"),C("salt","▧","#e2e8f0"),C("caffeine","☕","#c08457")] },
-  { at: 10, exp: -6, name: "Microbe Marsh", quip: "The snacks wiggle back", palette: ["#154039", "#378849", "#c8ef70"], curios: [C("bacterium","🦠","#bef264"),C("cell","◉","#f9a8d4"),C("pollen","✿","#fde047"),C("yeast","●","#fef3c7"),C("mitochondrion","ϟ","#fb7185")] },
-  { at: 40, exp: -3, name: "Tiny Things", quip: "Pocket lint: apex predator", palette: ["#214331", "#5f823b", "#f5d76e"], curios: [C("dust mite","✣","#fda4af"),C("sand grain","•","#fde68a"),C("ant","🐜","#3f3f46"),C("crumb","◆","#d6a66f"),C("pepper flake","▲","#ef4444")] },
-  { at: 120, exp: 0, name: "Everyday Kingdom", quip: "Chairs fear you now", palette: ["#225176", "#4da8ad", "#f7d98f"], curios: [C("sock","🧦","#fb7185"),C("guitar","🎸","#c08457"),C("couch","▰","#f59e0b"),C("mailbox","📫","#60a5fa"),C("tiny car","🚗","#ef4444")] },
-  { at: 250, exp: 3, name: "City Snack", quip: "Please roll responsibly", palette: ["#27325d", "#536fa7", "#ffb970"], curios: [C("bungalow","🏠","#fca5a5"),C("office","🏢","#94a3b8"),C("bridge","⌒","#cbd5e1"),C("stadium","⬭","#86efac"),C("skyscraper","▥","#7dd3fc")] },
-  { at: 430, exp: 7, name: "Planet Pantry", quip: "Continents are crunchy", palette: ["#071c47", "#15518b", "#38bdf8"], curios: [C("moon","🌙","#e2e8f0"),C("Mercury","●","#a8a29e"),C("Earth","🌎","#38bdf8"),C("Saturn","🪐","#fde68a"),C("comet","☄","#a5f3fc")] },
-  { at: 600, exp: 9, name: "Stellar Buffet", quip: "A light lunch", palette: ["#121133", "#422a66", "#fb7185"], curios: [C("red dwarf","★","#fb7185"),C("yellow star","☀","#fde047"),C("blue giant","✹","#7dd3fc"),C("pulsar","✦","#f0abfc"),C("black hole","◉","#171717")] },
-  { at: 760, exp: 21, name: "Galaxy Garden", quip: "Spiral, serve, repeat", palette: ["#130b31", "#45216e", "#c084fc"], curios: [C("spiral galaxy","🌀","#c4b5fd"),C("star cluster","⁙","#fde68a"),C("nebula","☁","#f9a8d4"),C("quasar","✧","#67e8f9"),C("dark matter knot","⌘","#818cf8")] },
-  { at: 900, exp: 26, name: "Universe Course", quip: "One cosmos, extra sauce", palette: ["#07031d", "#2a1753", "#8b5cf6"], curios: [C("observable universe","◎","#c4b5fd"),C("cosmic web","⌗","#67e8f9"),C("great void","◌","#312e81"),C("timeline","⟶","#f9a8d4"),C("big bang","✺","#fef08a")] },
-  { at: 1000, exp: 60, name: "Metaversal Mischief", quip: "Infinity was only the tutorial", palette: ["#0a021d", "#4d145e", "#ff4fd8"], curios: [C("pocket reality","◈","#f0abfc"),C("alternate you","☺","#fde68a"),C("story dimension","✎","#7dd3fc"),C("causality pretzel","♾","#f9a8d4"),C("omniverse crumb","✦","#fff")] },
-];
+type SaveData = {
+  hours: number;
+  picked: number;
+  x: number;
+  z: number;
+  zooms: number;
+  sound: boolean;
+};
 
-function eraAt(hours: number) {
-  for (let i = ERAS.length - 1; i >= 0; i--) if (hours >= ERAS[i].at) return i;
-  return 0;
+function pseudo(seed: number) {
+  const value = Math.sin(seed * 9283.312 + 77.13) * 43758.5453;
+  return value - Math.floor(value);
 }
-function exponentAt(hours: number) {
-  if (hours >= JOURNEY) return 60 + Math.log2(1 + (hours - JOURNEY) / 10) * 10;
-  const i = eraAt(hours), a = ERAS[i], b = ERAS[Math.min(i + 1, ERAS.length - 1)];
-  if (a === b) return a.exp;
-  let t = (hours - a.at) / (b.at - a.at);
-  t = t * t * (3 - 2 * t);
-  return a.exp + (b.exp - a.exp) * t;
+
+function scaleFromLog(log: number) {
+  const exponent = Math.floor(log);
+  const mantissa = 10 ** (log - exponent);
+  return `${mantissa.toFixed(exponent < -30 ? 3 : 2)} × 10^${exponent} m`;
 }
-function scaleText(hours: number) {
-  const n = exponentAt(hours), exp = Math.floor(n), m = 10 ** (n - exp);
-  return `${m.toFixed(2)} × 10^${exp} m`;
-}
-function hourText(hours: number) {
-  if (hours < 1 / 60) return `${Math.floor(hours * 3600)}s`;
-  if (hours < 1) return `${Math.floor(hours * 60)}m`;
-  return `${hours.toFixed(hours < 10 ? 2 : 1)}h`;
-}
-function random(seed: number) {
-  const x = Math.sin(seed * 9283.312 + 77.13) * 43758.5453;
-  return x - Math.floor(x);
+
+function confidenceClass(confidence: Era["confidence"]) {
+  return confidence.toLowerCase().replaceAll(" ", "-");
 }
 
 export default function Home() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const worldRef = useRef<HTMLDivElement>(null);
-  const things = useRef<Thing[]>([]);
-  const stickers = useRef<Sticker[]>([]);
-  const keys = useRef<Record<string, boolean>>({});
-  const stick = useRef({ on: false, x: 0, y: 0, ox: 0, oy: 0 });
-  const audio = useRef<AudioContext | null>(null);
-  const game = useRef({
-    x: 0, y: 0, vx: 0, vy: 0, r: 35, hours: 0, picked: 0, zooms: 0,
-    era: 0, running: false, sound: true, distance: 0, lastPickup: -99,
-    lastSave: 0, id: 0,
+  const mountRef = useRef<HTMLDivElement>(null);
+  const keysRef = useRef<Record<string, boolean>>({});
+  const joystickRef = useRef({ active: false, x: 0, y: 0, originX: 0, originY: 0 });
+  const audioRef = useRef<AudioContext | null>(null);
+  const gameRef = useRef({
+    x: 0,
+    z: 0,
+    vx: 0,
+    vz: 0,
+    radius: 1.12,
+    hours: 0,
+    picked: 0,
+    zooms: 0,
+    era: 0,
+    running: false,
+    sound: true,
+    lastPickup: -99,
+    lastSave: 0,
+    id: 0,
   });
+
   const [started, setStarted] = useState(false);
-  const [atlas, setAtlas] = useState(false);
+  const [showAtlas, setShowAtlas] = useState(false);
+  const [labEra, setLabEra] = useState<number | null>(null);
   const [sound, setSound] = useState(true);
-  const [toast, setToast] = useState("Roll over anything smaller than you.");
-  const [hud, setHud] = useState({ hours: 0, picked: 0, era: 0, scale: scaleText(0), progress: 0 });
+  const [toast, setToast] = useState("Absorb anything smaller than your current mash.");
+  const [lastFact, setLastFact] = useState({
+    name: "Spacetime fluctuation",
+    fact: ERAS[0].lesson,
+  });
+  const [hud, setHud] = useState({
+    hours: 0,
+    picked: 0,
+    era: 0,
+    progress: 0,
+    radius: 1.12,
+  });
 
   const ping = useCallback((pitch = 440, fanfare = false) => {
-    if (!game.current.sound) return;
-    const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = audio.current ?? new Ctx();
-    audio.current = ctx;
-    const osc = ctx.createOscillator(), gain = ctx.createGain(), now = ctx.currentTime;
-    osc.type = fanfare ? "triangle" : "sine";
-    osc.frequency.setValueAtTime(pitch, now);
-    osc.frequency.exponentialRampToValueAtTime(pitch * (fanfare ? 2.4 : 1.45), now + (fanfare ? .38 : .1));
-    gain.gain.setValueAtTime(fanfare ? .12 : .055, now);
-    gain.gain.exponentialRampToValueAtTime(.001, now + (fanfare ? .45 : .13));
-    osc.connect(gain); gain.connect(ctx.destination); osc.start(); osc.stop(now + (fanfare ? .46 : .14));
+    if (!gameRef.current.sound) return;
+    const AudioConstructor =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioConstructor) return;
+    const context = audioRef.current ?? new AudioConstructor();
+    audioRef.current = context;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+    oscillator.type = fanfare ? "triangle" : "sine";
+    oscillator.frequency.setValueAtTime(pitch, now);
+    oscillator.frequency.exponentialRampToValueAtTime(
+      pitch * (fanfare ? 2.25 : 1.4),
+      now + (fanfare ? 0.38 : 0.1),
+    );
+    gain.gain.setValueAtTime(fanfare ? 0.1 : 0.045, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + (fanfare ? 0.46 : 0.13));
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(now + (fanfare ? 0.47 : 0.14));
   }, []);
 
   const begin = useCallback(() => {
-    game.current.running = true;
+    gameRef.current.running = true;
     setStarted(true);
-    setToast("Go get those suspiciously small things!");
-    audio.current?.resume();
+    setToast("You are not quite matter yet. Go absorb some uncertainty.");
+    audioRef.current?.resume();
   }, []);
+
   const toggleSound = useCallback(() => {
-    const next = !game.current.sound;
-    game.current.sound = next; setSound(next);
+    const next = !gameRef.current.sound;
+    gameRef.current.sound = next;
+    setSound(next);
     if (next) ping(520);
   }, [ping]);
 
+  const previewEra = (index: number) => {
+    gameRef.current.running = true;
+    setStarted(true);
+    setLabEra(index);
+    setShowAtlas(false);
+    setToast(`Scale Lab: ${ERAS[index].name}. Journey progress is paused.`);
+    setLastFact({ name: ERAS[index].name, fact: ERAS[index].lesson });
+  };
+
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("everything-roll-save-v1");
+      const raw = localStorage.getItem("everything-roll-save-v2");
       if (!raw) return;
-      const s = JSON.parse(raw);
-      Object.assign(game.current, {
-        hours: Number(s.hours) || 0, picked: Number(s.picked) || 0,
-        x: Number(s.x) || 0, y: Number(s.y) || 0, zooms: Number(s.zooms) || 0,
-        sound: s.sound ?? true,
-      });
-      game.current.era = eraAt(game.current.hours);
-      setSound(game.current.sound);
-    } catch { localStorage.removeItem("everything-roll-save-v1"); }
+      const saved = JSON.parse(raw) as Partial<SaveData>;
+      const game = gameRef.current;
+      game.hours = Number(saved.hours) || 0;
+      game.picked = Number(saved.picked) || 0;
+      game.x = Number(saved.x) || 0;
+      game.z = Number(saved.z) || 0;
+      game.zooms = Number(saved.zooms) || 0;
+      game.sound = saved.sound ?? true;
+      game.era = eraAt(game.hours);
+      setSound(game.sound);
+      setHud((current) => ({
+        ...current,
+        hours: game.hours,
+        picked: game.picked,
+        era: game.era,
+      }));
+    } catch {
+      localStorage.removeItem("everything-roll-save-v2");
+    }
   }, []);
 
   useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      keys.current[e.key.toLowerCase()] = true;
-      if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(e.key.toLowerCase())) e.preventDefault();
-      if (e.key.toLowerCase() === "m") toggleSound();
-      if (e.key.toLowerCase() === "a") setAtlas(v => !v);
-      if (!game.current.running && [" ","enter"].includes(e.key.toLowerCase())) begin();
+    const onDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      keysRef.current[key] = true;
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
+        event.preventDefault();
+      }
+      if (key === "m") toggleSound();
+      if (key === "i") setShowAtlas((value) => !value);
+      if (!gameRef.current.running && [" ", "enter"].includes(key)) begin();
     };
-    const up = (e: KeyboardEvent) => { keys.current[e.key.toLowerCase()] = false; };
-    addEventListener("keydown", down, { passive: false }); addEventListener("keyup", up);
-    return () => { removeEventListener("keydown", down); removeEventListener("keyup", up); };
+    const onUp = (event: KeyboardEvent) => {
+      keysRef.current[event.key.toLowerCase()] = false;
+    };
+    window.addEventListener("keydown", onDown, { passive: false });
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
   }, [begin, toggleSound]);
 
   useEffect(() => {
-    const canvas = canvasRef.current, wrapper = worldRef.current;
-    if (!canvas || !wrapper) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    let width = 0, height = 0, dpr = 1, last = performance.now(), spawnClock = 0, hudClock = 0, frame = 0;
-    const resize = () => {
-      const b = wrapper.getBoundingClientRect(); width = b.width; height = b.height;
-      dpr = Math.min(devicePixelRatio || 1, 2); canvas.width = width * dpr; canvas.height = height * dpr;
-      canvas.style.width = `${width}px`; canvas.style.height = `${height}px`; ctx.setTransform(dpr,0,0,dpr,0,0);
-    };
-    const addThing = (seed: number) => {
-      const g = game.current, era = ERAS[g.era], a = random(seed + g.id * 7) * Math.PI * 2;
-      const d = 240 + random(seed + 11) * Math.max(width, height) * 1.2;
-      const big = random(seed + 29) > .82;
-      const curio = era.curios[Math.floor(random(seed + 53) * era.curios.length)];
-      things.current.push({ ...curio, id: ++g.id, x: g.x + Math.cos(a)*d, y: g.y + Math.sin(a)*d,
-        r: big ? g.r * (1.15 + random(seed + 81)*.7) : 8 + random(seed + 41)*g.r*.58,
-        big, a: random(seed + 3)*Math.PI*2 });
-    };
-    const populate = () => {
-      const g = game.current;
-      things.current = things.current.filter(t => Number.isFinite(t.x) && Math.hypot(t.x-g.x,t.y-g.y) < 1900);
-      while (things.current.length < 80) addThing(performance.now()*.002 + things.current.length*109);
-    };
-    const blob = (x: number,y: number,r: number,color: string,a: number,big: boolean) => {
-      ctx.save(); ctx.translate(x,y); ctx.rotate(a); ctx.beginPath();
-      for (let i=0;i<=18;i++) {
-        const q=i/18*Math.PI*2, m=1+Math.sin(q*3+a)*.055, px=Math.cos(q)*r*m, py=Math.sin(q)*r*m;
-        if(i) ctx.lineTo(px,py); else ctx.moveTo(px,py);
-      }
-      ctx.closePath(); ctx.shadowColor="rgba(5,5,20,.36)"; ctx.shadowBlur=big?17:9; ctx.shadowOffsetY=big?9:4;
-      ctx.fillStyle=color; ctx.fill(); ctx.shadowColor="transparent"; ctx.lineWidth=Math.max(2,r*.08);
-      ctx.strokeStyle=big?"rgba(255,255,255,.84)":"rgba(255,255,255,.52)"; ctx.stroke(); ctx.restore();
-    };
-    const draw = (now: number) => {
-      const g=game.current, era=ERAS[g.era], [deep,mid,pop]=era.palette;
-      const bg=ctx.createRadialGradient(width*.5,height*.45,0,width*.5,height*.45,Math.max(width,height)*.85);
-      bg.addColorStop(0,mid); bg.addColorStop(1,deep); ctx.fillStyle=bg; ctx.fillRect(0,0,width,height);
-      ctx.globalAlpha=.12; ctx.strokeStyle=pop; ctx.lineWidth=1; const grid=74, ox=(((-g.x*.22)%grid)+grid)%grid, oy=(((-g.y*.22)%grid)+grid)%grid;
-      for(let x=ox;x<width;x+=grid){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,height);ctx.stroke();}
-      for(let y=oy;y<height;y+=grid){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();} ctx.globalAlpha=1;
-      for(let i=0;i<32;i++){const x=(random(i*17+g.era)*width-g.x*(.02+(i%4)*.006)+width*4)%width,y=(random(i*31+4)*height-g.y*(.02+(i%3)*.004)+height*4)%height;ctx.beginPath();ctx.fillStyle=i%5? "rgba(255,255,255,.5)":pop;ctx.arc(x,y,1+i%3,0,Math.PI*2);ctx.fill();}
-      const camX=g.x-width/2,camY=g.y-height/2;
-      things.current.filter(t=>t.x-camX>-100&&t.x-camX<width+100&&t.y-camY>-100&&t.y-camY<height+100).sort((a,b)=>a.r-b.r).forEach(t=>{
-        const x=t.x-camX,y=t.y-camY,pulse=1+Math.sin(now*.002+t.a)*.035; blob(x,y,t.r*pulse,t.color,t.a+now*.0002,t.big);
-        ctx.save();ctx.translate(x,y);ctx.font=`800 ${Math.max(10,t.r*(t.glyph.length>2?.65:1.1))}px Arial`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillStyle="#21132e";ctx.fillText(t.glyph,0,1);ctx.restore();
-        if(t.big&&t.r<g.r*1.7){ctx.font="700 9px monospace";ctx.textAlign="center";ctx.fillStyle="rgba(255,255,255,.7)";ctx.fillText("TOO BIG",x,y+t.r+15);}
+    const mount = mountRef.current;
+    if (!mount) return;
+
+    const game = gameRef.current;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.domElement.className = "three-canvas";
+    mount.prepend(renderer.domElement);
+
+    const activeIndex = labEra ?? eraAt(game.hours);
+    game.era = activeIndex;
+    const activeEra = ERAS[activeIndex];
+    const early =
+      activeEra.realm === "prephysical" || activeEra.realm === "particle";
+
+    const deepColor = new THREE.Color(activeEra.palette[0]);
+    const middleColor = new THREE.Color(activeEra.palette[1]);
+    scene.background = deepColor;
+    scene.fog = new THREE.FogExp2(deepColor, early ? 0.017 : 0.024);
+
+    const hemisphere = new THREE.HemisphereLight(0xdff8ff, 0x28112f, early ? 1.5 : 1.1);
+    scene.add(hemisphere);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
+    keyLight.position.set(-7, 12, 8);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.shadow.camera.left = -22;
+    keyLight.shadow.camera.right = 22;
+    keyLight.shadow.camera.top = 22;
+    keyLight.shadow.camera.bottom = -22;
+    scene.add(keyLight);
+    const glowLight = new THREE.PointLight(activeEra.palette[2], 8, 22, 2);
+    glowLight.position.set(4, 5, -3);
+    scene.add(glowLight);
+
+    const groundMaterial = new THREE.MeshStandardMaterial({
+      color: middleColor.clone().multiplyScalar(0.58),
+      roughness: 0.92,
+      metalness: 0.02,
+    });
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(95, 96), groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    ground.visible = !early;
+    scene.add(ground);
+    const grid = new THREE.GridHelper(170, 90, activeEra.palette[2], activeEra.palette[2]);
+    const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+    gridMaterials.forEach((material) => {
+      material.transparent = true;
+      material.opacity = activeEra.realm === "matter" ? 0.12 : 0.08;
+    });
+    grid.position.y = 0.012;
+    grid.visible = !early;
+    scene.add(grid);
+
+    const dustPositions: number[] = [];
+    const dustColors: number[] = [];
+    const pop = new THREE.Color(activeEra.palette[2]);
+    for (let i = 0; i < 620; i += 1) {
+      const angle = pseudo(i * 3.17) * Math.PI * 2;
+      const radius = 8 + pseudo(i * 7.31) * 75;
+      dustPositions.push(
+        Math.cos(angle) * radius,
+        -3 + pseudo(i * 1.91) * 18,
+        Math.sin(angle) * radius,
+      );
+      const color = pop.clone().lerp(new THREE.Color(0xffffff), pseudo(i * 8.3) * 0.7);
+      dustColors.push(color.r, color.g, color.b);
+    }
+    const dustGeometry = new THREE.BufferGeometry();
+    dustGeometry.setAttribute("position", new THREE.Float32BufferAttribute(dustPositions, 3));
+    dustGeometry.setAttribute("color", new THREE.Float32BufferAttribute(dustColors, 3));
+    const dustMaterial = new THREE.PointsMaterial({
+      size: early ? 0.11 : 0.06,
+      transparent: true,
+      opacity: early ? 0.72 : 0.35,
+      vertexColors: true,
+      depthWrite: false,
+    });
+    const dustField = new THREE.Points(dustGeometry, dustMaterial);
+    scene.add(dustField);
+
+    const playerRoot = new THREE.Group();
+    const rollGroup = new THREE.Group();
+    const mashGroup = new THREE.Group();
+    playerRoot.add(rollGroup);
+    rollGroup.add(mashGroup);
+    scene.add(playerRoot);
+
+    const coreMaterial = new THREE.MeshPhysicalMaterial({
+      color: early ? activeEra.palette[2] : 0xffb83e,
+      emissive: early ? activeEra.palette[2] : 0x5b1629,
+      emissiveIntensity: early ? 1.35 : 0.18,
+      roughness: early ? 0.18 : 0.62,
+      metalness: early ? 0.05 : 0,
+      transmission: activeEra.realm === "prephysical" ? 0.42 : 0,
+      transparent: activeEra.realm === "prephysical",
+      opacity: activeEra.realm === "prephysical" ? 0.78 : 1,
+      clearcoat: 0.65,
+      clearcoatRoughness: 0.2,
+    });
+    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 6), coreMaterial);
+    core.castShadow = !early;
+    core.receiveShadow = !early;
+    rollGroup.add(core);
+
+    const innerGlowMaterial = new THREE.MeshBasicMaterial({
+      color: activeEra.palette[2],
+      transparent: true,
+      opacity: early ? 0.18 : 0.06,
+      side: THREE.BackSide,
+    });
+    const innerGlow = new THREE.Mesh(new THREE.SphereGeometry(1.12, 32, 24), innerGlowMaterial);
+    core.add(innerGlow);
+
+    const createMaterial = (color: string, emissive = false) =>
+      new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.54,
+        metalness: 0.05,
+        emissive: emissive ? color : 0x000000,
+        emissiveIntensity: emissive ? 0.8 : 0,
+        transparent: false,
       });
-      const cx=width/2,cy=height/2,roll=g.distance/Math.max(18,g.r);ctx.save();ctx.translate(cx,cy);ctx.rotate(roll);
-      ctx.shadowColor="rgba(5,5,20,.45)";ctx.shadowBlur=23;ctx.shadowOffsetY=12;
-      const ball=ctx.createRadialGradient(-g.r*.35,-g.r*.45,1,0,0,g.r*1.1);ball.addColorStop(0,"#fff8b5");ball.addColorStop(.44,"#ffcf3f");ball.addColorStop(1,"#ff6b55");
-      ctx.beginPath();ctx.arc(0,0,g.r,0,Math.PI*2);ctx.fillStyle=ball;ctx.fill();ctx.shadowColor="transparent";ctx.lineWidth=4;ctx.strokeStyle="rgba(100,30,70,.42)";ctx.stroke();
-      ctx.strokeStyle="rgba(145,49,48,.24)";ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,g.r*.62,-.9,1.8);ctx.stroke();
-      stickers.current.forEach((s,i)=>{ctx.save();ctx.translate(Math.cos(s.a)*s.d,Math.sin(s.a)*s.d);ctx.rotate(s.tilt-roll);ctx.font=`800 ${s.s}px Arial`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillStyle="#221634";ctx.fillText(s.glyph,0,Math.sin(now*.008+i)*2);ctx.restore();});
-      ctx.fillStyle="#2f163b";ctx.beginPath();ctx.arc(-g.r*.28,-g.r*.16,Math.max(2.5,g.r*.075),0,Math.PI*2);ctx.arc(g.r*.28,-g.r*.16,Math.max(2.5,g.r*.075),0,Math.PI*2);ctx.fill();
-      ctx.strokeStyle="#2f163b";ctx.lineWidth=Math.max(2,g.r*.055);ctx.beginPath();ctx.arc(0,g.r*.03,g.r*.24,.18,Math.PI-.18);ctx.stroke();ctx.restore();
+
+    const addPart = (
+      parent: THREE.Group,
+      geometry: THREE.BufferGeometry,
+      material: THREE.Material,
+      position: [number, number, number],
+      scale: [number, number, number] = [1, 1, 1],
+      rotation: [number, number, number] = [0, 0, 0],
+    ) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(...position);
+      mesh.scale.set(...scale);
+      mesh.rotation.set(...rotation);
+      mesh.castShadow = !early;
+      mesh.receiveShadow = !early;
+      parent.add(mesh);
+      return mesh;
     };
-    const collect = (t: Thing, now: number) => {
-      const g=game.current;g.picked++;g.lastPickup=now/1000;g.r+=Math.min(.85,.35+t.r*.014);
-      setToast(`${t.name} acquired!`);stickers.current.push({...t,a:Math.atan2(t.y-g.y,t.x-g.x),d:g.r*(.63+Math.random()*.32),s:Math.max(9,Math.min(18,t.r*.72)),tilt:Math.random()*Math.PI*2});
-      if(stickers.current.length>18)stickers.current.shift();ping(300+Math.min(700,g.picked%12*43));
-      if(g.r>=67){g.r=36;g.zooms++;things.current=[];stickers.current=stickers.current.slice(-7);setToast(`ZOOM OUT #${g.zooms} — somehow, there is still more.`);ping(350+g.era*20,true);}
-    };
-    const tick = (now: number) => {
-      const g=game.current,dt=Math.min(.033,(now-last)/1000);last=now;
-      if(g.running&&!atlas){
-        let ix=0,iy=0;if(keys.current.w||keys.current.arrowup)iy--;if(keys.current.s||keys.current.arrowdown)iy++;if(keys.current.a||keys.current.arrowleft)ix--;if(keys.current.d||keys.current.arrowright)ix++;
-        if(stick.current.on){ix+=Math.max(-1,Math.min(1,(stick.current.x-stick.current.ox)/54));iy+=Math.max(-1,Math.min(1,(stick.current.y-stick.current.oy)/54));}
-        const len=Math.hypot(ix,iy);if(len>.05){ix/=Math.max(1,len);iy/=Math.max(1,len);const accel=760*(keys.current[" "]?1.32:1);g.vx+=ix*accel*dt;g.vy+=iy*accel*dt;const engaged=Math.max(0,1-(now/1000-g.lastPickup)/8);g.hours+=dt*(.72+engaged*.28)/3600;}
-        const drag=Math.pow(.052,dt);g.vx*=drag;g.vy*=drag;const speed=Math.hypot(g.vx,g.vy),max=keys.current[" "]?355:270;if(speed>max){g.vx=g.vx/speed*max;g.vy=g.vy/speed*max;}
-        g.x+=g.vx*dt;g.y+=g.vy*dt;g.distance+=speed*dt;
-        const old=g.era;g.era=eraAt(g.hours);if(old!==g.era){things.current=[];stickers.current=[];setToast(`${ERAS[g.era].name.toUpperCase()} UNLOCKED!`);ping(360+g.era*22,true);}
-        things.current.forEach(t=>{const dx=t.x-g.x,dy=t.y-g.y,d=Math.hypot(dx,dy);if(d<g.r+t.r*.68){if(t.r<=g.r*.9){collect(t,now);t.x=Infinity;}else if(d){g.vx-=dx/d*140;g.vy-=dy/d*140;if(now/1000-g.lastPickup>.8)setToast(`${t.name} is too big — keep rolling.`);}}});
-        things.current=things.current.filter(t=>Number.isFinite(t.x));
+
+    const makeVisual = (curio: Curio) => {
+      const group = new THREE.Group();
+      const material = createMaterial(
+        curio.color,
+        ["spark", "quark", "star", "galaxy", "universe"].includes(curio.shape),
+      );
+      const dark = createMaterial("#261b38");
+      const pale = createMaterial("#f6f2e8");
+      const shape = curio.shape;
+
+      if (shape === "bubble") {
+        const bubbleMaterial = new THREE.MeshPhysicalMaterial({
+          color: curio.color,
+          emissive: curio.color,
+          emissiveIntensity: 0.6,
+          transparent: true,
+          opacity: 0.58,
+          transmission: 0.3,
+          roughness: 0.12,
+        });
+        addPart(group, new THREE.SphereGeometry(0.75, 22, 16), bubbleMaterial, [0, 0, 0]);
+        addPart(group, new THREE.SphereGeometry(0.22, 14, 10), material, [-0.38, 0.35, 0.3]);
+      } else if (shape === "spark") {
+        addPart(group, new THREE.OctahedronGeometry(0.72, 1), material, [0, 0, 0], [0.55, 1.2, 0.55]);
+      } else if (shape === "quark") {
+        addPart(group, new THREE.SphereGeometry(0.52, 20, 14), material, [0, 0, 0]);
+        addPart(group, new THREE.TorusGeometry(0.7, 0.045, 8, 32), pale, [0, 0, 0], [1, 1, 1], [1.1, 0.4, 0]);
+      } else if (shape === "hadron") {
+        addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#ff5e72", true), [-0.3, 0.18, 0.08]);
+        addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#58a7ff", true), [0.3, 0.18, -0.08]);
+        addPart(group, new THREE.SphereGeometry(0.42, 20, 14), createMaterial("#f7db56", true), [0, -0.26, 0]);
+      } else if (shape === "atom") {
+        addPart(group, new THREE.SphereGeometry(0.22, 18, 12), material, [0, 0, 0]);
+        for (let i = 0; i < 3; i += 1) {
+          addPart(group, new THREE.TorusGeometry(0.68, 0.025, 6, 38), pale, [0, 0, 0], [1, 1, 1], [i * 1.05, i * 0.7, 0]);
+        }
+      } else if (shape === "molecule") {
+        addPart(group, new THREE.SphereGeometry(0.38, 16, 12), material, [0, 0, 0]);
+        addPart(group, new THREE.SphereGeometry(0.27, 16, 12), pale, [0.5, 0.15, 0.1]);
+        addPart(group, new THREE.SphereGeometry(0.27, 16, 12), pale, [-0.38, 0.37, -0.1]);
+      } else if (shape === "virus") {
+        addPart(group, new THREE.IcosahedronGeometry(0.58, 2), material, [0, 0, 0]);
+        for (let i = 0; i < 10; i += 1) {
+          const angle = (i / 10) * Math.PI * 2;
+          addPart(group, new THREE.ConeGeometry(0.07, 0.28, 6), pale, [Math.cos(angle) * 0.69, Math.sin(angle) * 0.69, 0], [1, 1, 1], [0, 0, angle - Math.PI / 2]);
+        }
+      } else if (shape === "cell") {
+        const membrane = new THREE.MeshPhysicalMaterial({
+          color: curio.color,
+          transparent: true,
+          opacity: 0.7,
+          roughness: 0.3,
+          transmission: 0.12,
+        });
+        addPart(group, new THREE.SphereGeometry(0.72, 24, 18), membrane, [0, 0, 0], [1.05, 0.82, 1]);
+        addPart(group, new THREE.SphereGeometry(0.25, 18, 12), dark, [0.18, 0.05, 0.18]);
+        addPart(group, new THREE.SphereGeometry(0.1, 12, 8), pale, [-0.3, 0.22, 0.2]);
+      } else if (shape === "fiber") {
+        addPart(group, new THREE.CapsuleGeometry(0.18, 1.25, 5, 12), material, [0, 0, 0], [1, 1, 1], [0.2, 0.2, 1.08]);
+      } else if (shape === "dust") {
+        addPart(group, new THREE.DodecahedronGeometry(0.62, 1), material, [0, 0, 0], [1, 0.62, 0.75]);
+      } else if (shape === "stone" || shape === "mountain") {
+        addPart(group, new THREE.DodecahedronGeometry(0.66, 1), material, [0, 0, 0], shape === "mountain" ? [1.1, 1.5, 0.9] : [1, 0.72, 0.86]);
+      } else if (shape === "chair") {
+        addPart(group, new THREE.BoxGeometry(0.95, 0.16, 0.82), material, [0, 0, 0]);
+        addPart(group, new THREE.BoxGeometry(0.95, 1.05, 0.15), material, [0, 0.48, 0.35]);
+        [-0.36, 0.36].forEach((x) => [-0.28, 0.28].forEach((z) => addPart(group, new THREE.BoxGeometry(0.13, 0.7, 0.13), dark, [x, -0.4, z])));
+      } else if (shape === "car") {
+        addPart(group, new THREE.BoxGeometry(1.45, 0.46, 0.72), material, [0, 0, 0]);
+        addPart(group, new THREE.BoxGeometry(0.75, 0.38, 0.67), pale, [-0.1, 0.38, 0]);
+        [-0.48, 0.48].forEach((x) => [-0.39, 0.39].forEach((z) => addPart(group, new THREE.CylinderGeometry(0.18, 0.18, 0.12, 16), dark, [x, -0.27, z], [1, 1, 1], [Math.PI / 2, 0, 0])));
+      } else if (shape === "house") {
+        addPart(group, new THREE.BoxGeometry(1.15, 0.85, 0.95), material, [0, 0, 0]);
+        addPart(group, new THREE.ConeGeometry(0.88, 0.55, 4), createMaterial("#d05e57"), [0, 0.7, 0], [1, 1, 1], [0, Math.PI / 4, 0]);
+        addPart(group, new THREE.BoxGeometry(0.25, 0.48, 0.08), dark, [0, -0.18, 0.51]);
+      } else if (shape === "planet") {
+        addPart(group, new THREE.SphereGeometry(0.67, 28, 20), material, [0, 0, 0]);
+        addPart(group, new THREE.TorusGeometry(0.9, 0.055, 8, 44), pale, [0, 0, 0], [1, 0.42, 1], [0.25, 0, 0.15]);
+      } else if (shape === "star") {
+        addPart(group, new THREE.IcosahedronGeometry(0.72, 3), material, [0, 0, 0]);
+        addPart(group, new THREE.SphereGeometry(0.96, 20, 14), new THREE.MeshBasicMaterial({ color: curio.color, transparent: true, opacity: 0.12, side: THREE.BackSide }), [0, 0, 0]);
+      } else if (shape === "system") {
+        addPart(group, new THREE.SphereGeometry(0.2, 16, 12), material, [0, 0, 0]);
+        [0.45, 0.72, 0.98].forEach((radius, index) => {
+          addPart(group, new THREE.TorusGeometry(radius, 0.018, 5, 42), pale, [0, 0, 0], [1, 0.35 + index * 0.12, 1], [0.3 * index, 0.15, 0]);
+        });
+      } else if (shape === "galaxy") {
+        addPart(group, new THREE.SphereGeometry(0.18, 14, 10), pale, [0, 0, 0]);
+        for (let i = 0; i < 3; i += 1) {
+          addPart(group, new THREE.TorusGeometry(0.38 + i * 0.2, 0.09, 6, 42), material, [0, 0, 0], [1, 0.22, 1], [0.2, i * 0.6, 0]);
+        }
+      } else if (shape === "universe") {
+        addPart(group, new THREE.IcosahedronGeometry(0.76, 2), new THREE.MeshBasicMaterial({ color: curio.color, wireframe: true, transparent: true, opacity: 0.72 }), [0, 0, 0]);
+        addPart(group, new THREE.SphereGeometry(0.28, 16, 12), material, [0, 0, 0]);
+      } else {
+        addPart(group, new THREE.BoxGeometry(0.9, 0.72, 0.62), material, [0, 0, 0], [1, 1, 1], [0.15, 0.25, 0.08]);
       }
-      spawnClock+=dt;if(spawnClock>.35||things.current.length<50){populate();spawnClock=0;}
-      hudClock+=dt;if(hudClock>.14){const i=g.era,a=ERAS[i],b=ERAS[Math.min(i+1,ERAS.length-1)],progress=a===b?1:Math.max(0,Math.min(1,(g.hours-a.at)/(b.at-a.at)));setHud({hours:g.hours,picked:g.picked,era:i,scale:scaleText(g.hours),progress});hudClock=0;}
-      if(now-g.lastSave>5000){localStorage.setItem("everything-roll-save-v1",JSON.stringify({hours:g.hours,picked:g.picked,x:g.x,y:g.y,zooms:g.zooms,sound:g.sound}));g.lastSave=now;}
-      draw(now);frame=requestAnimationFrame(tick);
+      return group;
     };
-    resize();populate();addEventListener("resize",resize);frame=requestAnimationFrame(tick);
-    return()=>{cancelAnimationFrame(frame);removeEventListener("resize",resize);};
-  }, [atlas,ping]);
 
-  const down=(e:React.PointerEvent<HTMLCanvasElement>)=>{if(!started)return;Object.assign(stick.current,{on:true,x:e.clientX,y:e.clientY,ox:e.clientX,oy:e.clientY});e.currentTarget.setPointerCapture(e.pointerId);};
-  const move=(e:React.PointerEvent<HTMLCanvasElement>)=>{if(stick.current.on){stick.current.x=e.clientX;stick.current.y=e.clientY;}};
-  const up=()=>{stick.current.on=false;};
-  const era=ERAS[hud.era],next=ERAS[Math.min(hud.era+1,ERAS.length-1)],remaining=Math.max(0,JOURNEY-hud.hours);
+    const makeLabel = (text: string, color: string) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 112;
+      const context = canvas.getContext("2d")!;
+      context.fillStyle = "rgba(14, 8, 32, .82)";
+      context.beginPath();
+      context.roundRect(8, 8, 496, 96, 32);
+      context.fill();
+      context.strokeStyle = color;
+      context.lineWidth = 4;
+      context.stroke();
+      context.fillStyle = "#ffffff";
+      context.font = "700 34px Arial";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(text, 256, 58, 448);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }),
+      );
+      sprite.scale.set(2.4, 0.525, 1);
+      return sprite;
+    };
 
-  return <main className="shell">
-    <div ref={worldRef} className="world" style={{"--pop":era.palette[2]} as React.CSSProperties}>
-      <canvas ref={canvasRef} className="canvas" aria-label="Everything Roll game world" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}/>
-      <header className="topbar">
-        <div className="brand"><div className="brand-ball">✦</div><div><b>EVERYTHING ROLL</b><small>a very small adventure</small></div></div>
-        <div className="actions"><button onClick={()=>setAtlas(true)}>⌁ <span>Scale atlas</span></button><button className="sound" onClick={toggleSound} aria-label={sound?"Mute sound":"Turn on sound"}>{sound?"♪":"×"}</button></div>
-      </header>
-      <section className="scale-card" aria-live="polite">
-        <div className="kicker"><span>{era.name}</span><span className="active">ACTIVE SCALE</span></div>
-        <div className="scale">{hud.scale}</div><div className="quip">{era.quip}</div>
-        <div className="track"><i style={{width:`${Math.max(1.5,hud.progress*100)}%`}}/></div>
-        <div className="meta"><span>Next: {next.name}</span><span>{(hud.progress*100).toFixed(2)}%</span></div>
-      </section>
-      <aside className="stats">
-        <div><b>{hud.picked.toLocaleString()}</b><small>things rolled</small></div><i/>
-        <div><b>{hourText(hud.hours)}</b><small>deep journey</small></div><i/>
-        <div><b>{remaining?`${Math.ceil(remaining)}h`:"∞"}</b><small>{remaining?"to metaverse":"past metaverse"}</small></div>
-      </aside>
-      <div className="toast"><span>✦</span>{toast}</div>
-      <div className="controls"><span><kbd>WASD</kbd> / arrows to roll</span><span><kbd>SPACE</kbd> for reckless enthusiasm</span></div>
-      <div className="touch-tip">◎ drag anywhere to roll</div>
+    let pickups: Pickup[] = [];
+    const attachments: THREE.Object3D[] = [];
+    let spawnClock = 0;
 
-      {!started&&<section className="welcome">
-        <div className="eyebrow">BEGIN AT 1.6 × 10⁻³⁵ METERS</div>
-        <h1>Start with almost<br/><em>absolutely nothing.</em></h1>
-        <p>Roll up everything smaller than you—from quantum fizz and quarks to socks, cities, galaxies, and realities nobody ordered.</p>
-        <button className="start" onClick={begin}><span>Start rolling</span><b>→</b></button>
-        <div className="welcome-foot"><span>NO TIMER</span><span>•</span><span>AUTO-SAVES HERE</span><span>•</span><span>INFINITE AFTER 1,000H</span></div>
-      </section>}
+    const removePickup = (pickup: Pickup, preserveVisual = false) => {
+      scene.remove(pickup.root);
+      if (!preserveVisual) {
+        pickup.visual.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.forEach((material) => material.dispose());
+          }
+        });
+      }
+      const labelMaterial = pickup.label.material as THREE.SpriteMaterial;
+      labelMaterial.map?.dispose();
+      labelMaterial.dispose();
+    };
 
-      {atlas&&<section className="atlas-bg" role="dialog" aria-modal="true" aria-label="Scale atlas">
-        <div className="atlas">
-          <header><div><div className="eyebrow">THE RIDICULOUSLY LONG VIEW</div><h2>Scale atlas</h2><p>The early universe opens quickly; later scales settle into the thousand-hour long game. Progress only advances while you roll.</p></div><button onClick={()=>setAtlas(false)} aria-label="Close atlas">×</button></header>
-          <div className="era-list">{ERAS.map((item,i)=><article key={item.name} className={`${hud.hours>=item.at?"reached":""} ${i===hud.era?"current":""}`}>
-            <div className="orb" style={{background:item.palette[2]}}>{item.curios[0].glyph}</div>
-            <div><span>{item.at?`~${hourText(item.at)}`:"START"}</span><h3>{item.name}</h3><p>{item.quip}</p></div><code>10^{item.exp} m</code>
-          </article>)}<article className="forever"><div className="orb">∞</div><div><span>FOREVER</span><h3>The Procedural Beyond</h3><p>New orders of magnitude. New nonsense. No ceiling.</p></div><code>∞ m</code></article></div>
+    const spawnPickup = (seed: number) => {
+      const radius = 8 + pseudo(seed + game.id * 7) * 26;
+      const angle = pseudo(seed + 13) * Math.PI * 2;
+      const big = pseudo(seed + 29) > 0.78;
+      const size = big
+        ? game.radius * (1.1 + pseudo(seed + 41) * 0.78)
+        : 0.2 + pseudo(seed + 53) * game.radius * 0.58;
+      const curio =
+        activeEra.curios[Math.floor(pseudo(seed + 67) * activeEra.curios.length)];
+      const root = new THREE.Group();
+      const visual = makeVisual(curio);
+      visual.scale.setScalar(size);
+      const label = makeLabel(curio.name, curio.color);
+      label.position.y = Math.max(0.9, size * 1.32);
+      root.add(visual, label);
+      root.position.set(
+        game.x + Math.cos(angle) * radius,
+        early ? 0.8 + pseudo(seed + 79) * 3.2 : Math.max(0.22, size * 0.48),
+        game.z + Math.sin(angle) * radius,
+      );
+      root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
+      scene.add(root);
+      pickups.push({ root, visual, label, curio, size, big });
+      game.id += 1;
+    };
+
+    const populate = () => {
+      pickups = pickups.filter((pickup) => {
+        const distance = Math.hypot(
+          pickup.root.position.x - game.x,
+          pickup.root.position.z - game.z,
+        );
+        if (distance < 72) return true;
+        removePickup(pickup);
+        return false;
+      });
+      while (pickups.length < 54) {
+        spawnPickup(performance.now() * 0.002 + pickups.length * 101);
+      }
+    };
+
+    const shrinkHistory = () => {
+      attachments.forEach((attachment) => {
+        attachment.position.multiplyScalar(0.55);
+        attachment.scale.multiplyScalar(0.68);
+      });
+    };
+
+    const collect = (pickup: Pickup, now: number) => {
+      game.picked += 1;
+      game.lastPickup = now / 1000;
+      game.radius += Math.min(0.055, 0.026 + pickup.size * 0.018);
+      setToast(`${pickup.curio.name} joined the mash.`);
+      setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
+      ping(290 + (game.picked % 12) * 38);
+
+      pickup.root.remove(pickup.visual);
+      removePickup(pickup, true);
+      const direction = new THREE.Vector3(
+        Math.random() - 0.5,
+        Math.random() - 0.24,
+        Math.random() - 0.5,
+      ).normalize();
+      const mergesInside =
+        activeEra.realm === "prephysical" || activeEra.realm === "particle";
+      pickup.visual.position.copy(
+        direction.multiplyScalar(game.radius * (mergesInside ? 0.42 : 0.78)),
+      );
+      pickup.visual.scale.multiplyScalar(mergesInside ? 0.44 : 0.72);
+      pickup.visual.rotation.set(
+        Math.random() * Math.PI,
+        Math.random() * Math.PI,
+        Math.random() * Math.PI,
+      );
+      if (mergesInside) {
+        pickup.visual.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.forEach((material) => {
+              material.transparent = true;
+              material.opacity = Math.min(material.opacity, 0.68);
+              material.depthWrite = false;
+            });
+          }
+        });
+      }
+      mashGroup.add(pickup.visual);
+      attachments.push(pickup.visual);
+      if (attachments.length > 44) {
+        const oldest = attachments.shift();
+        if (oldest) {
+          mashGroup.remove(oldest);
+          oldest.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              const materials = Array.isArray(child.material) ? child.material : [child.material];
+              materials.forEach((material) => material.dispose());
+            }
+          });
+        }
+      }
+
+      if (game.radius >= 2.18) {
+        game.radius = 1.14;
+        game.zooms += 1;
+        shrinkHistory();
+        pickups.forEach((item) => removePickup(item));
+        pickups = [];
+        setToast(`ZOOM OUT #${game.zooms} — the mash survived, the universe got smaller.`);
+        ping(350 + activeIndex * 18, true);
+      }
+    };
+
+    let width = 0;
+    let height = 0;
+    const resize = () => {
+      const box = mount.getBoundingClientRect();
+      width = box.width;
+      height = box.height;
+      renderer.setSize(width, height, false);
+      camera.aspect = Math.max(0.2, width / height);
+      camera.updateProjectionMatrix();
+    };
+
+    resize();
+    populate();
+    window.addEventListener("resize", resize);
+
+    let last = performance.now();
+    let frame = 0;
+    let hudClock = 0;
+    const desiredCamera = new THREE.Vector3();
+    const cameraTarget = new THREE.Vector3();
+
+    const animate = (now: number) => {
+      const dt = Math.min(0.033, (now - last) / 1000);
+      last = now;
+
+      if (game.running && !showAtlas) {
+        let inputX = 0;
+        let inputZ = 0;
+        if (keysRef.current.w || keysRef.current.arrowup) inputZ -= 1;
+        if (keysRef.current.s || keysRef.current.arrowdown) inputZ += 1;
+        if (keysRef.current.a || keysRef.current.arrowleft) inputX -= 1;
+        if (keysRef.current.d || keysRef.current.arrowright) inputX += 1;
+        const joystick = joystickRef.current;
+        if (joystick.active) {
+          inputX += Math.max(-1, Math.min(1, (joystick.x - joystick.originX) / 62));
+          inputZ += Math.max(-1, Math.min(1, (joystick.y - joystick.originY) / 62));
+        }
+        const length = Math.hypot(inputX, inputZ);
+        if (length > 0.05) {
+          inputX /= Math.max(1, length);
+          inputZ /= Math.max(1, length);
+          const boost = keysRef.current[" "] ? 1.26 : 1;
+          game.vx += inputX * 9.5 * boost * dt;
+          game.vz += inputZ * 9.5 * boost * dt;
+          if (labEra === null) {
+            const engagement = Math.max(0, 1 - (now / 1000 - game.lastPickup) / 8);
+            game.hours += (dt * (0.72 + engagement * 0.28)) / 3600;
+          }
+        }
+        const drag = Math.pow(0.09, dt);
+        game.vx *= drag;
+        game.vz *= drag;
+        const speed = Math.hypot(game.vx, game.vz);
+        const maxSpeed = keysRef.current[" "] ? 6.5 : 5.2;
+        if (speed > maxSpeed) {
+          game.vx = (game.vx / speed) * maxSpeed;
+          game.vz = (game.vz / speed) * maxSpeed;
+        }
+        game.x += game.vx * dt;
+        game.z += game.vz * dt;
+        rollGroup.rotation.x += (game.vz * dt) / Math.max(0.5, game.radius);
+        rollGroup.rotation.z -= (game.vx * dt) / Math.max(0.5, game.radius);
+
+        for (const pickup of pickups) {
+          const dx = pickup.root.position.x - game.x;
+          const dz = pickup.root.position.z - game.z;
+          const distance = Math.hypot(dx, dz);
+          if (distance < game.radius + pickup.size * 0.72) {
+            if (pickup.size <= game.radius * 0.88) {
+              collect(pickup, now);
+              pickup.root.position.x = Number.POSITIVE_INFINITY;
+            } else if (distance > 0) {
+              game.vx -= (dx / distance) * 2.4;
+              game.vz -= (dz / distance) * 2.4;
+              if (now / 1000 - game.lastPickup > 0.8) {
+                setToast(`${pickup.curio.name} is too large. Build a lumpier mash first.`);
+              }
+            }
+          }
+        }
+        pickups = pickups.filter((pickup) => Number.isFinite(pickup.root.position.x));
+      }
+
+      spawnClock += dt;
+      if (spawnClock > 0.5 || pickups.length < 38) {
+        populate();
+        spawnClock = 0;
+      }
+
+      const floatHeight = early
+        ? 1.85 + Math.sin(now * 0.0017) * 0.18
+        : game.radius;
+      playerRoot.position.set(game.x, floatHeight, game.z);
+      const wobble = early ? 0.055 : Math.min(0.035, attachments.length * 0.0007);
+      core.scale.set(
+        game.radius * (1 + Math.sin(now * 0.0021) * wobble),
+        game.radius * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
+        game.radius * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
+      );
+      innerGlow.rotation.y += dt * 0.3;
+      dustField.rotation.y += dt * (early ? 0.014 : 0.003);
+      glowLight.position.set(game.x + 4, floatHeight + 4, game.z - 3);
+
+      pickups.forEach((pickup, index) => {
+        const distance = Math.hypot(
+          pickup.root.position.x - game.x,
+          pickup.root.position.z - game.z,
+        );
+        pickup.label.visible = distance < 9;
+        pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
+        if (early) pickup.root.position.y += Math.sin(now * 0.0017 + index) * dt * 0.08;
+      });
+
+      desiredCamera.set(
+        game.x + game.vx * 0.24,
+        floatHeight + 5.2 + game.radius * 1.4,
+        game.z + 9.5 + game.radius * 2.1,
+      );
+      camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, dt));
+      cameraTarget.set(game.x, floatHeight * 0.82, game.z - 0.7);
+      camera.lookAt(cameraTarget);
+
+      hudClock += dt;
+      if (hudClock > 0.14) {
+        const journeyEra = eraAt(game.hours);
+        const displayIndex = labEra ?? journeyEra;
+        const current = ERAS[journeyEra];
+        const next = ERAS[Math.min(journeyEra + 1, ERAS.length - 1)];
+        const progress =
+          labEra !== null
+            ? 0
+            : current === next
+              ? 1
+              : Math.max(0, Math.min(1, (game.hours - current.at) / (next.at - current.at)));
+        setHud({
+          hours: game.hours,
+          picked: game.picked,
+          era: displayIndex,
+          progress,
+          radius: game.radius,
+        });
+        hudClock = 0;
+      }
+
+      if (labEra === null && now - game.lastSave > 5000) {
+        const save: SaveData = {
+          hours: game.hours,
+          picked: game.picked,
+          x: game.x,
+          z: game.z,
+          zooms: game.zooms,
+          sound: game.sound,
+        };
+        localStorage.setItem("everything-roll-save-v2", JSON.stringify(save));
+        game.lastSave = now;
+      }
+
+      renderer.render(scene, camera);
+      frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", resize);
+      pickups.forEach((pickup) => removePickup(pickup));
+      scene.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.geometry.dispose();
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          materials.forEach((material) => material.dispose());
+        }
+      });
+      dustGeometry.dispose();
+      dustMaterial.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+    };
+  }, [labEra, ping, showAtlas]);
+
+  const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (
+      !started ||
+      target.closest("button") ||
+      target.closest("a") ||
+      target.closest(".modal")
+    ) {
+      return;
+    }
+    joystickRef.current = {
+      active: true,
+      x: event.clientX,
+      y: event.clientY,
+      originX: event.clientX,
+      originY: event.clientY,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const pointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!joystickRef.current.active) return;
+    joystickRef.current.x = event.clientX;
+    joystickRef.current.y = event.clientY;
+  };
+  const pointerUp = () => {
+    joystickRef.current.active = false;
+  };
+
+  const era = ERAS[hud.era];
+  const journeyIndex = eraAt(hud.hours);
+  const nextEra = ERAS[Math.min(journeyIndex + 1, ERAS.length - 1)];
+  const remaining = Math.max(0, JOURNEY_HOURS - hud.hours);
+  const scale = labEra === null ? formatScale(hud.hours) : scaleFromLog(era.logMeters);
+
+  return (
+    <main className="shell">
+      <div
+        ref={mountRef}
+        className="world"
+        style={
+          {
+            "--pop": era.palette[2],
+            "--deep": era.palette[0],
+          } as React.CSSProperties
+        }
+        onPointerDown={pointerDown}
+        onPointerMove={pointerMove}
+        onPointerUp={pointerUp}
+        onPointerCancel={pointerUp}
+      >
+        <header className="topbar hud">
+          <div className="brand">
+            <div className="brand-ball" aria-hidden="true">✦</div>
+            <div>
+              <b>EVERYTHING ROLL</b>
+              <small>a very small adventure</small>
+            </div>
+            <span className="version-badge">V2 · 3D</span>
+          </div>
+          <div className="actions">
+            <button onClick={() => setShowAtlas(true)}>
+              <span aria-hidden="true">⌁</span> <span>Scale & science</span>
+            </button>
+            <button
+              className="sound"
+              onClick={toggleSound}
+              aria-label={sound ? "Mute sound" : "Turn on sound"}
+            >
+              {sound ? "♪" : "×"}
+            </button>
+          </div>
+        </header>
+
+        {labEra !== null && (
+          <div className="lab-banner hud">
+            <span>Scale Lab preview · progress paused</span>
+            <button onClick={() => setLabEra(null)}>Return to journey</button>
+          </div>
+        )}
+
+        <section className="scale-card hud" aria-live="polite">
+          <div className="kicker">
+            <span>{era.name}</span>
+            <span className={`confidence ${confidenceClass(era.confidence)}`}>
+              {era.confidence}
+            </span>
+          </div>
+          <div className="scale">{scale}</div>
+          <div className="quip">{era.quip}</div>
+          <div className="track">
+            <i style={{ width: `${Math.max(1.5, hud.progress * 100)}%` }} />
+          </div>
+          <div className="meta">
+            <span>{labEra === null ? `Next: ${nextEra.name}` : "Scale Lab specimen"}</span>
+            <span>{labEra === null ? `${(hud.progress * 100).toFixed(2)}%` : "PREVIEW"}</span>
+          </div>
+        </section>
+
+        <aside className="stats hud">
+          <div><b>{hud.picked.toLocaleString()}</b><small>things in mash</small></div>
+          <i />
+          <div><b>{formatHours(hud.hours)}</b><small>deep journey</small></div>
+          <i />
+          <div>
+            <b>{remaining > 0 ? `${Math.ceil(remaining)}h` : "∞"}</b>
+            <small>{remaining > 0 ? "to beyond" : "past science"}</small>
+          </div>
+        </aside>
+
+        <aside className="fact-card hud">
+          <div className="fact-kicker">WHAT YOU JUST ABSORBED</div>
+          <h2>{lastFact.name}</h2>
+          <p>{lastFact.fact}</p>
+        </aside>
+
+        <div className="toast hud" role="status">
+          <span>✦</span>
+          {toast}
         </div>
-      </section>}
-    </div>
-  </main>;
+
+        <div className="controls hud">
+          <span><kbd>WASD</kbd> / arrows to roll</span>
+          <span><kbd>SPACE</kbd> to surge</span>
+          <span><kbd>I</kbd> science</span>
+        </div>
+        <div className="touch-tip hud">◎ drag anywhere to roll</div>
+
+        {!started && (
+          <section className="welcome modal">
+            <div className="eyebrow">BEGIN AT THE PLANCK REGIME</div>
+            <h1>
+              You are not a ball.
+              <br />
+              <em>Not yet.</em>
+            </h1>
+            <p className="welcome-lead">
+              Begin as a glowing spacetime fluctuation. Absorbed energy merges into
+              your field; confined particles churn inside you; stable matter finally
+              sticks—and the happy, lumpy pile never stops growing.
+            </p>
+            <div className="science-caveat">
+              <b>Scientific honesty:</b> quantum foam is a speculative visualization,
+              and “rolling” before matter exists is a navigation metaphor. The game
+              labels every scale as measured, supported, unknown, or speculative.
+            </div>
+            <button className="start" onClick={begin}>
+              <span>Begin becoming</span>
+              <b>→</b>
+            </button>
+            <div className="welcome-foot">
+              <span>NO CHARACTER</span><span>•</span>
+              <span>REAL 3D ROLLING</span><span>•</span>
+              <span>INFINITE AFTER 1,000H</span>
+            </div>
+          </section>
+        )}
+
+        {showAtlas && (
+          <section className="atlas-bg modal" role="dialog" aria-modal="true" aria-label="Scale and science atlas">
+            <div className="atlas">
+              <header>
+                <div>
+                  <div className="eyebrow">THE RIDICULOUSLY LONG, HONEST VIEW</div>
+                  <h2>Scale & science</h2>
+                  <p>
+                    Preview any era without changing your save. Confidence labels
+                    separate observations from models, unknowns, and deliberate fiction.
+                  </p>
+                </div>
+                <button onClick={() => setShowAtlas(false)} aria-label="Close atlas">×</button>
+              </header>
+              <div className="era-list">
+                {ERAS.map((item, index) => {
+                  const reached = hud.hours >= item.at;
+                  const current = index === hud.era;
+                  return (
+                    <article
+                      key={item.name}
+                      className={`${reached ? "reached" : ""} ${current ? "current" : ""}`}
+                    >
+                      <div className="era-dot" style={{ background: item.palette[2] }}>
+                        {index + 1}
+                      </div>
+                      <div className="era-copy">
+                        <span>{item.at ? `~${formatHours(item.at)}` : "START"}</span>
+                        <h3>{item.name}</h3>
+                        <p>{item.lesson}</p>
+                        <div className={`confidence ${confidenceClass(item.confidence)}`}>
+                          {item.confidence}
+                        </div>
+                      </div>
+                      <div className="era-actions">
+                        <code>{scaleFromLog(item.logMeters)}</code>
+                        <button onClick={() => previewEra(index)}>
+                          {labEra === index ? "Viewing" : "Preview in 3D"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+                <article className="sources">
+                  <div>
+                    <span>PRIMARY SOURCES</span>
+                    <h3>Built to teach without pretending certainty</h3>
+                    <p>
+                      The progression compresses scale and uses magical adhesion, but
+                      factual claims and confidence labels follow authoritative sources.
+                    </p>
+                  </div>
+                  <div className="source-links">
+                    <a href="https://physics.nist.gov/cgi-bin/cuu/Value?plkl=" target="_blank" rel="noreferrer">NIST · Planck length ↗</a>
+                    <a href="https://home.cern/partons-hadrons/" target="_blank" rel="noreferrer">CERN · Quark confinement ↗</a>
+                    <a href="https://home.cern/science/experiments/alice/" target="_blank" rel="noreferrer">CERN ALICE · Matter ↗</a>
+                    <a href="https://home.cern/science/physics/standard-model" target="_blank" rel="noreferrer">CERN · Standard Model ↗</a>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
+    </main>
+  );
 }
