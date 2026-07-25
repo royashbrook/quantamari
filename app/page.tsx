@@ -87,7 +87,7 @@ export default function Home() {
   const [showAtlas, setShowAtlas] = useState(false);
   const [labEra, setLabEra] = useState<number | null>(null);
   const [sound, setSound] = useState(true);
-  const [toast, setToast] = useState("Absorb anything smaller than your current mash.");
+  const [toast, setToast] = useState("Roll over anything smaller and stick it to your mash.");
   const [lastFact, setLastFact] = useState({
     name: "Spacetime fluctuation",
     fact: ERAS[0].lesson,
@@ -133,7 +133,7 @@ export default function Home() {
   const begin = useCallback(() => {
     gameRef.current.running = true;
     setStarted(true);
-    setToast("You are not quite matter yet. Go absorb some uncertainty.");
+    setToast("You are not quite matter yet. Go roll up some uncertainty.");
     audioRef.current?.resume();
   }, []);
 
@@ -256,7 +256,7 @@ export default function Home() {
     const ground = new THREE.Mesh(new THREE.CircleGeometry(95, 96), groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
-    ground.visible = !early;
+    ground.visible = true;
     scene.add(ground);
     const grid = new THREE.GridHelper(170, 90, activeEra.palette[2], activeEra.palette[2]);
     const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
@@ -265,7 +265,7 @@ export default function Home() {
       material.opacity = activeEra.realm === "matter" ? 0.12 : 0.08;
     });
     grid.position.y = 0.012;
-    grid.visible = !early;
+    grid.visible = true;
     scene.add(grid);
 
     const dustPositions: number[] = [];
@@ -328,6 +328,28 @@ export default function Home() {
     const innerGlow = new THREE.Mesh(new THREE.SphereGeometry(1.12, 32, 24), innerGlowMaterial);
     core.add(innerGlow);
 
+    const foamCluster = new THREE.Group();
+    const foamMaterials: THREE.MeshPhysicalMaterial[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const foamMaterial = coreMaterial.clone();
+      foamMaterial.opacity = 0.48;
+      foamMaterial.transparent = true;
+      foamMaterial.depthWrite = false;
+      foamMaterials.push(foamMaterial);
+      const lobe = new THREE.Mesh(
+        new THREE.SphereGeometry(0.25 + pseudo(index + 4) * 0.18, 18, 14),
+        foamMaterial,
+      );
+      const angle = (index / 6) * Math.PI * 2;
+      lobe.position.set(
+        Math.cos(angle) * (0.5 + pseudo(index + 11) * 0.18),
+        (pseudo(index + 21) - 0.42) * 0.7,
+        Math.sin(angle) * (0.5 + pseudo(index + 31) * 0.18),
+      );
+      foamCluster.add(lobe);
+    }
+    rollGroup.add(foamCluster);
+
     const applyEraTheme = (index: number, announce = false) => {
       activeIndex = index;
       activeEra = ERAS[index];
@@ -341,8 +363,8 @@ export default function Home() {
       scene.background = deepColor.clone();
       scene.fog = new THREE.FogExp2(deepColor.clone(), early ? 0.017 : 0.024);
       groundMaterial.color.copy(middleColor).multiplyScalar(0.58);
-      ground.visible = !early;
-      grid.visible = !early;
+      ground.visible = true;
+      grid.visible = true;
       gridMaterials.forEach((material) => {
         if ("color" in material) {
           (material as THREE.LineBasicMaterial).color.set(activeEra.palette[2]);
@@ -362,6 +384,11 @@ export default function Home() {
       coreMaterial.transparent = true;
       coreMaterial.needsUpdate = true;
       innerGlowMaterial.color.set(activeEra.palette[2]);
+      foamMaterials.forEach((material) => {
+        material.color.set(activeEra.palette[2]);
+        material.emissive.set(activeEra.palette[2]);
+        material.needsUpdate = true;
+      });
       core.castShadow = !early;
       core.receiveShadow = !early;
 
@@ -530,7 +557,7 @@ export default function Home() {
     const attachments: THREE.Object3D[] = [];
     let spawnClock = 0;
 
-    const makeMerged = (visual: THREE.Object3D) => {
+    const makeFieldLike = (visual: THREE.Object3D) => {
       visual.traverse((child) => {
         if (child instanceof THREE.Mesh) {
           const materials = Array.isArray(child.material) ? child.material : [child.material];
@@ -543,18 +570,42 @@ export default function Home() {
       });
     };
 
-    mashHistoryRef.current.forEach((record) => {
+    mashHistoryRef.current.forEach((record, recordIndex) => {
       const sourceEra = ERAS[record.sourceEra];
       const curio = sourceEra?.curios[record.curioIndex];
       if (!curio) return;
+      const restoredPosition = new THREE.Vector3(...record.position);
+      const legacyInside =
+        record.mergedInside && restoredPosition.length() < game.radius * 0.58;
+      if (legacyInside) {
+        if (restoredPosition.lengthSq() < 0.001) {
+          restoredPosition.set(
+            pseudo(recordIndex + 1) - 0.5,
+            pseudo(recordIndex + 7) - 0.28,
+            pseudo(recordIndex + 13) - 0.5,
+          );
+        }
+        restoredPosition.normalize().multiplyScalar(game.radius * 0.74);
+        record.position = restoredPosition.toArray() as [number, number, number];
+        record.scale = record.scale.map((value) => value * 2.05) as [
+          number,
+          number,
+          number,
+        ];
+      }
       const visual = makeVisual(curio);
-      visual.position.set(...record.position);
+      visual.position.copy(restoredPosition);
       visual.rotation.set(...record.rotation);
       visual.scale.set(...record.scale);
-      if (record.mergedInside) makeMerged(visual);
+      if (record.mergedInside) makeFieldLike(visual);
       mashGroup.add(visual);
       attachments.push(visual);
     });
+    const stickingPieces: {
+      visual: THREE.Object3D;
+      targetScale: THREE.Vector3;
+      startedAt: number;
+    }[] = [];
 
     const removePickup = (pickup: Pickup, preserveVisual = false) => {
       scene.remove(pickup.root);
@@ -601,7 +652,7 @@ export default function Home() {
       root.add(visual, label);
       root.position.set(
         game.x + Math.cos(angle) * radius,
-        early ? 0.8 + pseudo(seed + 79) * 3.2 : Math.max(0.22, size * 0.48),
+        Math.max(0.22, size * 0.48),
         game.z + Math.sin(angle) * radius,
       );
       root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
@@ -642,9 +693,14 @@ export default function Home() {
         const record = mashHistoryRef.current[index];
         if (record) {
           record.position = attachment.position.toArray() as [number, number, number];
-          record.scale = attachment.scale.toArray() as [number, number, number];
+          record.scale = record.scale.map((value) => value * 0.68) as [
+            number,
+            number,
+            number,
+          ];
         }
       });
+      stickingPieces.forEach((piece) => piece.targetScale.multiplyScalar(0.68));
     };
 
     const collect = (pickup: Pickup, now: number) => {
@@ -665,22 +721,29 @@ export default function Home() {
         Math.random() - 0.24,
         Math.random() - 0.5,
       ).normalize();
-      const mergesInside =
+      const fieldLike =
         activeEra.realm === "prephysical" || activeEra.realm === "particle";
       pickup.visual.position.copy(
-        direction.multiplyScalar(game.radius * (mergesInside ? 0.42 : 0.7)),
+        direction.multiplyScalar(game.radius * (fieldLike ? 0.76 : 0.7)),
       );
-      pickup.visual.scale.multiplyScalar(mergesInside ? 0.44 : 0.96);
+      pickup.visual.scale.multiplyScalar(fieldLike ? 1.02 : 0.96);
       pickup.visual.rotation.set(
         Math.random() * Math.PI,
         Math.random() * Math.PI,
         Math.random() * Math.PI,
       );
-      if (mergesInside) {
-        makeMerged(pickup.visual);
+      if (fieldLike) {
+        makeFieldLike(pickup.visual);
       }
       mashGroup.add(pickup.visual);
       attachments.push(pickup.visual);
+      const targetScale = pickup.visual.scale.clone();
+      pickup.visual.scale.multiplyScalar(0.22);
+      stickingPieces.push({
+        visual: pickup.visual,
+        targetScale,
+        startedAt: now,
+      });
       mashHistoryRef.current.push({
         sourceEra: pickup.sourceEra,
         curioIndex: pickup.curioIndex,
@@ -690,8 +753,8 @@ export default function Home() {
           pickup.visual.rotation.y,
           pickup.visual.rotation.z,
         ],
-        scale: pickup.visual.scale.toArray() as [number, number, number],
-        mergedInside: mergesInside,
+        scale: targetScale.toArray() as [number, number, number],
+        mergedInside: fieldLike,
       });
       if (attachments.length > 72) {
         const oldest = attachments.shift();
@@ -817,22 +880,27 @@ export default function Home() {
         spawnClock = 0;
       }
 
-      const floatHeight = early
-        ? 1.85 + Math.sin(now * 0.0017) * 0.18
-        : game.radius;
+      const floatHeight =
+        game.radius * 0.94 + (early ? Math.sin(now * 0.0017) * 0.035 : 0);
       playerRoot.position.set(game.x, floatHeight, game.z);
       const wobble = early ? 0.055 : Math.min(0.035, attachments.length * 0.0007);
       const coreShare = early
-        ? 1
+        ? Math.max(0.18, 0.82 - attachments.length * 0.05)
         : Math.max(0.32, 0.78 - attachments.length * 0.009);
       coreMaterial.opacity = early
-        ? activeEra.realm === "prephysical" ? 0.78 : 0.68
+        ? Math.max(0.08, 0.58 - attachments.length * 0.04)
         : Math.max(0.1, 0.56 - attachments.length * 0.012);
       core.scale.set(
         game.radius * coreShare * (1 + Math.sin(now * 0.0021) * wobble),
         game.radius * coreShare * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
         game.radius * coreShare * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
       );
+      foamCluster.visible = early && attachments.length < 11;
+      foamCluster.scale.setScalar(
+        game.radius * Math.max(0.38, 0.95 - attachments.length * 0.055),
+      );
+      foamCluster.rotation.y += dt * 0.18;
+      foamCluster.rotation.x -= dt * 0.09;
       innerGlow.rotation.y += dt * 0.3;
       dustField.rotation.y += dt * (early ? 0.014 : 0.003);
       glowLight.position.set(game.x + 4, floatHeight + 4, game.z - 3);
@@ -846,6 +914,18 @@ export default function Home() {
         pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
         if (early) pickup.root.position.y += Math.sin(now * 0.0017 + index) * dt * 0.08;
       });
+
+      for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
+        const piece = stickingPieces[index];
+        const progress = Math.min(1, (now - piece.startedAt) / 280);
+        const ease = 1 - (1 - progress) ** 3;
+        const pop = 0.22 + ease * 0.78 + Math.sin(progress * Math.PI) * 0.15;
+        piece.visual.scale.copy(piece.targetScale).multiplyScalar(pop);
+        if (progress >= 1) {
+          piece.visual.scale.copy(piece.targetScale);
+          stickingPieces.splice(index, 1);
+        }
+      }
 
       const mobileView = width <= 860;
       desiredCamera.set(
@@ -974,7 +1054,7 @@ export default function Home() {
               <b>EVERYTHING ROLL</b>
               <small>a very small adventure</small>
             </div>
-            <span className="version-badge">V4 · 3D</span>
+            <span className="version-badge">V5 · 3D</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
@@ -1027,7 +1107,7 @@ export default function Home() {
         </aside>
 
         <aside className="fact-card hud">
-          <div className="fact-kicker">WHAT YOU JUST ABSORBED</div>
+          <div className="fact-kicker">WHAT YOU JUST ROLLED UP</div>
           <h2>{lastFact.name}</h2>
           <p>{lastFact.fact}</p>
         </aside>
@@ -1053,9 +1133,9 @@ export default function Home() {
               <em>Not yet.</em>
             </h1>
             <p className="welcome-lead">
-              Begin as a glowing spacetime fluctuation. Absorbed energy merges into
-              your field; confined particles churn inside you; stable matter finally
-              sticks—and the happy, lumpy pile never stops growing.
+              Begin as a small cluster of foam-like spacetime fluctuations. Every
+              smaller thing snaps onto the outside, reshapes your silhouette, and
+              rolls with you—the happy, lumpy pile never stops growing.
             </p>
             <div className="science-caveat">
               <b>Scientific honesty:</b> quantum foam is a speculative visualization,
