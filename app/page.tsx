@@ -20,6 +20,7 @@ type Pickup = {
   sourceEra: number;
   curioIndex: number;
   size: number;
+  visualRadius: number;
   big: boolean;
   growthFactor: number;
 };
@@ -647,6 +648,11 @@ export default function Home() {
       const root = new THREE.Group();
       const visual = makeVisual(curio);
       visual.scale.setScalar(size);
+      visual.updateMatrixWorld(true);
+      const visualDimensions = new THREE.Vector3();
+      new THREE.Box3().setFromObject(visual).getSize(visualDimensions);
+      const visualRadius =
+        Math.max(visualDimensions.x, visualDimensions.y, visualDimensions.z) / 2;
       const marker = makeMarker(curio.symbol, curio.color);
       const markerSize = Math.max(0.28, Math.min(0.62, size * 0.62));
       marker.scale.set(markerSize, markerSize, 1);
@@ -667,6 +673,7 @@ export default function Home() {
         sourceEra,
         curioIndex,
         size,
+        visualRadius,
         big,
         growthFactor,
       });
@@ -710,7 +717,7 @@ export default function Home() {
       game.picked += 1;
       game.lastPickup = now / 1000;
       const growth =
-        Math.min(0.055, 0.026 + pickup.size * 0.018) *
+        Math.min(0.055, 0.026 + pickup.visualRadius * 0.018) *
         pickup.growthFactor *
         0.24;
       game.radius += Math.max(0.000002, growth);
@@ -782,6 +789,7 @@ export default function Home() {
         shrinkHistory();
         pickups.forEach((item) => {
           item.size *= 0.72;
+          item.visualRadius *= 0.72;
           item.visual.scale.multiplyScalar(0.72);
           const markerSize = Math.max(0.28, Math.min(0.62, item.size * 0.62));
           item.marker.scale.set(markerSize, markerSize, 1);
@@ -835,8 +843,8 @@ export default function Home() {
           inputX /= Math.max(1, length);
           inputZ /= Math.max(1, length);
           const boost = keysRef.current[" "] ? 1.26 : 1;
-          game.vx += inputX * 9.5 * boost * dt;
-          game.vz += inputZ * 9.5 * boost * dt;
+          game.vx += inputX * 11.875 * boost * dt;
+          game.vz += inputZ * 11.875 * boost * dt;
           if (labEra === null) {
             const engagement = Math.max(0, 1 - (now / 1000 - game.lastPickup) / 8);
             game.hours += (dt * (0.72 + engagement * 0.28)) / 3600;
@@ -846,7 +854,7 @@ export default function Home() {
         game.vx *= drag;
         game.vz *= drag;
         const speed = Math.hypot(game.vx, game.vz);
-        const maxSpeed = keysRef.current[" "] ? 6.5 : 5.2;
+        const maxSpeed = keysRef.current[" "] ? 8.125 : 6.5;
         if (speed > maxSpeed) {
           game.vx = (game.vx / speed) * maxSpeed;
           game.vz = (game.vz / speed) * maxSpeed;
@@ -860,8 +868,8 @@ export default function Home() {
           const dx = pickup.root.position.x - game.x;
           const dz = pickup.root.position.z - game.z;
           const distance = Math.hypot(dx, dz);
-          if (distance < game.radius + pickup.size * 0.72) {
-            if (pickup.size <= game.radius * 0.88) {
+          if (distance < game.radius + pickup.visualRadius) {
+            if (pickup.visualRadius <= game.radius * 1.02) {
               collect(pickup, now);
               pickup.root.position.x = Number.POSITIVE_INFINITY;
             } else if (distance > 0) {
@@ -1062,7 +1070,7 @@ export default function Home() {
               <b>EVERYTHING ROLL</b>
               <small>a very small adventure</small>
             </div>
-            <span className="version-badge">V6 · 3D</span>
+            <span className="version-badge">V7 · 3D</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
