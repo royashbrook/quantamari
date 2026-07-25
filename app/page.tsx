@@ -21,6 +21,7 @@ type Pickup = {
   curioIndex: number;
   size: number;
   visualRadius: number;
+  bulkRadius: number;
   big: boolean;
   baseY: number;
   wiggle: number;
@@ -1027,11 +1028,19 @@ export default function Home() {
       new THREE.Box3().setFromObject(visual).getSize(visualDimensions);
       let visualRadius =
         Math.max(visualDimensions.x, visualDimensions.y, visualDimensions.z) / 2;
+      let bulkRadius =
+        Math.cbrt(
+          Math.max(
+            0.000001,
+            visualDimensions.x * visualDimensions.y * visualDimensions.z,
+          ),
+        ) / 2;
       if (levelDelta <= 0 && visualRadius > game.radius * 0.92) {
         const targetRadius = game.radius * (0.5 + pseudo(seed + 139) * 0.38);
         const fit = targetRadius / visualRadius;
         size *= fit;
         visualRadius *= fit;
+        bulkRadius *= fit;
         visual.scale.multiplyScalar(fit);
       } else if (levelDelta > 0) {
         const targetRadius =
@@ -1040,6 +1049,7 @@ export default function Home() {
         const enlarge = targetRadius / Math.max(0.01, visualRadius);
         size *= enlarge;
         visualRadius *= enlarge;
+        bulkRadius *= enlarge;
         visual.scale.multiplyScalar(enlarge);
       }
       big = visualRadius > game.radius * 1.02;
@@ -1101,6 +1111,7 @@ export default function Home() {
         curioIndex,
         size,
         visualRadius,
+        bulkRadius,
         big,
         baseY,
         wiggle,
@@ -1151,7 +1162,7 @@ export default function Home() {
       const sourceRealm = ERAS[pickup.sourceEra].realm;
       const massEnergyFactor = MASS_ENERGY_FACTORS[pickup.curio.shape];
       const rawContribution =
-        pickup.visualRadius ** 3 *
+        pickup.bulkRadius ** 3 *
         massEnergyFactor *
         growthFactor *
         0.42;
@@ -1273,6 +1284,7 @@ export default function Home() {
         pickups.forEach((item) => {
           item.size *= 0.72;
           item.visualRadius *= 0.72;
+          item.bulkRadius *= 0.72;
           item.visual.scale.multiplyScalar(0.72);
         });
         setToast(`ZOOM OUT #${game.zooms} — the whole mixed-scale world stayed put.`);
@@ -1299,12 +1311,28 @@ export default function Home() {
     let last = performance.now();
     let frame = 0;
     let hudClock = 0;
+    let rollRadiusClock = 0;
+    let effectiveRollRadius = game.radius;
+    const rollBounds = new THREE.Box3();
+    const rollDimensions = new THREE.Vector3();
     const desiredCamera = new THREE.Vector3();
     const cameraTarget = new THREE.Vector3();
 
     const animate = (now: number) => {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
+      rollRadiusClock += dt;
+      if (rollRadiusClock > 0.12) {
+        rollGroup.updateMatrixWorld(true);
+        rollBounds.setFromObject(rollGroup).getSize(rollDimensions);
+        const visibleEnvelope =
+          Math.max(rollDimensions.x, rollDimensions.y, rollDimensions.z) / 2;
+        effectiveRollRadius = Math.max(
+          game.radius,
+          Math.min(game.radius * 1.75, visibleEnvelope * 0.94),
+        );
+        rollRadiusClock = 0;
+      }
 
       if (game.running && !showAtlasRef.current) {
         let inputX = 0;
@@ -1348,8 +1376,8 @@ export default function Home() {
           const dx = pickup.root.position.x - game.x;
           const dz = pickup.root.position.z - game.z;
           const distance = Math.hypot(dx, dz);
-          if (distance < game.radius + pickup.visualRadius) {
-            if (pickup.visualRadius <= game.radius * 1.02) {
+          if (distance < effectiveRollRadius + pickup.visualRadius) {
+            if (pickup.bulkRadius <= effectiveRollRadius * 1.1) {
               collect(pickup, now);
               pickup.root.position.x = Number.POSITIVE_INFINITY;
             } else if (distance > 0) {
@@ -1432,7 +1460,7 @@ export default function Home() {
         if (pickup.marker) {
           pickup.marker.visible = pickup.sourceEra >= activeIndex && distance < 20;
         }
-        pickup.big = pickup.visualRadius > game.radius * 1.02;
+        pickup.big = pickup.bulkRadius > effectiveRollRadius * 1.1;
         pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
         pickup.root.rotation.z = Math.sin(now * 0.0012 + pickup.wiggle) * 0.075;
         pickup.root.position.y =
@@ -1599,7 +1627,7 @@ export default function Home() {
               <b>ON A ROLL</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V11 · DEEPER WORLD</span>
+            <span className="version-badge">V12 · FAIR PICKUPS</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
