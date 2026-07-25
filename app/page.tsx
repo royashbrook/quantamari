@@ -47,6 +47,7 @@ function confidenceClass(confidence: Era["confidence"]) {
 
 export default function Home() {
   const mountRef = useRef<HTMLDivElement>(null);
+  const showAtlasRef = useRef(false);
   const keysRef = useRef<Record<string, boolean>>({});
   const joystickRef = useRef({ active: false, x: 0, y: 0, originX: 0, originY: 0 });
   const audioRef = useRef<AudioContext | null>(null);
@@ -83,6 +84,10 @@ export default function Home() {
     progress: 0,
     radius: 1.12,
   });
+
+  useEffect(() => {
+    showAtlasRef.current = showAtlas;
+  }, [showAtlas]);
 
   const ping = useCallback((pitch = 440, fanfare = false) => {
     if (!gameRef.current.sound) return;
@@ -615,7 +620,7 @@ export default function Home() {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
 
-      if (game.running && !showAtlas) {
+      if (game.running && !showAtlasRef.current) {
         let inputX = 0;
         let inputZ = 0;
         if (keysRef.current.w || keysRef.current.arrowup) inputZ -= 1;
@@ -768,7 +773,7 @@ export default function Home() {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [labEra, ping, showAtlas]);
+  }, [labEra, ping]);
 
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
