@@ -17,8 +17,20 @@ type Pickup = {
   visual: THREE.Object3D;
   label: THREE.Sprite;
   curio: Curio;
+  sourceEra: number;
+  curioIndex: number;
   size: number;
   big: boolean;
+  growthFactor: number;
+};
+
+type MashRecord = {
+  sourceEra: number;
+  curioIndex: number;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+  mergedInside: boolean;
 };
 
 type SaveData = {
@@ -26,8 +38,10 @@ type SaveData = {
   picked: number;
   x: number;
   z: number;
+  radius: number;
   zooms: number;
   sound: boolean;
+  mash: MashRecord[];
 };
 
 function pseudo(seed: number) {
@@ -48,6 +62,7 @@ function confidenceClass(confidence: Era["confidence"]) {
 export default function Home() {
   const mountRef = useRef<HTMLDivElement>(null);
   const showAtlasRef = useRef(false);
+  const mashHistoryRef = useRef<MashRecord[]>([]);
   const keysRef = useRef<Record<string, boolean>>({});
   const joystickRef = useRef({ active: false, x: 0, y: 0, originX: 0, originY: 0 });
   const audioRef = useRef<AudioContext | null>(null);
@@ -148,15 +163,20 @@ export default function Home() {
       game.picked = Number(saved.picked) || 0;
       game.x = Number(saved.x) || 0;
       game.z = Number(saved.z) || 0;
+      game.radius = Math.max(0.8, Number(saved.radius) || game.radius);
       game.zooms = Number(saved.zooms) || 0;
       game.sound = saved.sound ?? true;
       game.era = eraAt(game.hours);
+      mashHistoryRef.current = Array.isArray(saved.mash)
+        ? saved.mash.slice(-72)
+        : [];
       setSound(game.sound);
       setHud((current) => ({
         ...current,
         hours: game.hours,
         picked: game.picked,
         era: game.era,
+        radius: game.radius,
       }));
     } catch {
       localStorage.removeItem("everything-roll-save-v2");
@@ -202,10 +222,10 @@ export default function Home() {
     renderer.domElement.className = "three-canvas";
     mount.prepend(renderer.domElement);
 
-    const activeIndex = labEra ?? eraAt(game.hours);
+    let activeIndex = labEra ?? eraAt(game.hours);
     game.era = activeIndex;
-    const activeEra = ERAS[activeIndex];
-    const early =
+    let activeEra = ERAS[activeIndex];
+    let early =
       activeEra.realm === "prephysical" || activeEra.realm === "particle";
 
     const deepColor = new THREE.Color(activeEra.palette[0]);
@@ -307,6 +327,50 @@ export default function Home() {
     });
     const innerGlow = new THREE.Mesh(new THREE.SphereGeometry(1.12, 32, 24), innerGlowMaterial);
     core.add(innerGlow);
+
+    const applyEraTheme = (index: number, announce = false) => {
+      activeIndex = index;
+      activeEra = ERAS[index];
+      game.era = index;
+      early =
+        activeEra.realm === "prephysical" || activeEra.realm === "particle";
+
+      deepColor.set(activeEra.palette[0]);
+      middleColor.set(activeEra.palette[1]);
+      pop.set(activeEra.palette[2]);
+      scene.background = deepColor.clone();
+      scene.fog = new THREE.FogExp2(deepColor.clone(), early ? 0.017 : 0.024);
+      groundMaterial.color.copy(middleColor).multiplyScalar(0.58);
+      ground.visible = !early;
+      grid.visible = !early;
+      gridMaterials.forEach((material) => {
+        if ("color" in material) {
+          (material as THREE.LineBasicMaterial).color.set(activeEra.palette[2]);
+        }
+        material.opacity = activeEra.realm === "matter" ? 0.12 : 0.08;
+      });
+      hemisphere.intensity = early ? 1.5 : 1.1;
+      glowLight.color.set(activeEra.palette[2]);
+      dustMaterial.size = early ? 0.11 : 0.06;
+      dustMaterial.opacity = early ? 0.72 : 0.35;
+      coreMaterial.color.set(early ? activeEra.palette[2] : 0xffb83e);
+      coreMaterial.emissive.set(early ? activeEra.palette[2] : 0x5b1629);
+      coreMaterial.emissiveIntensity = early ? 1.35 : 0.18;
+      coreMaterial.roughness = early ? 0.18 : 0.62;
+      coreMaterial.metalness = early ? 0.05 : 0;
+      coreMaterial.transmission = activeEra.realm === "prephysical" ? 0.42 : 0;
+      coreMaterial.transparent = true;
+      coreMaterial.needsUpdate = true;
+      innerGlowMaterial.color.set(activeEra.palette[2]);
+      core.castShadow = !early;
+      core.receiveShadow = !early;
+
+      if (announce) {
+        setToast(`${activeEra.name} reached — everything already collected stays with you.`);
+        setLastFact({ name: activeEra.name, fact: activeEra.lesson });
+        ping(360 + index * 18, true);
+      }
+    };
 
     const createMaterial = (color: string, emissive = false) =>
       new THREE.MeshStandardMaterial({
@@ -466,6 +530,32 @@ export default function Home() {
     const attachments: THREE.Object3D[] = [];
     let spawnClock = 0;
 
+    const makeMerged = (visual: THREE.Object3D) => {
+      visual.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach((material) => {
+            material.transparent = true;
+            material.opacity = Math.min(material.opacity, 0.68);
+            material.depthWrite = false;
+          });
+        }
+      });
+    };
+
+    mashHistoryRef.current.forEach((record) => {
+      const sourceEra = ERAS[record.sourceEra];
+      const curio = sourceEra?.curios[record.curioIndex];
+      if (!curio) return;
+      const visual = makeVisual(curio);
+      visual.position.set(...record.position);
+      visual.rotation.set(...record.rotation);
+      visual.scale.set(...record.scale);
+      if (record.mergedInside) makeMerged(visual);
+      mashGroup.add(visual);
+      attachments.push(visual);
+    });
+
     const removePickup = (pickup: Pickup, preserveVisual = false) => {
       scene.remove(pickup.root);
       if (!preserveVisual) {
@@ -485,12 +575,24 @@ export default function Home() {
     const spawnPickup = (seed: number) => {
       const radius = 8 + pseudo(seed + game.id * 7) * 26;
       const angle = pseudo(seed + 13) * Math.PI * 2;
-      const big = pseudo(seed + 29) > 0.78;
+      const sourceEra =
+        activeIndex > 0 && pseudo(seed + 97) > 0.58
+          ? Math.floor(pseudo(seed + 103) * activeIndex)
+          : activeIndex;
+      const scaleGap = activeIndex - sourceEra;
+      const source = ERAS[sourceEra];
+      const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
+      const curio = source.curios[curioIndex];
+      const big = scaleGap === 0 && pseudo(seed + 29) > 0.78;
+      const legacyScale = scaleGap === 0 ? 1 : Math.max(0.24, 0.72 ** scaleGap);
       const size = big
         ? game.radius * (1.1 + pseudo(seed + 41) * 0.78)
-        : 0.2 + pseudo(seed + 53) * game.radius * 0.58;
-      const curio =
-        activeEra.curios[Math.floor(pseudo(seed + 67) * activeEra.curios.length)];
+        : Math.max(
+            0.14,
+            (0.2 + pseudo(seed + 53) * game.radius * 0.58) * legacyScale,
+          );
+      const growthFactor =
+        scaleGap === 0 ? 1 : Math.max(0.0002, 0.14 ** scaleGap);
       const root = new THREE.Group();
       const visual = makeVisual(curio);
       visual.scale.setScalar(size);
@@ -504,7 +606,17 @@ export default function Home() {
       );
       root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
       scene.add(root);
-      pickups.push({ root, visual, label, curio, size, big });
+      pickups.push({
+        root,
+        visual,
+        label,
+        curio,
+        sourceEra,
+        curioIndex,
+        size,
+        big,
+        growthFactor,
+      });
       game.id += 1;
     };
 
@@ -524,17 +636,25 @@ export default function Home() {
     };
 
     const shrinkHistory = () => {
-      attachments.forEach((attachment) => {
+      attachments.forEach((attachment, index) => {
         attachment.position.multiplyScalar(0.55);
         attachment.scale.multiplyScalar(0.68);
+        const record = mashHistoryRef.current[index];
+        if (record) {
+          record.position = attachment.position.toArray() as [number, number, number];
+          record.scale = attachment.scale.toArray() as [number, number, number];
+        }
       });
     };
 
     const collect = (pickup: Pickup, now: number) => {
       game.picked += 1;
       game.lastPickup = now / 1000;
-      game.radius += Math.min(0.055, 0.026 + pickup.size * 0.018);
-      setToast(`${pickup.curio.name} joined the mash.`);
+      const growth =
+        Math.min(0.055, 0.026 + pickup.size * 0.018) * pickup.growthFactor;
+      game.radius += Math.max(0.000006, growth);
+      const trace = pickup.growthFactor < 0.02 ? " · trace growth" : "";
+      setToast(`${pickup.curio.name} joined the mash${trace}.`);
       setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
       ping(290 + (game.picked % 12) * 38);
 
@@ -548,30 +668,34 @@ export default function Home() {
       const mergesInside =
         activeEra.realm === "prephysical" || activeEra.realm === "particle";
       pickup.visual.position.copy(
-        direction.multiplyScalar(game.radius * (mergesInside ? 0.42 : 0.78)),
+        direction.multiplyScalar(game.radius * (mergesInside ? 0.42 : 0.7)),
       );
-      pickup.visual.scale.multiplyScalar(mergesInside ? 0.44 : 0.72);
+      pickup.visual.scale.multiplyScalar(mergesInside ? 0.44 : 0.96);
       pickup.visual.rotation.set(
         Math.random() * Math.PI,
         Math.random() * Math.PI,
         Math.random() * Math.PI,
       );
       if (mergesInside) {
-        pickup.visual.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            const materials = Array.isArray(child.material) ? child.material : [child.material];
-            materials.forEach((material) => {
-              material.transparent = true;
-              material.opacity = Math.min(material.opacity, 0.68);
-              material.depthWrite = false;
-            });
-          }
-        });
+        makeMerged(pickup.visual);
       }
       mashGroup.add(pickup.visual);
       attachments.push(pickup.visual);
-      if (attachments.length > 44) {
+      mashHistoryRef.current.push({
+        sourceEra: pickup.sourceEra,
+        curioIndex: pickup.curioIndex,
+        position: pickup.visual.position.toArray() as [number, number, number],
+        rotation: [
+          pickup.visual.rotation.x,
+          pickup.visual.rotation.y,
+          pickup.visual.rotation.z,
+        ],
+        scale: pickup.visual.scale.toArray() as [number, number, number],
+        mergedInside: mergesInside,
+      });
+      if (attachments.length > 72) {
         const oldest = attachments.shift();
+        mashHistoryRef.current.shift();
         if (oldest) {
           mashGroup.remove(oldest);
           oldest.traverse((child) => {
@@ -588,9 +712,12 @@ export default function Home() {
         game.radius = 1.14;
         game.zooms += 1;
         shrinkHistory();
-        pickups.forEach((item) => removePickup(item));
-        pickups = [];
-        setToast(`ZOOM OUT #${game.zooms} — the mash survived, the universe got smaller.`);
+        pickups.forEach((item) => {
+          item.size *= 0.72;
+          item.visual.scale.multiplyScalar(0.72);
+          item.label.position.y = Math.max(0.9, item.size * 1.32);
+        });
+        setToast(`ZOOM OUT #${game.zooms} — the whole mixed-scale world stayed put.`);
         ping(350 + activeIndex * 18, true);
       }
     };
@@ -603,6 +730,7 @@ export default function Home() {
       height = box.height;
       renderer.setSize(width, height, false);
       camera.aspect = Math.max(0.2, width / height);
+      camera.fov = width <= 860 ? 56 : 46;
       camera.updateProjectionMatrix();
     };
 
@@ -678,6 +806,11 @@ export default function Home() {
         pickups = pickups.filter((pickup) => Number.isFinite(pickup.root.position.x));
       }
 
+      const nextActiveIndex = labEra ?? eraAt(game.hours);
+      if (nextActiveIndex !== activeIndex) {
+        applyEraTheme(nextActiveIndex, true);
+      }
+
       spawnClock += dt;
       if (spawnClock > 0.5 || pickups.length < 38) {
         populate();
@@ -689,10 +822,16 @@ export default function Home() {
         : game.radius;
       playerRoot.position.set(game.x, floatHeight, game.z);
       const wobble = early ? 0.055 : Math.min(0.035, attachments.length * 0.0007);
+      const coreShare = early
+        ? 1
+        : Math.max(0.32, 0.78 - attachments.length * 0.009);
+      coreMaterial.opacity = early
+        ? activeEra.realm === "prephysical" ? 0.78 : 0.68
+        : Math.max(0.1, 0.56 - attachments.length * 0.012);
       core.scale.set(
-        game.radius * (1 + Math.sin(now * 0.0021) * wobble),
-        game.radius * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
-        game.radius * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
+        game.radius * coreShare * (1 + Math.sin(now * 0.0021) * wobble),
+        game.radius * coreShare * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
+        game.radius * coreShare * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
       );
       innerGlow.rotation.y += dt * 0.3;
       dustField.rotation.y += dt * (early ? 0.014 : 0.003);
@@ -708,10 +847,11 @@ export default function Home() {
         if (early) pickup.root.position.y += Math.sin(now * 0.0017 + index) * dt * 0.08;
       });
 
+      const mobileView = width <= 860;
       desiredCamera.set(
         game.x + game.vx * 0.24,
-        floatHeight + 5.2 + game.radius * 1.4,
-        game.z + 9.5 + game.radius * 2.1,
+        floatHeight + (mobileView ? 7.1 : 5.2) + game.radius * 1.4,
+        game.z + (mobileView ? 13.2 : 9.5) + game.radius * 2.1,
       );
       camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, dt));
       cameraTarget.set(game.x, floatHeight * 0.82, game.z - 0.7);
@@ -745,8 +885,10 @@ export default function Home() {
           picked: game.picked,
           x: game.x,
           z: game.z,
+          radius: game.radius,
           zooms: game.zooms,
           sound: game.sound,
+          mash: mashHistoryRef.current,
         };
         localStorage.setItem("everything-roll-save-v2", JSON.stringify(save));
         game.lastSave = now;
@@ -832,7 +974,7 @@ export default function Home() {
               <b>EVERYTHING ROLL</b>
               <small>a very small adventure</small>
             </div>
-            <span className="version-badge">V2 · 3D</span>
+            <span className="version-badge">V4 · 3D</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>

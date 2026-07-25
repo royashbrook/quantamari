@@ -828,15 +828,40 @@ kbd {
   }
 
   .scale-card {
-    top: 64px;
+    top: 60px;
     left: 15px;
-    width: min(285px, calc(100vw - 30px));
-    padding: 12px 14px;
-    border-radius: 17px;
+    width: min(248px, calc(100vw - 30px));
+    padding: 9px 11px 8px;
+    border-radius: 15px;
+  }
+
+  .kicker {
+    gap: 7px;
+    font-size: 8px;
+  }
+
+  .confidence {
+    padding: 3px 5px;
+    font-size: 6px;
   }
 
   .scale {
-    font-size: 18px;
+    margin-top: 6px;
+    font-size: 15px;
+  }
+
+  .quip {
+    display: none;
+  }
+
+  .track {
+    height: 4px;
+    margin-top: 7px;
+  }
+
+  .meta {
+    margin-top: 5px;
+    font-size: 6px;
   }
 
   .stats {
