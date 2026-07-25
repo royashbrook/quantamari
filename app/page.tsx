@@ -84,6 +84,38 @@ const MASS_ENERGY_FACTORS: Record<Curio["shape"], number> = {
   universe: 0.5,
 };
 
+type PickupSoundProfile = {
+  wave: OscillatorType;
+  base: number;
+  glide: number;
+  interval: number;
+  decay: number;
+};
+
+const PICKUP_SOUND_PROFILES: Record<Curio["shape"], PickupSoundProfile> = {
+  bubble: { wave: "sine", base: 180, glide: 1.8, interval: 1.5, decay: 0.2 },
+  spark: { wave: "triangle", base: 620, glide: 2.2, interval: 2, decay: 0.11 },
+  quark: { wave: "square", base: 280, glide: 1.4, interval: 1.25, decay: 0.13 },
+  hadron: { wave: "sawtooth", base: 150, glide: 0.72, interval: 1.5, decay: 0.16 },
+  atom: { wave: "sine", base: 440, glide: 1.5, interval: 2, decay: 0.18 },
+  molecule: { wave: "triangle", base: 350, glide: 1.25, interval: 1.33, decay: 0.2 },
+  virus: { wave: "sawtooth", base: 240, glide: 1.8, interval: 1.5, decay: 0.15 },
+  cell: { wave: "sine", base: 300, glide: 0.78, interval: 1.25, decay: 0.24 },
+  fiber: { wave: "triangle", base: 520, glide: 0.65, interval: 1.5, decay: 0.12 },
+  dust: { wave: "square", base: 700, glide: 0.55, interval: 1.6, decay: 0.07 },
+  stone: { wave: "triangle", base: 170, glide: 0.62, interval: 1.25, decay: 0.12 },
+  object: { wave: "square", base: 360, glide: 1.2, interval: 1.5, decay: 0.1 },
+  chair: { wave: "sawtooth", base: 230, glide: 0.75, interval: 1.33, decay: 0.13 },
+  car: { wave: "sawtooth", base: 180, glide: 0.58, interval: 2, decay: 0.16 },
+  house: { wave: "triangle", base: 130, glide: 0.7, interval: 1.5, decay: 0.2 },
+  mountain: { wave: "sine", base: 95, glide: 1.33, interval: 2, decay: 0.24 },
+  planet: { wave: "sine", base: 120, glide: 1.8, interval: 1.5, decay: 0.28 },
+  star: { wave: "triangle", base: 480, glide: 1.65, interval: 2, decay: 0.24 },
+  system: { wave: "sine", base: 260, glide: 1.25, interval: 1.618, decay: 0.28 },
+  galaxy: { wave: "sine", base: 210, glide: 0.72, interval: 1.5, decay: 0.32 },
+  universe: { wave: "triangle", base: 160, glide: 2.1, interval: 2, decay: 0.35 },
+};
+
 export default function Home() {
   const mountRef = useRef<HTMLDivElement>(null);
   const showAtlasRef = useRef(false);
@@ -153,6 +185,48 @@ export default function Home() {
     gain.connect(context.destination);
     oscillator.start();
     oscillator.stop(now + (fanfare ? 0.47 : 0.14));
+  }, []);
+
+  const playPickupSound = useCallback((curio: Curio, sourceEra: number) => {
+    if (!gameRef.current.sound) return;
+    const AudioConstructor =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioConstructor) return;
+    const context = audioRef.current ?? new AudioConstructor();
+    audioRef.current = context;
+    const profile = PICKUP_SOUND_PROFILES[curio.shape];
+    const nameHash = [...curio.name].reduce(
+      (total, character) => total + character.charCodeAt(0),
+      0,
+    );
+    const itemPitch = 2 ** (((nameHash % 9) - 4) / 24);
+    const eraPitch = 2 ** ((sourceEra % 6) / 18);
+    const basePitch = profile.base * itemPitch * eraPitch;
+    const start = context.currentTime + (gameRef.current.picked % 3) * 0.012;
+    const master = context.createGain();
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(Math.min(7200, basePitch * 8), start);
+    master.gain.setValueAtTime(0.0001, start);
+    master.gain.exponentialRampToValueAtTime(0.034, start + 0.012);
+    master.gain.exponentialRampToValueAtTime(0.0001, start + profile.decay);
+    filter.connect(master);
+    master.connect(context.destination);
+
+    [1, profile.interval].forEach((ratio, index) => {
+      const oscillator = context.createOscillator();
+      oscillator.type = index === 0 ? profile.wave : "sine";
+      oscillator.frequency.setValueAtTime(basePitch * ratio, start);
+      oscillator.frequency.exponentialRampToValueAtTime(
+        Math.max(35, basePitch * ratio * profile.glide),
+        start + profile.decay * 0.82,
+      );
+      oscillator.connect(filter);
+      oscillator.start(start + index * 0.008);
+      oscillator.stop(start + profile.decay + 0.025);
+    });
   }, []);
 
   const begin = useCallback(() => {
@@ -552,29 +626,41 @@ export default function Home() {
       return group;
     };
 
-    const makeMarker = (symbol: string, color: string) => {
+    const markerTextures = new Map<string, THREE.CanvasTexture>();
+
+    const getMarkerTexture = (symbol: string) => {
+      const cached = markerTextures.get(symbol);
+      if (cached) return cached;
       const canvas = document.createElement("canvas");
-      canvas.width = 160;
-      canvas.height = 160;
+      canvas.width = 192;
+      canvas.height = 192;
       const context = canvas.getContext("2d")!;
-      context.fillStyle = "rgba(14, 8, 32, .88)";
-      context.beginPath();
-      context.roundRect(15, 15, 130, 130, 42);
-      context.fill();
-      context.strokeStyle = color;
-      context.lineWidth = 8;
-      context.stroke();
+      context.lineJoin = "round";
+      context.strokeStyle = "rgba(24, 12, 43, .94)";
+      context.lineWidth = 18;
       context.fillStyle = "#ffffff";
-      context.font = `900 ${symbol.length > 2 ? 48 : symbol.length > 1 ? 58 : 78}px Arial`;
+      context.font = `900 ${symbol.length > 2 ? 74 : symbol.length > 1 ? 92 : 126}px Arial`;
       context.textAlign = "center";
       context.textBaseline = "middle";
-      context.fillText(symbol, 80, 84, 112);
+      context.strokeText(symbol, 96, 103, 160);
+      context.fillText(symbol, 96, 103, 160);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
-      const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }),
-      );
-      sprite.scale.set(0.52, 0.52, 1);
+      markerTextures.set(symbol, texture);
+      return texture;
+    };
+
+    const makeMarker = (symbol: string) => {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: getMarkerTexture(symbol),
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      }));
+      const markerScale = symbol.length > 2 ? 0.92 : 1.08;
+      sprite.scale.set(markerScale, markerScale, 1);
+      sprite.position.set(0, 0, 0);
+      sprite.renderOrder = 30;
       return sprite;
     };
 
@@ -619,6 +705,7 @@ export default function Home() {
         ];
       }
       const visual = makeVisual(curio);
+      visual.add(makeMarker(curio.symbol));
       visual.position.copy(restoredPosition);
       visual.rotation.set(...record.rotation);
       visual.scale.set(...record.scale);
@@ -640,19 +727,18 @@ export default function Home() {
             child.geometry.dispose();
             const materials = Array.isArray(child.material) ? child.material : [child.material];
             materials.forEach((material) => material.dispose());
+          } else if (child instanceof THREE.Sprite) {
+            child.material.dispose();
           }
         });
       }
-      const markerMaterial = pickup.marker.material as THREE.SpriteMaterial;
-      markerMaterial.map?.dispose();
-      markerMaterial.dispose();
     };
 
     const spawnPickup = (seed: number) => {
       const radius = 4.6 + pseudo(seed + game.id * 7) * 18;
       const angle = pseudo(seed + 13) * Math.PI * 2;
       const sourceEra =
-        activeIndex > 0 && pseudo(seed + 97) > 0.58
+        activeIndex > 0 && pseudo(seed + 97) > 0.45
           ? Math.floor(pseudo(seed + 103) * activeIndex)
           : activeIndex;
       const scaleGap = activeIndex - sourceEra;
@@ -691,11 +777,15 @@ export default function Home() {
         visual.scale.multiplyScalar(enlarge);
       }
       big = visualRadius > game.radius * 1.02;
-      const marker = makeMarker(curio.symbol, curio.color);
-      const markerSize = Math.max(0.28, Math.min(0.62, size * 0.62));
-      marker.scale.set(markerSize, markerSize, 1);
-      marker.position.y = Math.max(0.36, size * 0.74);
-      root.add(visual, marker);
+      visual.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = false;
+          child.receiveShadow = false;
+        }
+      });
+      const marker = makeMarker(curio.symbol);
+      visual.add(marker);
+      root.add(visual);
       root.position.set(
         game.x + Math.cos(angle) * radius,
         Math.max(0.22, size * 0.48),
@@ -719,7 +809,7 @@ export default function Home() {
     };
 
     const populate = () => {
-      const desiredPickupCount = width <= 860 ? 98 : 136;
+      const desiredPickupCount = width <= 860 ? 196 : 272;
       pickups = pickups.filter((pickup) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
@@ -777,7 +867,7 @@ export default function Home() {
                   : "mass";
       setToast(`${pickup.curio.name} joined the mash · ${contributionLabel}.`);
       setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
-      ping(290 + (game.picked % 12) * 38);
+      playPickupSound(pickup.curio, pickup.sourceEra);
 
       pickup.root.remove(pickup.visual);
       removePickup(pickup, true);
@@ -799,6 +889,13 @@ export default function Home() {
       );
       if (fieldLike) {
         makeFieldLike(pickup.visual);
+      } else {
+        pickup.visual.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
       }
       mashGroup.add(pickup.visual);
       attachments.push(pickup.visual);
@@ -831,6 +928,8 @@ export default function Home() {
               child.geometry.dispose();
               const materials = Array.isArray(child.material) ? child.material : [child.material];
               materials.forEach((material) => material.dispose());
+            } else if (child instanceof THREE.Sprite) {
+              child.material.dispose();
             }
           });
         }
@@ -844,9 +943,6 @@ export default function Home() {
           item.size *= 0.72;
           item.visualRadius *= 0.72;
           item.visual.scale.multiplyScalar(0.72);
-          const markerSize = Math.max(0.28, Math.min(0.62, item.size * 0.62));
-          item.marker.scale.set(markerSize, markerSize, 1);
-          item.marker.position.y = Math.max(0.36, item.size * 0.74);
         });
         setToast(`ZOOM OUT #${game.zooms} — the whole mixed-scale world stayed put.`);
         ping(350 + activeIndex * 18, true);
@@ -943,7 +1039,7 @@ export default function Home() {
       }
 
       spawnClock += dt;
-      const lowPickupThreshold = width <= 860 ? 82 : 114;
+      const lowPickupThreshold = width <= 860 ? 164 : 228;
       if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
         populate();
         spawnClock = 0;
@@ -979,7 +1075,7 @@ export default function Home() {
           pickup.root.position.x - game.x,
           pickup.root.position.z - game.z,
         );
-        pickup.marker.visible = distance < 14;
+        pickup.marker.visible = distance < 18;
         pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
         if (early) pickup.root.position.y += Math.sin(now * 0.0017 + index) * dt * 0.08;
       });
@@ -1057,14 +1153,17 @@ export default function Home() {
           object.geometry.dispose();
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           materials.forEach((material) => material.dispose());
+        } else if (object instanceof THREE.Sprite) {
+          object.material.dispose();
         }
       });
+      markerTextures.forEach((texture) => texture.dispose());
       dustGeometry.dispose();
       dustMaterial.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [labEra, ping]);
+  }, [labEra, ping, playPickupSound]);
 
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -1120,10 +1219,10 @@ export default function Home() {
           <div className="brand">
             <div className="brand-ball" aria-hidden="true">✦</div>
             <div>
-              <b>EVERYTHING ROLL</b>
-              <small>a very small adventure</small>
+              <b>ON A ROLL</b>
+              <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V8 · 3D</span>
+            <span className="version-badge">V9 · 3D</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
