@@ -410,6 +410,9 @@ export default function Home() {
     const dustField = new THREE.Points(dustGeometry, dustMaterial);
     scene.add(dustField);
 
+    const environmentGroup = new THREE.Group();
+    scene.add(environmentGroup);
+
     const playerRoot = new THREE.Group();
     const rollGroup = new THREE.Group();
     const mashGroup = new THREE.Group();
@@ -526,6 +529,405 @@ export default function Home() {
     }
     rollGroup.add(foamCluster);
 
+    type EnvironmentMode =
+      | "quantum"
+      | "micro"
+      | "room"
+      | "neighborhood"
+      | "planet"
+      | "cosmic";
+
+    const environmentModeFor = (index: number): EnvironmentMode => {
+      if (index <= 3) return "quantum";
+      if (index <= 8) return "micro";
+      if (index <= 11) return "room";
+      if (index <= 13) return "neighborhood";
+      if (index <= 15) return "planet";
+      return "cosmic";
+    };
+
+    const environmentNames: Record<EnvironmentMode, string> = {
+      quantum: "the quantum void",
+      micro: "a microscopic sea",
+      room: "a very rollable house",
+      neighborhood: "the neighborhood",
+      planet: "a whole curved world",
+      cosmic: "deep space",
+    };
+
+    let environmentMode = environmentModeFor(activeIndex);
+    let eraTransitionAge = 99;
+
+    const disposeEnvironment = () => {
+      environmentGroup.traverse((object) => {
+        if (
+          object instanceof THREE.Mesh ||
+          object instanceof THREE.Points ||
+          object instanceof THREE.Line
+        ) {
+          object.geometry.dispose();
+          const materials = Array.isArray(object.material)
+            ? object.material
+            : [object.material];
+          materials.forEach((material) => material.dispose());
+        }
+      });
+      environmentGroup.clear();
+    };
+
+    const addScenery = (
+      geometry: THREE.BufferGeometry,
+      material: THREE.Material,
+      position: [number, number, number],
+      rotation: [number, number, number] = [0, 0, 0],
+      scale: [number, number, number] = [1, 1, 1],
+      parent: THREE.Object3D = environmentGroup,
+    ) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(...position);
+      mesh.rotation.set(...rotation);
+      mesh.scale.set(...scale);
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      parent.add(mesh);
+      return mesh;
+    };
+
+    const sceneryToon = (color: THREE.ColorRepresentation) =>
+      new THREE.MeshToonMaterial({ color, flatShading: true });
+
+    const sceneryGlow = (
+      color: THREE.ColorRepresentation,
+      opacity = 0.45,
+      wireframe = false,
+    ) =>
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        wireframe,
+        depthWrite: false,
+      });
+
+    const addStarField = (count: number, radius: number, seed: number) => {
+      const positions: number[] = [];
+      const colors: number[] = [];
+      const warm = new THREE.Color("#ffd6f3");
+      const cool = new THREE.Color("#b4f4ff");
+      for (let index = 0; index < count; index += 1) {
+        const theta = pseudo(index * 4.73 + seed) * Math.PI * 2;
+        const phi = Math.acos(2 * pseudo(index * 7.17 + seed + 4) - 1);
+        const distance = radius * (0.42 + pseudo(index * 8.91 + seed + 9) * 0.58);
+        positions.push(
+          Math.sin(phi) * Math.cos(theta) * distance,
+          Math.cos(phi) * distance,
+          Math.sin(phi) * Math.sin(theta) * distance,
+        );
+        const color = warm.clone().lerp(cool, pseudo(index * 3.39 + seed));
+        colors.push(color.r, color.g, color.b);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      const material = new THREE.PointsMaterial({
+        size: compactGpu ? 0.17 : 0.22,
+        transparent: true,
+        opacity: 0.88,
+        vertexColors: true,
+        depthWrite: false,
+      });
+      environmentGroup.add(new THREE.Points(geometry, material));
+    };
+
+    const buildEnvironment = (index: number) => {
+      disposeEnvironment();
+      environmentMode = environmentModeFor(index);
+      ground.visible = true;
+      grid.visible = false;
+      dustField.visible = true;
+      environmentGroup.rotation.set(0, 0, 0);
+
+      if (environmentMode === "quantum") {
+        const voidColor = deepColor.clone().multiplyScalar(0.54);
+        scene.background = voidColor;
+        scene.fog = new THREE.FogExp2(voidColor, 0.009);
+        ground.visible = false;
+        dustMaterial.size = 0.13;
+        dustMaterial.opacity = 0.82;
+        hemisphere.intensity = 1.55;
+        keyLight.intensity = 1.6;
+        addStarField(compactGpu ? 150 : 240, 72, index + 2);
+        for (let ring = 0; ring < 11; ring += 1) {
+          const radius = 1.8 + pseudo(ring + 17) * 5.2;
+          addScenery(
+            new THREE.TorusGeometry(radius, 0.025 + pseudo(ring + 5) * 0.05, 5, 42),
+            sceneryGlow(ring % 2 ? activeEra.palette[2] : "#baf8ff", 0.22 + pseudo(ring) * 0.2),
+            [
+              (pseudo(ring + 31) - 0.5) * 40,
+              2.5 + pseudo(ring + 41) * 13,
+              (pseudo(ring + 51) - 0.5) * 44,
+            ],
+            [
+              pseudo(ring + 61) * Math.PI,
+              pseudo(ring + 71) * Math.PI,
+              pseudo(ring + 81) * Math.PI,
+            ],
+          );
+        }
+        for (let bubble = 0; bubble < 8; bubble += 1) {
+          addScenery(
+            new THREE.IcosahedronGeometry(0.8 + pseudo(bubble + 90) * 2.4, 2),
+            sceneryGlow(activeEra.palette[2], 0.09, true),
+            [
+              (pseudo(bubble + 101) - 0.5) * 36,
+              3 + pseudo(bubble + 111) * 10,
+              (pseudo(bubble + 121) - 0.5) * 38,
+            ],
+          );
+        }
+        return;
+      }
+
+      if (environmentMode === "micro") {
+        const seaColor = new THREE.Color("#062e39").lerp(deepColor, 0.35);
+        scene.background = seaColor;
+        scene.fog = new THREE.FogExp2(seaColor, 0.018);
+        groundMaterial.color.set("#174f55");
+        dustMaterial.size = 0.085;
+        dustMaterial.opacity = 0.5;
+        hemisphere.intensity = 1.4;
+        keyLight.intensity = 2;
+        for (let cell = 0; cell < 16; cell += 1) {
+          const angle = (cell / 16) * Math.PI * 2 + pseudo(cell + 4) * 0.4;
+          const distance = 20 + pseudo(cell + 22) * 24;
+          const cellGroup = new THREE.Group();
+          cellGroup.position.set(
+            Math.cos(angle) * distance,
+            2.2 + pseudo(cell + 32) * 8,
+            Math.sin(angle) * distance,
+          );
+          cellGroup.rotation.set(
+            pseudo(cell + 42),
+            pseudo(cell + 52) * Math.PI,
+            pseudo(cell + 62),
+          );
+          environmentGroup.add(cellGroup);
+          addScenery(
+            new THREE.IcosahedronGeometry(2.2 + pseudo(cell + 72) * 2.4, 2),
+            sceneryGlow(cell % 2 ? "#62e6cb" : "#ff8ad8", 0.13, true),
+            [0, 0, 0],
+            [0, 0, 0],
+            [1.3, 0.62, 1],
+            cellGroup,
+          );
+          addScenery(
+            new THREE.SphereGeometry(0.42, 12, 8),
+            sceneryGlow("#fff2a6", 0.55),
+            [0.3, 0.1, 0],
+            [0, 0, 0],
+            [1.2, 0.72, 1],
+            cellGroup,
+          );
+        }
+        for (let strand = 0; strand < 7; strand += 1) {
+          addScenery(
+            new THREE.TorusKnotGeometry(2.4, 0.08, 56, 5, 2, 3),
+            sceneryGlow(strand % 2 ? "#84f7ff" : "#ffb3e1", 0.34),
+            [
+              (pseudo(strand + 142) - 0.5) * 48,
+              3 + pseudo(strand + 152) * 7,
+              (pseudo(strand + 162) - 0.5) * 48,
+            ],
+            [pseudo(strand) * Math.PI, pseudo(strand + 2) * Math.PI, 0],
+          );
+        }
+        return;
+      }
+
+      if (environmentMode === "room") {
+        scene.background = new THREE.Color("#f6b8cb");
+        scene.fog = new THREE.FogExp2(0xf6b8cb, 0.012);
+        groundMaterial.color.set("#9a5d57");
+        dustMaterial.size = 0.045;
+        dustMaterial.opacity = 0.18;
+        hemisphere.intensity = 1.22;
+        keyLight.intensity = 2.45;
+        const wallMaterial = sceneryToon("#ffd8c8");
+        addScenery(new THREE.PlaneGeometry(92, 30), wallMaterial, [0, 15, -40]);
+        addScenery(
+          new THREE.PlaneGeometry(86, 30),
+          sceneryToon("#f7c4b8"),
+          [-46, 15, 0],
+          [0, Math.PI / 2, 0],
+        );
+        addScenery(
+          new THREE.PlaneGeometry(86, 30),
+          sceneryToon("#f7c4b8"),
+          [46, 15, 0],
+          [0, -Math.PI / 2, 0],
+        );
+        for (let board = -8; board <= 8; board += 1) {
+          addScenery(
+            new THREE.BoxGeometry(92, 0.025, 0.08),
+            sceneryToon(board % 2 ? "#7d4948" : "#b87568"),
+            [0, 0.025, board * 4.7],
+          );
+        }
+        addScenery(
+          new THREE.PlaneGeometry(14, 11),
+          sceneryToon("#89d9ed"),
+          [-16, 17, -39.8],
+        );
+        addScenery(new THREE.BoxGeometry(15.2, 0.45, 0.25), sceneryToon("#fff5dd"), [-16, 17, -39.5]);
+        addScenery(new THREE.BoxGeometry(0.45, 12, 0.25), sceneryToon("#fff5dd"), [-16, 17, -39.5]);
+        addScenery(
+          new THREE.BoxGeometry(15, 0.5, 0.5),
+          sceneryToon("#fff5dd"),
+          [-16, 11.6, -39.2],
+        );
+        const furniture = new THREE.Group();
+        furniture.position.set(25, 0, -26);
+        environmentGroup.add(furniture);
+        addScenery(new THREE.BoxGeometry(13, 1.1, 8), sceneryToon("#6f3c68"), [0, 8.5, 0], [0, 0, 0], [1, 1, 1], furniture);
+        [-5, 5].forEach((x) => {
+          [-2.8, 2.8].forEach((z) => {
+            addScenery(new THREE.BoxGeometry(0.8, 8, 0.8), sceneryToon("#56304f"), [x, 4.2, z], [0, 0, 0], [1, 1, 1], furniture);
+          });
+        });
+        return;
+      }
+
+      if (environmentMode === "neighborhood") {
+        scene.background = new THREE.Color("#82d7f3");
+        scene.fog = new THREE.FogExp2(0x82d7f3, 0.009);
+        groundMaterial.color.set(index === 12 ? "#779667" : "#6ea25c");
+        dustMaterial.size = 0.035;
+        dustMaterial.opacity = 0.12;
+        hemisphere.intensity = 1.55;
+        keyLight.intensity = 2.8;
+        addScenery(new THREE.BoxGeometry(13, 0.08, 190), sceneryToon("#49515f"), [0, 0.08, 0]);
+        addScenery(new THREE.BoxGeometry(190, 0.07, 13), sceneryToon("#535967"), [0, 0.075, 0]);
+        for (let dash = -7; dash <= 7; dash += 1) {
+          addScenery(new THREE.BoxGeometry(0.22, 0.025, 3.3), sceneryToon("#ffe894"), [0, 0.14, dash * 8]);
+          addScenery(new THREE.BoxGeometry(3.3, 0.025, 0.22), sceneryToon("#ffe894"), [dash * 8, 0.14, 0]);
+        }
+        for (let house = 0; house < 12; house += 1) {
+          const angle = (house / 12) * Math.PI * 2 + 0.24;
+          const distance = 32 + (house % 3) * 5;
+          const houseGroup = new THREE.Group();
+          houseGroup.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
+          houseGroup.rotation.y = -angle + Math.PI / 2;
+          environmentGroup.add(houseGroup);
+          const houseColor = ["#ffafbd", "#ffd67d", "#94d8c5", "#bea7ef"][house % 4];
+          addScenery(new THREE.BoxGeometry(7.8, 6.4, 6.8), sceneryToon(houseColor), [0, 3.2, 0], [0, 0, 0], [1, 1, 1], houseGroup);
+          addScenery(new THREE.ConeGeometry(5.8, 3.3, 4), sceneryToon("#71455c"), [0, 8, 0], [0, Math.PI / 4, 0], [1, 1, 1], houseGroup);
+          addScenery(new THREE.BoxGeometry(1.6, 3.2, 0.15), sceneryToon("#563b65"), [0, 1.65, 3.48], [0, 0, 0], [1, 1, 1], houseGroup);
+          const treeX = house % 2 ? 5.5 : -5.5;
+          addScenery(new THREE.CylinderGeometry(0.45, 0.62, 4, 7), sceneryToon("#7c5138"), [treeX, 2, 0], [0, 0, 0], [1, 1, 1], houseGroup);
+          addScenery(new THREE.IcosahedronGeometry(2.1, 1), sceneryToon("#45a957"), [treeX, 5.1, 0], [0, 0, 0], [1, 1, 1], houseGroup);
+        }
+        return;
+      }
+
+      if (environmentMode === "planet") {
+        const skyColor = index === 14 ? new THREE.Color("#3e87b7") : new THREE.Color("#071946");
+        scene.background = skyColor;
+        scene.fog = new THREE.FogExp2(skyColor, index === 14 ? 0.006 : 0.0035);
+        ground.visible = false;
+        dustMaterial.size = 0.04;
+        dustMaterial.opacity = index === 14 ? 0.12 : 0.42;
+        hemisphere.intensity = 1.25;
+        keyLight.intensity = 3;
+        addScenery(
+          new THREE.SphereGeometry(80, compactGpu ? 48 : 72, compactGpu ? 32 : 48),
+          new THREE.MeshStandardMaterial({
+            color: index === 14 ? "#5f9d63" : "#3c77ad",
+            roughness: 0.92,
+            metalness: 0,
+            flatShading: true,
+          }),
+          [0, -79, 0],
+        );
+        addScenery(
+          new THREE.SphereGeometry(82.5, 42, 28),
+          sceneryGlow("#8ce7ff", 0.14, true),
+          [0, -79, 0],
+        );
+        for (let mountain = 0; mountain < 18; mountain += 1) {
+          const angle = (mountain / 18) * Math.PI * 2;
+          const distance = 27 + pseudo(mountain + 211) * 16;
+          addScenery(
+            new THREE.ConeGeometry(2.5 + pseudo(mountain + 221) * 2.5, 4 + pseudo(mountain + 231) * 5, 6),
+            sceneryToon(mountain % 3 ? "#6a7f6d" : "#8b7891"),
+            [Math.cos(angle) * distance, 2.3, Math.sin(angle) * distance],
+            [0, pseudo(mountain + 241) * Math.PI, 0],
+          );
+        }
+        if (index >= 15) addStarField(compactGpu ? 260 : 430, 100, 315);
+        return;
+      }
+
+      scene.background = new THREE.Color("#02020e");
+      scene.fog = new THREE.FogExp2(0x02020e, 0.0015);
+      ground.visible = false;
+      dustField.visible = false;
+      hemisphere.intensity = 0.72;
+      keyLight.intensity = 3.3;
+      addStarField(compactGpu ? 520 : 900, 108, index * 19);
+      const galaxyCount = index >= 18 ? (compactGpu ? 7 : 11) : 4;
+      for (let galaxy = 0; galaxy < galaxyCount; galaxy += 1) {
+        const galaxyGroup = new THREE.Group();
+        const angle = (galaxy / galaxyCount) * Math.PI * 2 + 0.35;
+        const distance = 31 + (galaxy % 4) * 10;
+        galaxyGroup.position.set(
+          Math.cos(angle) * distance,
+          7 + pseudo(galaxy + 301) * 23,
+          Math.sin(angle) * distance,
+        );
+        galaxyGroup.rotation.set(
+          pseudo(galaxy + 311) * Math.PI,
+          pseudo(galaxy + 321) * Math.PI,
+          pseudo(galaxy + 331) * Math.PI,
+        );
+        environmentGroup.add(galaxyGroup);
+        const galaxyColor = ["#c5b4ff", "#ffafd9", "#9ef6ff"][galaxy % 3];
+        for (let ring = 0; ring < 3; ring += 1) {
+          addScenery(
+            new THREE.TorusGeometry(2.2 + ring * 1.1, 0.1, 5, 54),
+            sceneryGlow(galaxyColor, 0.38 - ring * 0.07),
+            [0, 0, 0],
+            [Math.PI / 2, ring * 0.28, 0],
+            [1.8, 1, 0.72],
+            galaxyGroup,
+          );
+        }
+        addScenery(new THREE.IcosahedronGeometry(0.62, 1), sceneryGlow("#fff4b0", 0.86), [0, 0, 0], [0, 0, 0], [1, 1, 1], galaxyGroup);
+      }
+      if (index >= 19) {
+        [42, 68, 98].forEach((radius, shell) => {
+          addScenery(
+            new THREE.SphereGeometry(radius, 28, 18),
+            sceneryGlow(shell === 1 ? "#7c71ff" : "#ff78ca", 0.055, true),
+            [0, 0, 0],
+          );
+        });
+      }
+      if (index >= 20) {
+        for (let bubble = 0; bubble < 9; bubble += 1) {
+          const angle = (bubble / 9) * Math.PI * 2;
+          addScenery(
+            new THREE.SphereGeometry(5 + (bubble % 3) * 2, 18, 12),
+            sceneryGlow(["#8cf3ff", "#ff85d2", "#c9a0ff"][bubble % 3], 0.12, true),
+            [
+              Math.cos(angle) * (28 + (bubble % 2) * 18),
+              9 + (bubble % 4) * 8,
+              Math.sin(angle) * (28 + (bubble % 2) * 18),
+            ],
+          );
+        }
+      }
+    };
+
     const applyEraTheme = (index: number, announce = false) => {
       activeIndex = index;
       activeEra = ERAS[index];
@@ -536,14 +938,10 @@ export default function Home() {
       deepColor.set(activeEra.palette[0]);
       middleColor.set(activeEra.palette[1]);
       pop.set(activeEra.palette[2]);
-      scene.background = deepColor.clone();
-      scene.fog = new THREE.FogExp2(deepColor.clone(), early ? 0.017 : 0.024);
       groundMaterial.color
         .copy(middleColor)
         .lerp(new THREE.Color("#ffdff1"), 0.18)
         .multiplyScalar(0.82);
-      ground.visible = true;
-      grid.visible = true;
       gridMaterials.forEach((material) => {
         if ("color" in material) {
           (material as THREE.LineBasicMaterial).color.set(activeEra.palette[2]);
@@ -570,13 +968,19 @@ export default function Home() {
       });
       core.castShadow = !early;
       core.receiveShadow = !early;
+      buildEnvironment(index);
 
       if (announce) {
-        setToast(`Ta-da! ${activeEra.name} unlocked—and the whole silly mash came too.`);
+        eraTransitionAge = 0;
+        setToast(
+          `ZOOMING OUT! ${activeEra.name} opens into ${environmentNames[environmentMode]}.`,
+        );
         setLastFact({ name: activeEra.name, fact: activeEra.lesson });
         ping(360 + index * 18, true);
       }
     };
+
+    buildEnvironment(activeIndex);
 
     const createMaterial = (color: string, emissive = false) => {
       const toyColor = new THREE.Color(color).lerp(new THREE.Color("#fff4fb"), 0.08);
@@ -1351,8 +1755,8 @@ export default function Home() {
           inputX /= Math.max(1, length);
           inputZ /= Math.max(1, length);
           const boost = keysRef.current[" "] ? 1.26 : 1;
-          game.vx += inputX * 11.875 * boost * dt;
-          game.vz += inputZ * 11.875 * boost * dt;
+          game.vx += inputX * 17.8125 * boost * dt;
+          game.vz += inputZ * 17.8125 * boost * dt;
           if (labEra === null) {
             const engagement = Math.max(0, 1 - (now / 1000 - game.lastPickup) / 8);
             game.hours += (dt * (0.72 + engagement * 0.28)) / 3600;
@@ -1362,7 +1766,7 @@ export default function Home() {
         game.vx *= drag;
         game.vz *= drag;
         const speed = Math.hypot(game.vx, game.vz);
-        const maxSpeed = keysRef.current[" "] ? 8.125 : 6.5;
+        const maxSpeed = keysRef.current[" "] ? 12.1875 : 9.75;
         if (speed > maxSpeed) {
           game.vx = (game.vx / speed) * maxSpeed;
           game.vz = (game.vz / speed) * maxSpeed;
@@ -1422,6 +1826,15 @@ export default function Home() {
       const floatHeight =
         game.radius * 0.94 + (early ? Math.sin(now * 0.0017) * 0.035 : 0);
       playerRoot.position.set(game.x, floatHeight, game.z);
+      environmentGroup.position.set(game.x, 0, game.z);
+      ground.position.set(game.x, 0, game.z);
+      const gridCell = 170 / 90;
+      grid.position.set(
+        game.x - THREE.MathUtils.euclideanModulo(game.x, gridCell),
+        0.012,
+        game.z - THREE.MathUtils.euclideanModulo(game.z, gridCell),
+      );
+      dustField.position.set(game.x, 0, game.z);
       const faceScale = game.radius * 0.94;
       ballFace.position.set(0, game.radius * 0.1, game.radius * 0.86);
       ballFace.scale.set(faceScale, faceScale, 1);
@@ -1501,6 +1914,12 @@ export default function Home() {
         floatHeight + (mobileView ? 7.1 : 5.2) + game.radius * 1.4,
         game.z + (mobileView ? 13.2 : 9.5) + game.radius * 2.1,
       );
+      eraTransitionAge = Math.min(3, eraTransitionAge + dt);
+      if (eraTransitionAge < 2.6) {
+        const pullback = Math.sin((eraTransitionAge / 2.6) * Math.PI);
+        desiredCamera.y += pullback * (mobileView ? 5.2 : 7);
+        desiredCamera.z += pullback * (mobileView ? 8 : 11);
+      }
       camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, dt));
       cameraTarget.set(game.x, floatHeight * 0.82, game.z - 0.7);
       camera.lookAt(cameraTarget);
@@ -1551,6 +1970,7 @@ export default function Home() {
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
       pickups.forEach((pickup) => removePickup(pickup));
+      disposeEnvironment();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
@@ -1627,7 +2047,7 @@ export default function Home() {
               <b>ON A ROLL</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V12 · FAIR PICKUPS</span>
+            <span className="version-badge">V13 · CHANGING WORLDS</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
