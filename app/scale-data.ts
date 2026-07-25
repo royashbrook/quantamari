@@ -60,7 +60,7 @@ const c = (
   name, shape, color, fact, symbol,
 });
 
-export const JOURNEY_HOURS = 1000;
+export const JOURNEY_HOURS = 500;
 
 const BASE_ERAS: Era[] = [
   {
@@ -80,7 +80,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 0.02,
+    at: 0.01,
     logMeters: -24,
     name: "The Unresolved Gap",
     quip: "Eleven orders of honest uncertainty",
@@ -96,7 +96,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 0.06,
+    at: 0.03,
     logMeters: -20,
     name: "Quark–Gluon Droplet",
     quip: "Confined, colorful, and never alone",
@@ -112,7 +112,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 0.2,
+    at: 0.1,
     logMeters: -15.08,
     name: "Hadron Forge",
     quip: "Composite matter finally has an inside",
@@ -128,7 +128,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 0.5,
+    at: 0.25,
     logMeters: -10,
     name: "Atomic Cloud",
     quip: "Mostly probability, not tiny orbits",
@@ -144,7 +144,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 2,
+    at: 1,
     logMeters: -9,
     name: "Molecular Assembly",
     quip: "Shape starts to matter",
@@ -160,7 +160,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 6,
+    at: 3,
     logMeters: -8,
     name: "Macromolecule Reef",
     quip: "Machines before life",
@@ -176,7 +176,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 10,
+    at: 5,
     logMeters: -5,
     name: "Cellular Sea",
     quip: "The first whole living systems",
@@ -192,7 +192,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 25,
+    at: 12.5,
     logMeters: -4,
     name: "Fiber & Pollen",
     quip: "The microscopic world gets scratchy",
@@ -208,7 +208,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 40,
+    at: 20,
     logMeters: -3,
     name: "Dust Country",
     quip: "Every speck has a biography",
@@ -224,7 +224,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 70,
+    at: 35,
     logMeters: -2,
     name: "Pocket World",
     quip: "Buttons, pebbles, and suspicious crumbs",
@@ -240,7 +240,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 120,
+    at: 60,
     logMeters: 0,
     name: "Everyday Kingdom",
     quip: "Furniture begins to regret everything",
@@ -256,7 +256,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 190,
+    at: 95,
     logMeters: 1,
     name: "Vehicle Yard",
     quip: "Traffic has become a food group",
@@ -272,7 +272,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 250,
+    at: 125,
     logMeters: 2,
     name: "Built Environment",
     quip: "The neighborhood is portable now",
@@ -288,7 +288,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 330,
+    at: 165,
     logMeters: 4,
     name: "Landscape Scale",
     quip: "Geography becomes texture",
@@ -304,7 +304,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 430,
+    at: 215,
     logMeters: 7.1,
     name: "Planetary Pantry",
     quip: "Continents are crunchy",
@@ -320,7 +320,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 600,
+    at: 300,
     logMeters: 9.14,
     name: "Stellar Buffet",
     quip: "A light lunch",
@@ -336,7 +336,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 690,
+    at: 345,
     logMeters: 13,
     name: "System Sweep",
     quip: "Orbits become the new clutter",
@@ -352,7 +352,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 760,
+    at: 380,
     logMeters: 21,
     name: "Galaxy Garden",
     quip: "Spiral, serve, repeat",
@@ -368,7 +368,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 900,
+    at: 450,
     logMeters: 26.94,
     name: "Observable Universe",
     quip: "The edge is a horizon, not a wall",
@@ -384,7 +384,7 @@ const BASE_ERAS: Era[] = [
     ],
   },
   {
-    at: 1000,
+    at: 500,
     logMeters: 60,
     name: "Metaversal Beyond",
     quip: "Science ends; play continues",
@@ -544,7 +544,7 @@ export function eraAt(hours: number) {
 
 export function logMetersAt(hours: number) {
   if (hours >= JOURNEY_HOURS) {
-    return 60 + Math.log2(1 + (hours - JOURNEY_HOURS) / 10) * 10;
+    return 60 + Math.log2(1 + (hours - JOURNEY_HOURS) / 5) * 10;
   }
   const i = eraAt(hours);
   const current = ERAS[i];

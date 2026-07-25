@@ -23,6 +23,8 @@ type Pickup = {
   visualRadius: number;
   big: boolean;
   growthFactor: number;
+  baseY: number;
+  wiggle: number;
 };
 
 type MashRecord = {
@@ -115,6 +117,17 @@ const PICKUP_SOUND_PROFILES: Record<Curio["shape"], PickupSoundProfile> = {
   galaxy: { wave: "sine", base: 210, glide: 0.72, interval: 1.5, decay: 0.32 },
   universe: { wave: "triangle", base: 160, glide: 2.1, interval: 2, decay: 0.35 },
 };
+
+const PICKUP_QUIPS = [
+  "plop! permanent passenger",
+  "squished into the friendship ball",
+  "yoinked for science",
+  "now 100% part of the situation",
+  "welcome aboard, tiny thing",
+  "stuck forever—adorable",
+  "the mash says nom",
+  "rolled up with excellent manners",
+];
 
 export default function Home() {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -312,7 +325,10 @@ export default function Home() {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+    const compactGpu = window.innerWidth <= 860;
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio || 1, compactGpu ? 1.25 : 1.6),
+    );
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -337,7 +353,7 @@ export default function Home() {
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
     keyLight.position.set(-7, 12, 8);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.shadow.mapSize.set(compactGpu ? 512 : 1024, compactGpu ? 512 : 1024);
     keyLight.shadow.camera.left = -22;
     keyLight.shadow.camera.right = 22;
     keyLight.shadow.camera.top = 22;
@@ -348,9 +364,9 @@ export default function Home() {
     scene.add(glowLight);
 
     const groundMaterial = new THREE.MeshStandardMaterial({
-      color: middleColor.clone().multiplyScalar(0.58),
-      roughness: 0.92,
-      metalness: 0.02,
+      color: middleColor.clone().lerp(new THREE.Color("#ffdff1"), 0.18).multiplyScalar(0.82),
+      roughness: 0.78,
+      metalness: 0,
     });
     const ground = new THREE.Mesh(new THREE.CircleGeometry(95, 96), groundMaterial);
     ground.rotation.x = -Math.PI / 2;
@@ -400,6 +416,67 @@ export default function Home() {
     playerRoot.add(rollGroup);
     rollGroup.add(mashGroup);
     scene.add(playerRoot);
+
+    const makeBallFaceTexture = (reaction = false) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 256;
+      const context = canvas.getContext("2d")!;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.fillStyle = "rgba(255, 131, 178, .72)";
+      context.beginPath();
+      context.ellipse(55, 154, 26, 14, -0.12, 0, Math.PI * 2);
+      context.ellipse(201, 154, 26, 14, 0.12, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#26143a";
+      if (reaction) {
+        context.lineWidth = 15;
+        context.strokeStyle = "#26143a";
+        context.beginPath();
+        context.arc(86, 104, 24, 0.12, Math.PI - 0.12);
+        context.arc(170, 104, 24, 0.12, Math.PI - 0.12);
+        context.stroke();
+        context.beginPath();
+        context.ellipse(128, 166, 30, 36, 0, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#ff8ab8";
+        context.beginPath();
+        context.ellipse(128, 180, 17, 10, 0, 0, Math.PI * 2);
+        context.fill();
+      } else {
+        [88, 168].forEach((x) => {
+          context.beginPath();
+          context.ellipse(x, 106, 19, 27, 0, 0, Math.PI * 2);
+          context.fill();
+          context.fillStyle = "#ffffff";
+          context.beginPath();
+          context.arc(x - 6, 97, 6, 0, Math.PI * 2);
+          context.fill();
+          context.fillStyle = "#26143a";
+        });
+        context.lineWidth = 14;
+        context.strokeStyle = "#26143a";
+        context.beginPath();
+        context.arc(128, 142, 38, 0.15, Math.PI - 0.15);
+        context.stroke();
+      }
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    };
+    const happyFaceTexture = makeBallFaceTexture();
+    const chompFaceTexture = makeBallFaceTexture(true);
+    const ballFaceMaterial = new THREE.SpriteMaterial({
+      map: happyFaceTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const ballFace = new THREE.Sprite(ballFaceMaterial);
+    ballFace.renderOrder = 50;
+    playerRoot.add(ballFace);
+    let faceReactionUntil = 0;
 
     const coreMaterial = new THREE.MeshPhysicalMaterial({
       color: early ? activeEra.palette[2] : 0xffb83e,
@@ -461,7 +538,10 @@ export default function Home() {
       pop.set(activeEra.palette[2]);
       scene.background = deepColor.clone();
       scene.fog = new THREE.FogExp2(deepColor.clone(), early ? 0.017 : 0.024);
-      groundMaterial.color.copy(middleColor).multiplyScalar(0.58);
+      groundMaterial.color
+        .copy(middleColor)
+        .lerp(new THREE.Color("#ffdff1"), 0.18)
+        .multiplyScalar(0.82);
       ground.visible = true;
       grid.visible = true;
       gridMaterials.forEach((material) => {
@@ -492,21 +572,22 @@ export default function Home() {
       core.receiveShadow = !early;
 
       if (announce) {
-        setToast(`${activeEra.name} reached — everything already collected stays with you.`);
+        setToast(`Ta-da! ${activeEra.name} unlocked—and the whole silly mash came too.`);
         setLastFact({ name: activeEra.name, fact: activeEra.lesson });
         ping(360 + index * 18, true);
       }
     };
 
-    const createMaterial = (color: string, emissive = false) =>
-      new THREE.MeshStandardMaterial({
-        color,
-        roughness: 0.54,
-        metalness: 0.05,
+    const createMaterial = (color: string, emissive = false) => {
+      const toyColor = new THREE.Color(color).lerp(new THREE.Color("#fff4fb"), 0.08);
+      return new THREE.MeshToonMaterial({
+        color: toyColor,
         emissive: emissive ? color : 0x000000,
-        emissiveIntensity: emissive ? 0.8 : 0,
+        emissiveIntensity: emissive ? 0.68 : 0,
+        flatShading: true,
         transparent: false,
       });
+    };
 
     const addPart = (
       parent: THREE.Group,
@@ -632,18 +713,35 @@ export default function Home() {
       const cached = markerTextures.get(symbol);
       if (cached) return cached;
       const canvas = document.createElement("canvas");
-      canvas.width = 192;
-      canvas.height = 192;
+      canvas.width = 256;
+      canvas.height = 256;
       const context = canvas.getContext("2d")!;
       context.lineJoin = "round";
+      context.lineCap = "round";
+      context.fillStyle = "rgba(255, 123, 174, .76)";
+      context.beginPath();
+      context.ellipse(48, 105, 22, 12, -0.16, 0, Math.PI * 2);
+      context.ellipse(208, 105, 22, 12, 0.16, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#241534";
+      [84, 172].forEach((x) => {
+        context.beginPath();
+        context.ellipse(x, 76, 15, 21, 0, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#ffffff";
+        context.beginPath();
+        context.arc(x - 5, 70, 5, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#241534";
+      });
       context.strokeStyle = "rgba(24, 12, 43, .94)";
-      context.lineWidth = 18;
+      context.lineWidth = 16;
       context.fillStyle = "#ffffff";
-      context.font = `900 ${symbol.length > 2 ? 74 : symbol.length > 1 ? 92 : 126}px Arial`;
+      context.font = `900 ${symbol.length > 2 ? 78 : symbol.length > 1 ? 105 : 138}px "Arial Rounded MT Bold", Arial`;
       context.textAlign = "center";
       context.textBaseline = "middle";
-      context.strokeText(symbol, 96, 103, 160);
-      context.fillText(symbol, 96, 103, 160);
+      context.strokeText(symbol, 128, 166, 218);
+      context.fillText(symbol, 128, 166, 218);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       markerTextures.set(symbol, texture);
@@ -657,7 +755,7 @@ export default function Home() {
         depthTest: false,
         depthWrite: false,
       }));
-      const markerScale = symbol.length > 2 ? 0.92 : 1.08;
+      const markerScale = symbol.length > 2 ? 1.02 : 1.16;
       sprite.scale.set(markerScale, markerScale, 1);
       sprite.position.set(0, 0, 0);
       sprite.renderOrder = 30;
@@ -666,6 +764,10 @@ export default function Home() {
 
     let pickups: Pickup[] = [];
     const attachments: THREE.Object3D[] = [];
+    const popBursts: {
+      mesh: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+      born: number;
+    }[] = [];
     let spawnClock = 0;
 
     const makeFieldLike = (visual: THREE.Object3D) => {
@@ -791,6 +893,8 @@ export default function Home() {
         Math.max(0.22, size * 0.48),
         game.z + Math.sin(angle) * radius,
       );
+      const baseY = root.position.y;
+      const wiggle = pseudo(seed + 181) * Math.PI * 2;
       root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
       scene.add(root);
       pickups.push({
@@ -804,12 +908,14 @@ export default function Home() {
         visualRadius,
         big,
         growthFactor,
+        baseY,
+        wiggle,
       });
       game.id += 1;
     };
 
     const populate = () => {
-      const desiredPickupCount = width <= 860 ? 196 : 272;
+      const desiredPickupCount = width <= 860 ? 392 : 544;
       pickups = pickups.filter((pickup) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
@@ -865,9 +971,26 @@ export default function Home() {
                 : massEnergyFactor < 0.35
                   ? "light mass"
                   : "mass";
-      setToast(`${pickup.curio.name} joined the mash · ${contributionLabel}.`);
+      const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
+      setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
       setLastFact({ name: pickup.curio.name, fact: pickup.curio.fact });
       playPickupSound(pickup.curio, pickup.sourceEra);
+      faceReactionUntil = now + 240;
+      ballFaceMaterial.map = chompFaceTexture;
+      ballFaceMaterial.needsUpdate = true;
+      const popBurst = new THREE.Mesh(
+        new THREE.TorusGeometry(Math.max(0.32, pickup.visualRadius * 0.72), 0.055, 6, 28),
+        new THREE.MeshBasicMaterial({
+          color: pickup.curio.color,
+          transparent: true,
+          opacity: 0.86,
+          depthWrite: false,
+        }),
+      );
+      popBurst.position.copy(pickup.root.position);
+      popBurst.rotation.x = Math.PI / 2;
+      scene.add(popBurst);
+      popBursts.push({ mesh: popBurst, born: now });
 
       pickup.root.remove(pickup.visual);
       removePickup(pickup, true);
@@ -1025,7 +1148,7 @@ export default function Home() {
               game.vx -= (dx / distance) * 2.4;
               game.vz -= (dz / distance) * 2.4;
               if (now / 1000 - game.lastPickup > 0.8) {
-                setToast(`${pickup.curio.name} is too large. Build a lumpier mash first.`);
+                setToast(`Oof! ${pickup.curio.name} is still too chunky. Snack smaller first.`);
               }
             }
           }
@@ -1039,7 +1162,7 @@ export default function Home() {
       }
 
       spawnClock += dt;
-      const lowPickupThreshold = width <= 860 ? 164 : 228;
+      const lowPickupThreshold = width <= 860 ? 328 : 456;
       if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
         populate();
         spawnClock = 0;
@@ -1048,6 +1171,14 @@ export default function Home() {
       const floatHeight =
         game.radius * 0.94 + (early ? Math.sin(now * 0.0017) * 0.035 : 0);
       playerRoot.position.set(game.x, floatHeight, game.z);
+      const faceScale = game.radius * 0.94;
+      ballFace.position.set(0, game.radius * 0.1, game.radius * 0.86);
+      ballFace.scale.set(faceScale, faceScale, 1);
+      if (faceReactionUntil && now >= faceReactionUntil) {
+        faceReactionUntil = 0;
+        ballFaceMaterial.map = happyFaceTexture;
+        ballFaceMaterial.needsUpdate = true;
+      }
       const wobble = early ? 0.055 : Math.min(0.035, attachments.length * 0.0007);
       const coreShare = early
         ? Math.max(0.18, 0.82 - attachments.length * 0.05)
@@ -1075,9 +1206,13 @@ export default function Home() {
           pickup.root.position.x - game.x,
           pickup.root.position.z - game.z,
         );
-        pickup.marker.visible = distance < 18;
+        pickup.marker.visible = distance < 20;
         pickup.root.rotation.y += dt * (pickup.big ? 0.08 : 0.22);
-        if (early) pickup.root.position.y += Math.sin(now * 0.0017 + index) * dt * 0.08;
+        pickup.root.rotation.z = Math.sin(now * 0.0012 + pickup.wiggle) * 0.075;
+        pickup.root.position.y =
+          pickup.baseY +
+          Math.sin(now * (early ? 0.0018 : 0.00125) + pickup.wiggle + index * 0.04) *
+            (early ? 0.11 : 0.055);
       });
 
       for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
@@ -1089,6 +1224,20 @@ export default function Home() {
         if (progress >= 1) {
           piece.visual.scale.copy(piece.targetScale);
           stickingPieces.splice(index, 1);
+        }
+      }
+
+      for (let index = popBursts.length - 1; index >= 0; index -= 1) {
+        const burst = popBursts[index];
+        const progress = Math.min(1, (now - burst.born) / 360);
+        burst.mesh.scale.setScalar(0.35 + progress * 2.4);
+        burst.mesh.material.opacity = (1 - progress) * 0.86;
+        burst.mesh.position.y += dt * 0.65;
+        if (progress >= 1) {
+          scene.remove(burst.mesh);
+          burst.mesh.geometry.dispose();
+          burst.mesh.material.dispose();
+          popBursts.splice(index, 1);
         }
       }
 
@@ -1158,6 +1307,8 @@ export default function Home() {
         }
       });
       markerTextures.forEach((texture) => texture.dispose());
+      happyFaceTexture.dispose();
+      chompFaceTexture.dispose();
       dustGeometry.dispose();
       dustMaterial.dispose();
       renderer.dispose();
@@ -1222,7 +1373,7 @@ export default function Home() {
               <b>ON A ROLL</b>
               <small>the scale of everything</small>
             </div>
-            <span className="version-badge">V9 · 3D</span>
+            <span className="version-badge">V10 · EXTRA CUTE</span>
           </div>
           <div className="actions">
             <button onClick={() => setShowAtlas(true)}>
@@ -1319,7 +1470,7 @@ export default function Home() {
             <div className="welcome-foot">
               <span>NO CHARACTER</span><span>•</span>
               <span>REAL 3D ROLLING</span><span>•</span>
-              <span>INFINITE AFTER 1,000H</span>
+              <span>INFINITE AFTER 500H</span>
             </div>
           </section>
         )}
