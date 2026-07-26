@@ -2,6 +2,8 @@ name: verify + deploy royashbrook.com
 
 on:
   push:
+    branches:
+      - main
     paths-ignore:
       - "**/*.md"
   pull_request:
@@ -28,6 +30,14 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:all
+      - name: upload performance + e2e results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quarkatamari-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests/results/e2e/**/performance-baseline.json
+          if-no-files-found: warn
+          retention-days: 30
 
   deploy-site:
     needs: verify

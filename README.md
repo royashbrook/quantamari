@@ -153,6 +153,8 @@ Important code:
 
 - `src/routes/+page.svelte` — browser game shell, sound, HUD, and Scale Lab
 - `src/lib/game/runtime.ts` — mounted Three.js world and simulation lifecycle
+- `src/lib/game/runtime-performance.ts` — opt-in named phase measurements
+- `src/lib/game/spawn-queue.ts` — deterministic, time-budgeted world population
 - `src/lib/scale-data.ts` — 34-era progression, 220 facts, stable IDs, and sources
 - `src/lib/game-rules.ts` — deterministic identities and gameplay budgets
 - `src/lib/world-system.ts` — grounded world kinds, three-layer LOD, and budgets
@@ -174,7 +176,7 @@ pushes do not redeploy it. Never force-push.
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-The `v15.0.0` tag preserves the final time/band version and `v1.0.0` is the
-rollback point before the breaking v2 SvelteKit rewrite. The remaining release
-cutover is tracked in [issue #6](https://github.com/royashbrook/quarkatamari/issues/6);
-`v2.0.0` will be tagged only after production is verified.
+The `v15.0.0` tag preserves the final time/band version, `v1.0.0` is the
+rollback point before the breaking SvelteKit rewrite, and `v2.0.0` marks that
+rewrite in production. The v2.1 performance work is tracked in
+[issue #8](https://github.com/royashbrook/quarkatamari/issues/8).
