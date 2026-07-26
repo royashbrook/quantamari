@@ -268,7 +268,6 @@ input:focus-visible {
   box-shadow: 0 7px 0 #4b2868, 0 18px 48px rgba(5, 4, 25, 0.24);
   color: #34204e;
   backdrop-filter: blur(16px) saturate(125%);
-  transform: rotate(-0.35deg);
 }
 
 .kicker,
@@ -409,7 +408,6 @@ input:focus-visible {
   box-shadow: 0 7px 0 #4b2868, 0 18px 45px rgba(5, 4, 25, 0.2);
   color: #34204e;
   backdrop-filter: blur(16px);
-  transform: rotate(0.35deg);
 }
 
 .stats > div {
@@ -449,7 +447,6 @@ input:focus-visible {
   box-shadow: 0 6px 0 #4b2868, 0 16px 38px rgba(5, 4, 25, 0.18);
   color: #34204e;
   backdrop-filter: blur(16px);
-  transform: rotate(-0.45deg);
 }
 
 .fact-kicker {

@@ -44,6 +44,9 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
+  for (const selector of [".scale-card", ".stats", ".fact-card"]) {
+    await expect(page.locator(selector)).toHaveCSS("transform", "none");
+  }
 
   const wrongPathResources = await page.evaluate((basePath) =>
     performance
