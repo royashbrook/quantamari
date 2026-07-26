@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const appPath = "/quarkatamari/";
 
@@ -38,16 +39,28 @@ type PerformanceSnapshot = {
       base: number;
       richBudget: number;
       richUsed: number;
+      environmentSuppressed: boolean;
+      substrateSuppressed: boolean;
+    };
+    bursts: {
+      active: number;
+      limit: number;
     };
   };
 };
 
-async function enablePerformanceDiagnostics(page: Page) {
-  await page.addInitScript(() => {
+async function enablePerformanceDiagnostics(
+  page: Page,
+  forcedQuality?: "high" | "balanced" | "battery",
+) {
+  await page.addInitScript((quality) => {
     Object.assign(window, {
       __QUARKATAMARI_PERFORMANCE_REQUESTED__: true,
+      ...(quality
+        ? { __QUARKATAMARI_FORCED_QUALITY__: quality }
+        : {}),
     });
-  });
+  }, forcedQuality);
 }
 
 async function readPerformanceDiagnostics(page: Page) {
@@ -55,8 +68,14 @@ async function readPerformanceDiagnostics(page: Page) {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
         snapshot: () => PerformanceSnapshot;
-        removePickups: (count: number) => number;
+        removePickups: (count: number) => {
+          removed: number;
+          active: number;
+          queued: number;
+        };
         completeLayer: () => boolean;
+        previewEra: (index: number) => number;
+        emitPickupBursts: (count: number) => number;
       };
     };
     return debugWindow.__QUARKATAMARI_PERFORMANCE__?.snapshot() ?? null;
@@ -301,11 +320,116 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
     .toBe(true);
   const battery = await readPerformanceDiagnostics(page);
   expect(battery?.runtime.quality).toBe("battery");
+  expect(battery?.runtime.pickups.active).toBeLessThanOrEqual(
+    battery?.runtime.pickups.target ?? 0,
+  );
   expect(
     (battery?.runtime.drawBudget.base ?? 0) +
       (battery?.runtime.drawBudget.richUsed ?? 0) +
       ((battery?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
   ).toBeLessThanOrEqual(battery?.runtime.budget.maxDrawCalls ?? 0);
+});
+
+test("battery draw budgeting covers every authored era", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "battery");
+  await begin(page);
+
+  for (let era = 0; era < 34; era += 1) {
+    const before = await readPerformanceDiagnostics(page);
+    if (before?.runtime.era !== era) {
+      const selected = await page.evaluate((index) => {
+        const debugWindow = window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            previewEra: (eraIndex: number) => number;
+          };
+        };
+        return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(index);
+      }, era);
+      expect(selected).toBe(era);
+    }
+
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await readPerformanceDiagnostics(page);
+          const worldReady =
+            snapshot?.runtime.era === era &&
+            (before?.runtime.era === era ||
+              (snapshot?.runtime.worldGeneration ?? 0) >
+                (before?.runtime.worldGeneration ?? 0));
+          return Boolean(
+            worldReady &&
+              snapshot?.runtime.quality === "battery" &&
+              snapshot.runtime.pickups.active ===
+                snapshot.runtime.pickups.target &&
+              snapshot.runtime.pickups.queued === 0 &&
+              snapshot.runtime.drawCalls <=
+                snapshot.runtime.budget.maxDrawCalls,
+          );
+        },
+        { message: `era ${era} did not settle within its battery budget`, timeout: 30_000 },
+      )
+      .toBe(true);
+
+    const snapshot = await readPerformanceDiagnostics(page);
+    expect(snapshot?.runtime.drawCalls).toBeLessThanOrEqual(
+      snapshot?.runtime.budget.maxDrawCalls ?? 0,
+    );
+    expect(
+      snapshot?.runtime.drawBudget.environmentSuppressed,
+      `era ${era} hid its active environment to meet the battery budget`,
+    ).toBe(false);
+    expect(
+      snapshot?.runtime.drawBudget.substrateSuppressed,
+      `era ${era} hid its retained substrate to meet the battery budget`,
+    ).toBe(false);
+    expect(
+      (snapshot?.runtime.drawBudget.base ?? 0) +
+        (snapshot?.runtime.drawBudget.richUsed ?? 0) +
+        ((snapshot?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
+      `era ${era} exceeded its weighted draw budget`,
+    ).toBeLessThanOrEqual(snapshot?.runtime.budget.maxDrawCalls ?? 0);
+  }
+});
+
+test("dense pickup bursts stay pooled inside the battery draw budget", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "battery");
+  await begin(page);
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.phases.frame?.count ?? 0,
+    )
+    .toBeGreaterThanOrEqual(10);
+  const beforeBursts = await readPerformanceDiagnostics(page);
+
+  const activeBursts = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        emitPickupBursts: (count: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.emitPickupBursts(100);
+  });
+  expect(activeBursts).toBe(12);
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return Boolean(
+        snapshot &&
+          snapshot.phases.frame.count >
+            (beforeBursts?.phases.frame.count ?? 0) &&
+          snapshot.runtime.bursts.active === snapshot.runtime.bursts.limit &&
+          snapshot.runtime.drawCalls <= snapshot.runtime.budget.maxDrawCalls,
+      );
+    })
+    .toBe(true);
 });
 
 test("performance diagnostics capture a repeatable complex-scene baseline", async ({
@@ -368,21 +492,48 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
     expect(summary.p50).toBeLessThanOrEqual(summary.p95);
     expect(summary.p95).toBeLessThanOrEqual(summary.max);
   }
+  const baseline = {
+    schemaVersion: 1,
+    commit: process.env.GITHUB_SHA ?? null,
+    project: testInfo.project.name,
+    viewport: page.viewportSize(),
+    snapshot: diagnostics,
+  };
+  console.info(
+    "QUARKATAMARI_PERFORMANCE_BASELINE",
+    JSON.stringify(baseline),
+  );
+  const baselinePath = testInfo.outputPath("performance-baseline.json");
+  await mkdir(testInfo.outputDir, { recursive: true });
+  await writeFile(baselinePath, JSON.stringify(baseline, null, 2));
+  await testInfo.attach("performance-baseline.json", {
+    path: baselinePath,
+    contentType: "application/json",
+  });
 
-  const removed = await page.evaluate(() => {
+  const depletion = await page.evaluate(() => {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
-        removePickups: (count: number) => number;
+        removePickups: (count: number) => {
+          removed: number;
+          active: number;
+          queued: number;
+        };
       };
     };
-    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.removePickups(12) ?? 0;
+    return (
+      debugWindow.__QUARKATAMARI_PERFORMANCE__?.removePickups(12) ?? {
+        removed: 0,
+        active: 0,
+        queued: 0,
+      }
+    );
   });
-  expect(removed).toBe(12);
-  const depleted = await readPerformanceDiagnostics(page);
-  expect(depleted?.runtime.pickups.active).toBe(
-    (diagnostics?.runtime.pickups.target ?? 0) - removed,
+  expect(depletion.removed).toBe(12);
+  expect(depletion.active).toBe(
+    (diagnostics?.runtime.pickups.target ?? 0) - depletion.removed,
   );
-  expect(depleted?.runtime.pickups.queued).toBe(removed);
+  expect(depletion.queued).toBe(depletion.removed);
 
   await expect
     .poll(async () => {
@@ -400,18 +551,14 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
     });
   const replenished = await readPerformanceDiagnostics(page);
   expect(replenished?.runtime.pickups.totalSpawned).toBeGreaterThanOrEqual(
-    (diagnostics?.runtime.pickups.totalSpawned ?? 0) + removed,
+    (diagnostics?.runtime.pickups.totalSpawned ?? 0) + depletion.removed,
   );
-  await testInfo.attach("performance-baseline.json", {
-    body: Buffer.from(JSON.stringify(replenished, null, 2)),
-    contentType: "application/json",
-  });
 });
 
 test("a scale shift rebuilds once and repopulates through the work queue", async ({
   page,
 }) => {
-  await enablePerformanceDiagnostics(page);
+  await enablePerformanceDiagnostics(page, "balanced");
   await begin(page);
   await expect
     .poll(async () => {
@@ -469,8 +616,8 @@ test("a scale shift rebuilds once and repopulates through the work queue", async
       settled: true,
     });
   const after = await readPerformanceDiagnostics(page);
-  expect(after?.runtime.worldGeneration).toBeGreaterThan(
-    before?.runtime.worldGeneration ?? 0,
+  expect(after?.runtime.worldGeneration).toBe(
+    (before?.runtime.worldGeneration ?? 0) + 1,
   );
   expect(after?.runtime.pickups.active).toBe(after?.runtime.pickups.target);
   expect(after?.runtime.pickups.maxSpawnedPerFrame).toBeLessThanOrEqual(

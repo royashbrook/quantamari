@@ -68,7 +68,6 @@ type Pickup = {
   identity: CollectibleIdentity;
   drawCalls: number;
   bornAt: number;
-  collisionReadyAt: number;
 };
 
 function pseudo(seed: number) {
@@ -173,6 +172,16 @@ const PICKUP_QUIPS = [
 
 const MAX_PICKUP_PROMOTIONS_PER_FRAME = 3;
 const PICKUP_ENTRANCE_MS = 800;
+const PICKUP_COLLISION_SCALE = 0.55;
+const MAX_POP_BURSTS = 12;
+
+const pickupEntranceScale = (bornAt: number, now: number) => {
+  const progress = Math.min(
+    1,
+    Math.max(0, (now - bornAt) / PICKUP_ENTRANCE_MS),
+  );
+  return 1 - (1 - progress) ** 3;
+};
 
 export type MutableRef<T> = { current: T };
 
@@ -279,10 +288,17 @@ export function mountGame(
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   const debugWindow = window as typeof window & {
     __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
+    __QUARKATAMARI_FORCED_QUALITY__?: QualityTier;
     __QUARKATAMARI_PERFORMANCE__?: {
       snapshot: () => unknown;
-      removePickups: (count: number) => number;
+      removePickups: (count: number) => {
+        removed: number;
+        active: number;
+        queued: number;
+      };
       completeLayer: () => boolean;
+      previewEra: (index: number) => number;
+      emitPickupBursts: (count: number) => number;
     };
   };
   const phaseRecorder = debugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__
@@ -296,7 +312,10 @@ export function mountGame(
     }
   };
   const compactGpu = window.innerWidth <= 860;
-  let qualityTier: QualityTier = compactGpu ? "balanced" : "high";
+  const forcedQualityTier =
+    debugWindow.__QUARKATAMARI_FORCED_QUALITY__ ?? null;
+  let qualityTier: QualityTier =
+    forcedQualityTier ?? (compactGpu ? "balanced" : "high");
   let richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
   const reducedWorldDetail = () =>
     compactGpu || qualityTier !== "high";
@@ -306,7 +325,7 @@ export function mountGame(
       pixelRatioCap(compactGpu, qualityTier),
     ),
   );
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = qualityTier !== "battery";
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -316,6 +335,7 @@ export function mountGame(
   mount.prepend(renderer.domElement);
 
   let activeIndex = labEra ?? game.era;
+  let debugEraOverride: number | null = null;
   let activeEra = ERAS[activeIndex];
   let early =
     activeEra.realm === "prephysical" || activeEra.realm === "particle";
@@ -329,7 +349,7 @@ export function mountGame(
   scene.add(hemisphere);
   const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
   keyLight.position.set(-7, 12, 8);
-  keyLight.castShadow = true;
+  keyLight.castShadow = qualityTier !== "battery";
   keyLight.shadow.mapSize.set(
     qualityTier === "high" ? (compactGpu ? 1024 : 2048) : 1024,
     qualityTier === "high" ? (compactGpu ? 1024 : 2048) : 1024,
@@ -405,6 +425,10 @@ export function mountGame(
   scene.add(farPickupMesh);
   const pickupColorCache = new Map<string, THREE.Color>();
   let baseSceneDrawCalls = 0;
+  let baseSceneDrawCallsDirty = true;
+  let batterySuppressedEnvironment = false;
+  let batterySuppressedDust = false;
+  let batterySuppressedSubstrate = false;
   let richPickupDrawCallBudget = 0;
   let richPickupDrawCalls = 0;
 
@@ -671,6 +695,7 @@ export function mountGame(
         child.visible = compact;
       }
     });
+    baseSceneDrawCallsDirty = true;
   };
 
   type SceneryCollider = {
@@ -689,6 +714,8 @@ export function mountGame(
 
   const buildSubstrate = (viewScale: number) => {
     const startedAt = phaseStart();
+    substrateGroup.visible = true;
+    batterySuppressedSubstrate = false;
     substrateGroup.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
         object.geometry.dispose();
@@ -820,6 +847,7 @@ export function mountGame(
       worldChunkSize(activeWorldKind),
     );
     semanticResidencyKey = substrateKeyFor(viewScale);
+    baseSceneDrawCallsDirty = true;
     phaseEnd("substrate-rebuild", startedAt);
   };
 
@@ -897,7 +925,10 @@ export function mountGame(
     emissiveIntensity: early ? 1.35 : 0.18,
     roughness: early ? 0.18 : 0.62,
     metalness: early ? 0.05 : 0,
-    transmission: activeEra.realm === "prephysical" ? 0.42 : 0,
+    transmission:
+      activeEra.realm === "prephysical" && qualityTier !== "battery"
+        ? 0.42
+        : 0,
     transparent: activeEra.realm === "prephysical",
     opacity: activeEra.realm === "prephysical" ? 0.78 : 1,
     clearcoat: 0.65,
@@ -1428,6 +1459,9 @@ export function mountGame(
 
   const buildEnvironment = (index: number) => {
     disposeEnvironment();
+    environmentGroup.visible = true;
+    batterySuppressedEnvironment = false;
+    batterySuppressedDust = false;
     applyScaleTextures(index);
     environmentMode = environmentModeFor(index);
     activeWorldKind = worldSpecForEra(ERAS[index].name).kind;
@@ -2078,13 +2112,14 @@ export function mountGame(
     }
     centralSceneryCompact = null;
     worldGeneration += 1;
+    baseSceneDrawCallsDirty = true;
     phaseEnd("world-rebuild", startedAt);
   };
 
   const applyEraTheme = (index: number, announce = false) => {
     activeIndex = index;
     activeEra = ERAS[index];
-    if (labEra === null) game.era = index;
+    if (labEra === null && debugEraOverride === null) game.era = index;
     early =
       activeEra.realm === "prephysical" || activeEra.realm === "particle";
 
@@ -3756,6 +3791,7 @@ export function mountGame(
       mashProxyMesh.instanceColor.needsUpdate = true;
     }
     mashProxyMesh.visible = mashProxyMesh.count > 0;
+    baseSceneDrawCallsDirty = true;
   };
   const setMashProxyLod = (compact: boolean) => {
     if (compact === mashProxyIncludesRich) return;
@@ -3771,10 +3807,57 @@ export function mountGame(
     while (mashProxyRecords.length > proxyLimit) mashProxyRecords.shift();
     refreshMashProxy();
   };
+  const popBurstGeometry = new THREE.TorusGeometry(1, 0.1, 6, 28);
+  const popBurstMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.86,
+    depthWrite: false,
+  });
+  const popBurstMesh = new THREE.InstancedMesh(
+    popBurstGeometry,
+    popBurstMaterial,
+    MAX_POP_BURSTS,
+  );
+  popBurstMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  popBurstMesh.count = 0;
+  popBurstMesh.visible = false;
+  popBurstMesh.frustumCulled = false;
+  scene.add(popBurstMesh);
+  const popBurstDummy = new THREE.Object3D();
   const popBursts: {
-    mesh: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+    position: THREE.Vector3;
+    color: THREE.Color;
+    radius: number;
     born: number;
   }[] = [];
+  const retiredPopBursts: (typeof popBursts)[number][] = [];
+  const activatePopBurst = (
+    position: THREE.Vector3,
+    visualRadius: number,
+    color: THREE.ColorRepresentation,
+    born: number,
+  ) => {
+    const burst =
+      retiredPopBursts.pop() ??
+      (popBursts.length >= MAX_POP_BURSTS
+        ? popBursts.shift()
+        : undefined) ?? {
+        position: new THREE.Vector3(),
+        color: new THREE.Color(),
+        radius: 1,
+        born,
+      };
+    burst.position.copy(position);
+    burst.color.set(color);
+    burst.radius = Math.max(0.32, visualRadius * 0.72);
+    burst.born = born;
+    popBursts.push(burst);
+    popBurstMesh.count = popBursts.length;
+    popBurstMesh.visible = true;
+    baseSceneDrawCallsDirty = true;
+    return popBursts.length;
+  };
   let spawnClock = 0;
 
   const makeFieldLike = (visual: THREE.Object3D) => {
@@ -4005,6 +4088,7 @@ export function mountGame(
     const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
     const chunkSize = worldChunkSize(activeWorldKind);
     const sceneryClearanceAt = (x: number, z: number) => {
+      if (!environmentGroup.visible) return Number.POSITIVE_INFINITY;
       const localX = localChunkCoordinate(x, chunkSize);
       const localZ = localChunkCoordinate(z, chunkSize);
       return sceneryColliders.reduce(
@@ -4098,7 +4182,6 @@ export function mountGame(
       identity,
       drawCalls: drawCalls + (marker ? 1 : 0),
       bornAt,
-      collisionReadyAt: bornAt + PICKUP_ENTRANCE_MS,
     });
     game.id += 1;
     return { spawned: true, builtTemplate };
@@ -4182,6 +4265,7 @@ export function mountGame(
   let scaleTransitionStarted = -1;
 
   const collect = (pickup: Pickup, now: number) => {
+    baseSceneDrawCallsDirty = true;
     game.picked += 1;
     game.lastPickup = now / 1000;
     const sourceEra = ERAS[pickup.sourceEra];
@@ -4230,24 +4314,12 @@ export function mountGame(
       faceReactionUntil = now + 240;
       ballFaceMaterial.map = chompFaceTexture;
       ballFaceMaterial.needsUpdate = true;
-      const popBurst = new THREE.Mesh(
-        new THREE.TorusGeometry(
-          Math.max(0.32, pickup.visualRadius * 0.72),
-          0.055,
-          6,
-          28,
-        ),
-        new THREE.MeshBasicMaterial({
-          color: pickup.curio.color,
-          transparent: true,
-          opacity: 0.86,
-          depthWrite: false,
-        }),
+      activatePopBurst(
+        pickup.root.position,
+        pickup.visualRadius,
+        pickup.curio.color,
+        now,
       );
-      popBurst.position.copy(pickup.root.position);
-      popBurst.rotation.x = Math.PI / 2;
-      scene.add(popBurst);
-      popBursts.push({ mesh: popBurst, born: now });
     }
 
     pickup.root.remove(pickup.visual);
@@ -4370,6 +4442,12 @@ export function mountGame(
               base: baseSceneDrawCalls,
               richBudget: richPickupDrawCallBudget,
               richUsed: richPickupDrawCalls,
+              environmentSuppressed: batterySuppressedEnvironment,
+              substrateSuppressed: batterySuppressedSubstrate,
+            },
+            bursts: {
+              active: popBursts.length,
+              limit: MAX_POP_BURSTS,
             },
             drawCalls: renderer.info.render.calls,
             triangles: renderer.info.render.triangles,
@@ -4387,7 +4465,11 @@ export function mountGame(
           );
           removed.forEach((pickup) => removePickup(pickup));
           reconcilePickupQueue();
-          return removed.length;
+          return {
+            removed: removed.length,
+            active: pickups.length,
+            queued: pickupSpawnQueue.pending,
+          };
         },
         completeLayer: () => {
           if (
@@ -4402,6 +4484,29 @@ export function mountGame(
           scaleTransitionStarted = readPerformanceClock();
           eraTransitionAge = 0;
           return true;
+        },
+        previewEra: (index: number) => {
+          const requestedIndex = Number.isFinite(index)
+            ? Math.floor(index)
+            : activeIndex;
+          debugEraOverride = Math.max(
+            0,
+            Math.min(ERAS.length - 1, requestedIndex),
+          );
+          return debugEraOverride;
+        },
+        emitPickupBursts: (count: number) => {
+          const burstCount = Math.max(0, Math.min(100, Math.floor(count)));
+          const now = performance.now();
+          for (let index = 0; index < burstCount; index += 1) {
+            activatePopBurst(
+              playerRoot.position,
+              game.radius,
+              activeEra.palette[index % activeEra.palette.length],
+              now,
+            );
+          }
+          return popBursts.length;
         },
       }
     : null;
@@ -4422,6 +4527,62 @@ export function mountGame(
   const desiredCamera = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
   const farPickupDummy = new THREE.Object3D();
+  const countVisibleBaseDrawCalls = () => {
+    let drawCalls = 0;
+    scene.traverseVisible((object) => {
+      if (
+        !(
+          object instanceof THREE.Mesh ||
+          object instanceof THREE.Points ||
+          object instanceof THREE.Line ||
+          object instanceof THREE.Sprite
+        ) ||
+        (object instanceof THREE.InstancedMesh && object.count === 0)
+      ) {
+        return;
+      }
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      drawCalls += materials.filter((material) => material.visible).length;
+    });
+    return drawCalls;
+  };
+  const refreshBatteryBaseDrawCalls = (maxDrawCalls: number) => {
+    pickups.forEach((pickup) => {
+      pickup.root.visible = false;
+    });
+    farPickupMesh.visible = false;
+    if (batterySuppressedEnvironment) {
+      environmentGroup.visible = true;
+      batterySuppressedEnvironment = false;
+    }
+    if (batterySuppressedDust) {
+      dustField.visible = true;
+      batterySuppressedDust = false;
+    }
+    if (batterySuppressedSubstrate) {
+      substrateGroup.visible = true;
+      batterySuppressedSubstrate = false;
+    }
+    baseSceneDrawCalls = countVisibleBaseDrawCalls();
+    if (baseSceneDrawCalls > maxDrawCalls && dustField.visible) {
+      dustField.visible = false;
+      batterySuppressedDust = true;
+      baseSceneDrawCalls = countVisibleBaseDrawCalls();
+    }
+    if (baseSceneDrawCalls > maxDrawCalls && substrateGroup.visible) {
+      substrateGroup.visible = false;
+      batterySuppressedSubstrate = true;
+      baseSceneDrawCalls = countVisibleBaseDrawCalls();
+    }
+    if (baseSceneDrawCalls > maxDrawCalls && environmentGroup.visible) {
+      environmentGroup.visible = false;
+      batterySuppressedEnvironment = true;
+      baseSceneDrawCalls = countVisibleBaseDrawCalls();
+    }
+    baseSceneDrawCallsDirty = false;
+  };
   let transitionWorldScale = 1;
   const animate = (now: number) => {
     const frameStartedAt = phaseStart();
@@ -4447,10 +4608,9 @@ export function mountGame(
       const budgetAdjustedFps = overRenderBudget
         ? Math.min(measuredFps, qualityTier === "high" ? 40 : 28)
         : measuredFps;
-      const nextQualityTier = qualityTierForFps(
-        budgetAdjustedFps,
-        qualityTier,
-      );
+      const nextQualityTier =
+        forcedQualityTier ??
+        qualityTierForFps(budgetAdjustedFps, qualityTier);
       if (nextQualityTier !== qualityTier) {
         qualityTier = nextQualityTier;
         richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
@@ -4472,6 +4632,7 @@ export function mountGame(
           const pickup = pickups.pop();
           if (pickup) removePickup(pickup);
         }
+        reconcilePickupQueue();
         collapseRichMashToBudget();
         const qualityViewScale = semanticViewScale(
           activeIndex,
@@ -4548,8 +4709,8 @@ export function mountGame(
           pickup.root.position.z -= shiftZ;
         });
         popBursts.forEach((burst) => {
-          burst.mesh.position.x -= shiftX;
-          burst.mesh.position.z -= shiftZ;
+          burst.position.x -= shiftX;
+          burst.position.z -= shiftZ;
         });
         camera.position.x -= shiftX;
         camera.position.z -= shiftZ;
@@ -4558,7 +4719,7 @@ export function mountGame(
         Math.round(game.x / colliderChunkSize) * colliderChunkSize;
       const colliderChunkZ =
         Math.round(game.z / colliderChunkSize) * colliderChunkSize;
-      sceneryColliders.forEach((collider) => {
+      if (environmentGroup.visible) sceneryColliders.forEach((collider) => {
         const collision = resolveCircleAabbCollision(
           game.x,
           game.z,
@@ -4579,13 +4740,15 @@ export function mountGame(
       rollGroup.rotation.z -= (game.vx * dt) / Math.max(0.5, game.radius);
 
       for (const pickup of pickups) {
-        if (now < pickup.collisionReadyAt) continue;
+        const entranceScale = pickupEntranceScale(pickup.bornAt, now);
+        if (entranceScale < PICKUP_COLLISION_SCALE) continue;
+        const collisionRadius = pickup.visualRadius * entranceScale;
         const dx = pickup.root.position.x - game.x;
         const dz = pickup.root.position.z - game.z;
         const distance = Math.hypot(dx, dz);
         if (
           labEra === null &&
-          distance < effectiveRollRadius + pickup.visualRadius
+          distance < effectiveRollRadius + collisionRadius
         ) {
           if (
             canCollectPickup(
@@ -4605,7 +4768,7 @@ export function mountGame(
               game.vz,
               pickup.root.position.x,
               pickup.root.position.z,
-              effectiveRollRadius + pickup.visualRadius,
+              effectiveRollRadius + collisionRadius,
             );
             game.x = collision.x;
             game.z = collision.z;
@@ -4662,9 +4825,9 @@ export function mountGame(
       }
     }
 
-    const nextActiveIndex = labEra ?? game.era;
+    const nextActiveIndex = debugEraOverride ?? labEra ?? game.era;
     if (nextActiveIndex !== activeIndex) {
-      retireVisibleMash();
+      if (debugEraOverride === null) retireVisibleMash();
       applyEraTheme(nextActiveIndex, true);
       pickups = pickups.filter((pickup) => {
         const inActiveBand =
@@ -4721,7 +4884,10 @@ export function mountGame(
       camera.fov,
       height,
     );
-    setMashProxyLod(lodForProjectedDiameter(mashProjectedSize) !== "rich");
+    setMashProxyLod(
+      qualityTier === "battery" ||
+        lodForProjectedDiameter(mashProjectedSize) !== "rich",
+    );
     const sceneryProjectedSize = projectedDiameterPixels(
       3 * transitionWorldScale,
       camera.position.distanceTo(playerRoot.position),
@@ -4729,8 +4895,9 @@ export function mountGame(
       height,
     );
     setCentralSceneryLod(
-      PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
-        lodForProjectedDiameter(sceneryProjectedSize) !== "rich",
+      qualityTier === "battery" ||
+        (PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
+          lodForProjectedDiameter(sceneryProjectedSize) !== "rich"),
     );
     const activeChunkSize = worldChunkSize(activeWorldKind);
     const chunkX = Math.round(game.x / activeChunkSize) * activeChunkSize;
@@ -4783,7 +4950,11 @@ export function mountGame(
       game.radius * coreShare * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
       game.radius * coreShare * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
     );
-    foamCluster.visible = early && attachments.length < 11;
+    const nextFoamVisibility = early && attachments.length < 11;
+    if (foamCluster.visible !== nextFoamVisibility) {
+      foamCluster.visible = nextFoamVisibility;
+      baseSceneDrawCallsDirty = true;
+    }
     foamCluster.scale.setScalar(
       game.radius * Math.max(0.38, 0.95 - attachments.length * 0.055),
     );
@@ -4794,55 +4965,30 @@ export function mountGame(
     glowLight.position.set(game.x + 4, floatHeight + 4, game.z - 3);
 
     const pickupLodStartedAt = phaseStart();
-    pickups.forEach((pickup) => {
-      pickup.root.visible = false;
-    });
-    farPickupMesh.visible = false;
     const renderBudget = worldPerformanceBudget(qualityTier);
-    baseSceneDrawCalls = 0;
     richPickupDrawCalls = 0;
     richPickupDrawCallBudget = renderBudget.maxDrawCalls;
     if (qualityTier === "battery") {
-      scene.traverseVisible((object) => {
-        if (
-          !(
-            object instanceof THREE.Mesh ||
-            object instanceof THREE.Points ||
-            object instanceof THREE.Line ||
-            object instanceof THREE.Sprite
-          ) ||
-          (object instanceof THREE.InstancedMesh && object.count === 0)
-        ) {
-          return;
-        }
-        const materials = Array.isArray(object.material)
-          ? object.material
-          : [object.material];
-        baseSceneDrawCalls += materials.filter(
-          (material) => material.visible,
-        ).length;
-      });
       const farPickupReserve = pickups.length > 0 ? 1 : 0;
+      if (baseSceneDrawCallsDirty) {
+        refreshBatteryBaseDrawCalls(
+          renderBudget.maxDrawCalls - farPickupReserve,
+        );
+      }
       richPickupDrawCallBudget = Math.max(
         0,
         renderBudget.maxDrawCalls -
           baseSceneDrawCalls -
           farPickupReserve,
       );
+    } else {
+      baseSceneDrawCalls = 0;
     }
     let farPickupCount = 0;
     let richPickupCount = 0;
     const richPickupBudget = richPickupLimit;
     pickups.forEach((pickup, index) => {
-      const entranceProgress = Math.min(
-        1,
-        Math.max(0, (now - pickup.bornAt) / PICKUP_ENTRANCE_MS),
-      );
-      const entranceOffset = entranceProgress - 1;
-      const entranceScale =
-        1 +
-        2.70158 * entranceOffset ** 3 +
-        1.70158 * entranceOffset ** 2;
+      const entranceScale = pickupEntranceScale(pickup.bornAt, now);
       const distance = Math.hypot(
         pickup.root.position.x - game.x,
         pickup.root.position.z - game.z,
@@ -4972,7 +5118,10 @@ export function mountGame(
       }
     });
     farPickupMesh.count = farPickupCount;
-    farPickupMesh.visible = farPickupCount > 0;
+    farPickupMesh.visible =
+      farPickupCount > 0 &&
+      (qualityTier !== "battery" ||
+        baseSceneDrawCalls < renderBudget.maxDrawCalls);
     farPickupMesh.instanceMatrix.needsUpdate = true;
     if (farPickupMesh.instanceColor) {
       farPickupMesh.instanceColor.needsUpdate = true;
@@ -4991,18 +5140,35 @@ export function mountGame(
       }
     }
 
+    let popBurstOpacity = 0;
     for (let index = popBursts.length - 1; index >= 0; index -= 1) {
       const burst = popBursts[index];
       const progress = Math.min(1, (now - burst.born) / 360);
-      burst.mesh.scale.setScalar(0.35 + progress * 2.4);
-      burst.mesh.material.opacity = (1 - progress) * 0.86;
-      burst.mesh.position.y += dt * 0.65;
       if (progress >= 1) {
-        scene.remove(burst.mesh);
-        burst.mesh.geometry.dispose();
-        burst.mesh.material.dispose();
         popBursts.splice(index, 1);
+        retiredPopBursts.push(burst);
+        baseSceneDrawCallsDirty = true;
       }
+    }
+    popBursts.forEach((burst, index) => {
+      const progress = Math.max(0, Math.min(1, (now - burst.born) / 360));
+      popBurstDummy.position.copy(burst.position);
+      popBurstDummy.position.y += progress * 0.24;
+      popBurstDummy.rotation.set(Math.PI / 2, 0, 0);
+      popBurstDummy.scale.setScalar(
+        burst.radius * (0.35 + progress * 2.4),
+      );
+      popBurstDummy.updateMatrix();
+      popBurstMesh.setMatrixAt(index, popBurstDummy.matrix);
+      popBurstMesh.setColorAt(index, burst.color);
+      popBurstOpacity = Math.max(popBurstOpacity, (1 - progress) * 0.86);
+    });
+    popBurstMesh.count = popBursts.length;
+    popBurstMesh.visible = popBursts.length > 0;
+    popBurstMaterial.opacity = popBurstOpacity;
+    popBurstMesh.instanceMatrix.needsUpdate = popBursts.length > 0;
+    if (popBurstMesh.instanceColor) {
+      popBurstMesh.instanceColor.needsUpdate = popBursts.length > 0;
     }
 
     const mobileView = width <= 860;
