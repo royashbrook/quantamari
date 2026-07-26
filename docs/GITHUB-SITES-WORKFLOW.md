@@ -1,13 +1,11 @@
-# GitHub and Sites workflow
+# GitHub deployment workflow
 
-Quarkatamari has two useful remotes:
+Quarkatamari is a browser-only static PWA. GitHub is the normal release path:
 
-- **Sites** is the production source/deployment lifecycle.
-- **GitHub** (`royashbrook/quarkatamari`) is the private mirror and normal
-  collaboration history.
-
-The active cloud checkout may name either one `origin`, so the sync script uses
-remote URLs—not assumed names—to identify both configured remotes.
+- **GitHub** (`royashbrook/quarkatamari`) is the source of truth.
+- Every push to GitHub `main` automatically deploys production.
+- **Sites** remains configured only for optional isolated testing. Do not save
+  or deploy a Sites version during a normal release.
 
 ## One-time setup
 
@@ -15,32 +13,25 @@ From a trusted local clone with GitHub authentication:
 
 ```bash
 git remote -v
-git remote add github https://github.com/royashbrook/quarkatamari.git
+git remote add origin https://github.com/royashbrook/quarkatamari.git
 ```
 
-If `origin` is already GitHub, name the Sites remote `sites` instead. Do not
-replace a working remote merely to match an example name.
+Do not replace a working GitHub remote merely to match the example name.
 
 ## Normal release
 
 1. Work on a branch and run `npm test` plus `npm run lint`.
 2. Commit the exact reviewed source state.
-3. Use the Sites checkpoint lifecycle to save and deploy that commit.
-4. From a checkout that can authenticate to both endpoints, run:
+3. Fast-forward `main` to that commit and push `main` to GitHub.
+4. Wait for the automatic deployment, then verify the public URL, manifest,
+   service worker, and current release marker.
 
-   ```bash
-   npm run sync:remotes
-   ```
-
-The script refuses a detached branch, a dirty tree, missing remotes, or a
-non-fast-forward push. It never force-pushes. Tags are intentionally not pushed
-unless they were created as part of a deliberate release.
+Never force-push. Tags are pushed only when deliberately created as a release
+checkpoint.
 
 ## Recovery
 
-- Roll back production with a saved Sites version; `v15.0.0` is the tagged
-  checkpoint before the V16 scale-layer rewrite.
-- If the two histories diverge, fetch both and reconcile them on a temporary
-  branch. Do not use `--force`, `reset --hard`, or delete either remote branch.
-- A connector that cannot see the private personal repository cannot mirror it.
-  Reconnect GitHub or run the sync from the already-authenticated local clone.
+- Roll back by reverting the release commit on GitHub `main`; `v1.0.0` is the
+  checkpoint immediately before the nested-world release.
+- If local and GitHub history diverge, fetch and reconcile on a temporary
+  branch. Do not use `--force`, `reset --hard`, or delete `main`.

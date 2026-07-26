@@ -11,15 +11,20 @@ import {
   CORE_RADIUS_MAX,
   CORE_RADIUS_MIN,
   canCollectPickup,
+  canStartPointerSteering,
+  circleAabbClearance,
   collectionProgressGain,
   collectibleIdentityFor,
+  deepLensUnlocked,
   lowPickupBudget,
   nextLayerObstacleRadius,
   obstacleCenterGap,
   pickupBudget,
   pixelRatioCap,
+  progressAfterPickup,
   qualityTierForFps,
   radiusForLayerProgress,
+  resolveCircleAabbCollision,
   resolveCircularCollision,
   scaleTransitionFrame,
 } from "../app/game-rules.ts";
@@ -29,8 +34,8 @@ const curios = ERAS.flatMap((era) =>
 );
 
 test("ships the complete sourced scale atlas", () => {
-  assert.equal(ERAS.length, 21);
-  assert.equal(curios.length, 168);
+  assert.equal(ERAS.length, 34);
+  assert.equal(curios.length, 220);
   assert.equal(JOURNEY_HOURS, 500);
 
   for (const era of ERAS) {
@@ -48,8 +53,8 @@ test("ships the complete sourced scale atlas", () => {
 });
 
 test("every collectible has a stable, distinct audiovisual identity", () => {
-  const identities = curios.map(({ name, shape }) =>
-    collectibleIdentityFor(name, shape),
+  const identities = curios.map(({ id, shape }) =>
+    collectibleIdentityFor(id, shape),
   );
   assert.equal(new Set(identities.map((identity) => identity.id)).size, curios.length);
 
@@ -58,7 +63,7 @@ test("every collectible has a stable, distinct audiovisual identity", () => {
     const identity = identities[index];
     assert.deepEqual(
       identity,
-      collectibleIdentityFor(curio.name, curio.shape),
+      collectibleIdentityFor(curio.id, curio.shape),
     );
     assert.equal(identity.soundRatios.length, 3);
     assert.ok(identity.motionAmount > 0);
@@ -72,6 +77,20 @@ test("pickup fit is purely physical instead of secretly gated by era", () => {
   assert.equal(canCollectPickup(7, 7, 1.09, 1), false);
 });
 
+test("touch steering never starts through an open modal or interactive UI", () => {
+  assert.equal(canStartPointerSteering(true, false, false), true);
+  assert.equal(canStartPointerSteering(false, false, false), false);
+  assert.equal(canStartPointerSteering(true, true, false), false);
+  assert.equal(canStartPointerSteering(true, false, true), false);
+});
+
+test("reaching the final authored layer unlocks the deep lens for new and migrated saves", () => {
+  assert.equal(deepLensUnlocked(ERAS.length - 2, ERAS.length), false);
+  assert.equal(deepLensUnlocked(ERAS.length - 1, ERAS.length), true);
+  assert.equal(deepLensUnlocked(ERAS.length, ERAS.length), true);
+  assert.equal(deepLensUnlocked(0, 0), false);
+});
+
 test("collection drives one bounded logarithmic layer transition", () => {
   assert.equal(radiusForLayerProgress(0), CORE_RADIUS_MIN);
   assert.equal(radiusForLayerProgress(1), CORE_RADIUS_MAX);
@@ -79,9 +98,14 @@ test("collection drives one bounded logarithmic layer transition", () => {
   assert.equal(radiusForLayerProgress(3), CORE_RADIUS_MAX);
   const light = collectionProgressGain(1.2, 0.35, 0.3);
   const chunky = collectionProgressGain(1.2, 0.7, 1.2);
+  const journey = collectionProgressGain(1.2, 0.7, 1.2, "journey");
   assert.ok(light > 0);
   assert.ok(chunky > light);
   assert.ok(chunky <= 0.095);
+  assert.equal(journey, chunky * 0.025);
+  assert.equal(progressAfterPickup(0.2, 4, 4, chunky), 0.2 + chunky);
+  assert.equal(progressAfterPickup(0.2, 3, 4, chunky), 0.2);
+  assert.equal(progressAfterPickup(0.2, 5, 4, chunky), 0.2);
 });
 
 test("next-layer obstacles are unmistakable and leave a full rolling corridor", () => {
@@ -99,6 +123,25 @@ test("obstacle response depenetrates and preserves tangent sliding", () => {
   assert.ok(result.x > 0.99);
   assert.equal(result.vx, 0);
   assert.equal(result.vz, 3);
+});
+
+test("grounded scenery depenetrates without killing tangent motion", () => {
+  const result = resolveCircleAabbCollision(
+    1.4,
+    0.5,
+    -4,
+    3,
+    1,
+    0,
+    0,
+    1,
+    4,
+  );
+  assert.ok(result.x > 1.99);
+  assert.equal(result.vx, 0);
+  assert.equal(result.vz, 3);
+  assert.ok(circleAabbClearance(0, 0, 0.5, 0, 0, 1, 1) < 0);
+  assert.ok(circleAabbClearance(3, 0, 0.5, 0, 0, 1, 1) > 1);
 });
 
 test("scale shift grows the player while shrinking the outgoing world", () => {

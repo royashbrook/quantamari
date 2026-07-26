@@ -6,8 +6,8 @@ import {
   Curio,
   ERAS,
   Era,
+  LEGACY_V3_ERA_NAMES,
   ScienceSource,
-  eraAt,
   formatEraScale,
   journeyHoursForEraProgress,
 } from "./scale-data";
@@ -18,17 +18,47 @@ import {
   CollectibleIdentity,
   QualityTier,
   canCollectPickup,
+  canStartPointerSteering,
+  circleAabbClearance,
   collectionProgressGain,
   collectibleIdentityFor,
+  deepLensUnlocked,
   nextLayerObstacleRadius,
   obstacleCenterGap,
   pickupBudget,
   pixelRatioCap,
+  progressAfterPickup,
   qualityTierForFps,
   radiusForLayerProgress,
+  resolveCircleAabbCollision,
   resolveCircularCollision,
   scaleTransitionFrame,
 } from "./game-rules";
+import {
+  LegacyVisualStage,
+  WorldKind,
+  floatingOriginShift,
+  legacyVisualStageAnchor,
+  localChunkCoordinate,
+  lodForProjectedDiameter,
+  projectedDiameterPixels,
+  residentLayerIndices,
+  semanticViewScale,
+  worldPerformanceBudget,
+  worldSpecForEra,
+} from "./world-system";
+import { FieldGuide } from "./field-guide";
+import {
+  SAVE_KEYS,
+  aggregatePickups,
+  createSaveData,
+  loadSaveCandidates,
+  serializeSaveData,
+  type CollectionEntry,
+  type GameMode,
+  type MashRecordV4,
+  type SaveDataV4,
+} from "./save-data";
 
 type Pickup = {
   root: THREE.Group;
@@ -36,7 +66,6 @@ type Pickup = {
   marker: THREE.Sprite | null;
   curio: Curio;
   sourceEra: number;
-  curioIndex: number;
   size: number;
   visualRadius: number;
   bulkRadius: number;
@@ -44,32 +73,6 @@ type Pickup = {
   baseY: number;
   wiggle: number;
   identity: CollectibleIdentity;
-};
-
-type MashRecord = {
-  sourceEra: number;
-  curioIndex: number;
-  position: [number, number, number];
-  rotation: [number, number, number];
-  scale: [number, number, number];
-  mergedInside: boolean;
-};
-
-type SaveData = {
-  version: 3;
-  era: number;
-  progress: number;
-  picked: number;
-  x: number;
-  z: number;
-  zooms: number;
-  sound: boolean;
-  mash: MashRecord[];
-};
-
-type LegacySaveData = Partial<SaveData> & {
-  hours?: number;
-  radius?: number;
 };
 
 function pseudo(seed: number) {
@@ -80,6 +83,72 @@ function pseudo(seed: number) {
 function confidenceClass(confidence: Era["confidence"]) {
   return confidence.toLowerCase().replaceAll(" ", "-");
 }
+
+const PERIODIC_WORLD_KINDS = new Set<WorldKind>([
+  "microscopic-sea",
+  "fiber-bed",
+  "dust-surface",
+  "tabletop",
+  "interior",
+  "yard",
+  "city",
+  "landscape",
+]);
+
+function worldChunkSize(kind: WorldKind) {
+  return kind === "interior" ? 256 : 128;
+}
+
+function formatLens(lens: number) {
+  return lens >= 100 || lens < 0.01
+    ? lens.toExponential(1)
+    : lens.toFixed(2);
+}
+
+function legacyVisualIndexForEra(index: number) {
+  const era = ERAS[index];
+  const exact = LEGACY_V3_ERA_NAMES.findIndex((name) => name === era.name);
+  if (exact >= 0) return exact;
+  const authoredFallbacks: Record<string, number> = {
+    "Nuclear Heart": 3,
+    "Virus Garden": 7,
+    "Microbe Meadow": 7,
+    "Granule Ground": 9,
+    "Tabletop Trek": 10,
+    "Room Scale": 11,
+    "House & Yard": 12,
+    "City Streets": 13,
+    "Regional Map": 14,
+    "Moon Scale": 15,
+    "Giant Worlds": 15,
+    "Stellar Neighborhood": 16,
+    "Galaxy Cluster Web": 19,
+  };
+  if (era.name in authoredFallbacks) return authoredFallbacks[era.name];
+  const anchor = legacyVisualStageAnchor(
+    worldSpecForEra(era.name).legacyStage,
+  );
+  return LEGACY_V3_ERA_NAMES.findIndex((name) => name === anchor);
+}
+
+const WORLD_NAMES: Record<WorldKind, string> = {
+  void: "a foaming spacetime void",
+  "particle-field": "a crowded particle field",
+  "microscopic-sea": "a living microscopic sea",
+  "fiber-bed": "a woven forest of fibers",
+  "dust-surface": "a sunlit floor of grains",
+  tabletop: "a giant tabletop landscape",
+  interior: "a furnished room with a way outside",
+  yard: "a connected house, yard, and street",
+  city: "a traversable city grid",
+  landscape: "a continuous region of land and water",
+  "planet-surface": "the curved surface of a world",
+  "stellar-field": "a stellar neighborhood",
+  "orbital-system": "an ocean of orbital systems",
+  "galaxy-field": "a garden of galaxies",
+  "cosmic-web": "the luminous cosmic web",
+  "speculative-beyond": "a speculative infinity of realities",
+};
 
 const GAMEPLAY_BULK_FACTORS: Record<Curio["shape"], number> = {
   bubble: 0.18,
@@ -150,21 +219,45 @@ const PICKUP_QUIPS = [
 
 export default function Home() {
   const mountRef = useRef<HTMLDivElement>(null);
+  const atlasDialogRef = useRef<HTMLDialogElement>(null);
+  const atlasOpenerRef = useRef<HTMLElement | null>(null);
   const showAtlasRef = useRef(false);
-  const mashHistoryRef = useRef<MashRecord[]>([]);
+  const showGuideRef = useRef(false);
+  const modalOpenRef = useRef(false);
+  const labReturnRef = useRef<{
+    x: number;
+    z: number;
+    originX: number;
+    originZ: number;
+    vx: number;
+    vz: number;
+    lens: number;
+    factCard: {
+      name: string;
+      fact: string;
+      source: ScienceSource;
+    };
+  } | null>(null);
+  const mashHistoryRef = useRef<MashRecordV4[]>([]);
+  const collectionRef = useRef<CollectionEntry[]>([]);
+  const unitemizedPickedRef = useRef(0);
   const keysRef = useRef<Record<string, boolean>>({});
   const joystickRef = useRef({ active: false, x: 0, y: 0, originX: 0, originY: 0 });
   const audioRef = useRef<AudioContext | null>(null);
   const gameRef = useRef({
     x: 0,
     z: 0,
+    originX: 0,
+    originZ: 0,
     vx: 0,
     vz: 0,
     radius: CORE_RADIUS_MIN,
+    lens: 1,
     progress: 0,
     picked: 0,
     zooms: 0,
     era: 0,
+    mode: "journey" as GameMode,
     running: false,
     sound: true,
     lastPickup: -99,
@@ -174,9 +267,13 @@ export default function Home() {
 
   const [started, setStarted] = useState(false);
   const [showAtlas, setShowAtlas] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [atlasEra, setAtlasEra] = useState(0);
   const [labEra, setLabEra] = useState<number | null>(null);
   const [sound, setSound] = useState(true);
+  const [gameMode, setGameMode] = useState<GameMode>("journey");
+  const [collection, setCollection] = useState<CollectionEntry[]>([]);
+  const [legacyUnitemizedCount, setLegacyUnitemizedCount] = useState(0);
   const [toast, setToast] = useState(
     "Current-scale things stick. Older specks dissolve quietly into mass.",
   );
@@ -192,18 +289,41 @@ export default function Home() {
     journeyEra: 0,
     progress: 0,
     radius: CORE_RADIUS_MIN,
+    lens: 1,
     zooms: 0,
     quality: "high" as QualityTier,
+    fps: 60,
+    drawCalls: 0,
+    triangles: 0,
   });
 
   useEffect(() => {
     showAtlasRef.current = showAtlas;
-    if (showAtlas) {
-      window.setTimeout(() => {
-        document.querySelector<HTMLButtonElement>(".atlas > header button")?.focus();
-      }, 0);
+    modalOpenRef.current = showAtlas || showGuide;
+    if (showAtlas || showGuide) {
+      joystickRef.current.active = false;
+      keysRef.current = {};
     }
+    if (showAtlas) {
+      atlasOpenerRef.current = document.activeElement as HTMLElement | null;
+    }
+  }, [showAtlas, showGuide]);
+
+  useEffect(() => {
+    const dialog = atlasDialogRef.current;
+    if (!showAtlas || !dialog) return;
+    if (!dialog.open) dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>(".atlas-close")?.focus();
+    return () => {
+      if (dialog.open) dialog.close();
+      const opener = atlasOpenerRef.current;
+      window.requestAnimationFrame(() => opener?.focus());
+    };
   }, [showAtlas]);
+
+  useEffect(() => {
+    showGuideRef.current = showGuide;
+  }, [showGuide]);
 
   useEffect(() => {
     if (
@@ -253,7 +373,7 @@ export default function Home() {
     const context = audioRef.current ?? new AudioConstructor();
     audioRef.current = context;
     const profile = PICKUP_SOUND_PROFILES[curio.shape];
-    const identity = collectibleIdentityFor(curio.name, curio.shape);
+    const identity = collectibleIdentityFor(curio.id, curio.shape);
     const itemPitch = 2 ** (((identity.seed % 17) - 8) / 38);
     const eraPitch = 2 ** ((sourceEra % 6) / 18);
     const basePitch = profile.base * itemPitch * eraPitch;
@@ -326,10 +446,38 @@ export default function Home() {
     }
   }, []);
 
+  const chooseMode = useCallback((mode: GameMode) => {
+    gameRef.current.mode = mode;
+    setGameMode(mode);
+    if (gameRef.current.running) {
+      setToast(
+        mode === "journey"
+          ? "Long game pace selected. Your progress stays exactly where it is."
+          : "Learning tour selected. Same world, much faster scale shifts.",
+      );
+    }
+  }, []);
+
+  const adjustLens = useCallback((factor: number) => {
+    const game = gameRef.current;
+    const finishedJourney = deepLensUnlocked(game.era, ERAS.length);
+    const minimumLens = finishedJourney ? 1 / 256 : 1 / 8;
+    const maximumLens = finishedJourney ? 256 : 8;
+    game.lens = Math.max(
+      minimumLens,
+      Math.min(maximumLens, game.lens * factor),
+    );
+    setHud((current) => ({ ...current, lens: game.lens }));
+  }, []);
+
   const begin = useCallback(() => {
     gameRef.current.running = true;
     setStarted(true);
-    setToast("You are not quite matter yet. Go roll up some uncertainty.");
+    setToast(
+      gameRef.current.mode === "journey"
+        ? "Long journey begun. You are not quite matter yet—go roll up uncertainty."
+        : "Learning tour begun. Roll up a quick path through every scale.",
+    );
     audioRef.current?.resume();
   }, []);
 
@@ -341,6 +489,17 @@ export default function Home() {
   }, [ping]);
 
   const previewEra = (index: number) => {
+    const game = gameRef.current;
+    labReturnRef.current ??= {
+      x: game.x,
+      z: game.z,
+      originX: game.originX,
+      originZ: game.originZ,
+      vx: game.vx,
+      vz: game.vz,
+      lens: game.lens,
+      factCard: lastFact,
+    };
     gameRef.current.running = true;
     setStarted(true);
     setLabEra(index);
@@ -353,58 +512,105 @@ export default function Home() {
     });
   };
 
+  const returnToJourney = () => {
+    const snapshot = labReturnRef.current;
+    if (snapshot) {
+      const { factCard, ...journeyState } = snapshot;
+      Object.assign(gameRef.current, journeyState);
+      setHud((current) => ({ ...current, lens: snapshot.lens }));
+      setLastFact(factCard);
+    }
+    labReturnRef.current = null;
+    setLabEra(null);
+    setToast("Journey restored exactly where you left it.");
+  };
+
+  const persistSnapshot = useCallback(() => {
+    const game = gameRef.current;
+    const labSnapshot = labReturnRef.current;
+    const save: SaveDataV4 = createSaveData({
+      mode: game.mode,
+      eraId: ERAS[game.era].id,
+      progress: game.progress,
+      picked: game.picked,
+      unitemizedPicked: unitemizedPickedRef.current,
+      x: labSnapshot
+        ? labSnapshot.x + labSnapshot.originX
+        : game.x + game.originX,
+      z: labSnapshot
+        ? labSnapshot.z + labSnapshot.originZ
+        : game.z + game.originZ,
+      zooms: game.zooms,
+      sound: game.sound,
+      mash: mashHistoryRef.current,
+      collection: collectionRef.current,
+    });
+    localStorage.setItem(SAVE_KEYS.v4, serializeSaveData(save));
+  }, []);
+
   useEffect(() => {
-    try {
-      const raw =
-        localStorage.getItem("everything-roll-save-v3") ??
-        localStorage.getItem("everything-roll-save-v2");
-      if (!raw) return;
-      const saved = JSON.parse(raw) as LegacySaveData;
-      const game = gameRef.current;
-      if (saved.version === 3) {
-        game.era = Math.max(
-          0,
-          Math.min(ERAS.length - 1, Number(saved.era) || 0),
-        );
-        game.progress = Math.max(0, Math.min(1, Number(saved.progress) || 0));
-      } else {
-        const hours = Math.max(0, Number(saved.hours) || 0);
-        game.era = eraAt(hours);
-        const current = ERAS[game.era];
-        const next = ERAS[Math.min(ERAS.length - 1, game.era + 1)];
-        game.progress =
-          current === next
-            ? 0
-            : Math.max(
-                0,
-                Math.min(1, (hours - current.at) / (next.at - current.at)),
-              );
-      }
-      game.picked = Number(saved.picked) || 0;
-      game.x = Number(saved.x) || 0;
-      game.z = Number(saved.z) || 0;
-      game.radius = radiusForLayerProgress(game.progress);
-      game.zooms = Number(saved.zooms) || 0;
-      game.sound = saved.sound ?? true;
-      mashHistoryRef.current = Array.isArray(saved.mash)
-        ? saved.mash.slice(-96)
-        : [];
-      setSound(game.sound);
-      setHud((current) => ({
-        ...current,
-        hours: journeyHoursForEraProgress(game.era, game.progress),
-        picked: game.picked,
-        era: game.era,
-        journeyEra: game.era,
-        progress: game.progress,
-        radius: game.radius,
-        zooms: game.zooms,
-      }));
-    } catch {
-      localStorage.removeItem("everything-roll-save-v3");
-      localStorage.removeItem("everything-roll-save-v2");
+    const loaded = loadSaveCandidates(
+      {
+        v4: localStorage.getItem(SAVE_KEYS.v4),
+        v3: localStorage.getItem(SAVE_KEYS.v3),
+        v2: localStorage.getItem(SAVE_KEYS.v2),
+      },
+      ERAS,
+    );
+    if (!loaded) return;
+
+    const saved = loaded.save;
+    const game = gameRef.current;
+    game.era = Math.max(
+      0,
+      ERAS.findIndex((era) => era.id === saved.eraId),
+    );
+    game.mode = saved.mode;
+    game.progress = saved.progress;
+    game.picked = saved.picked;
+    game.x = saved.x;
+    game.z = saved.z;
+    game.originX = 0;
+    game.originZ = 0;
+    game.radius = radiusForLayerProgress(game.progress);
+    game.zooms = saved.zooms;
+    game.sound = saved.sound;
+    mashHistoryRef.current = saved.mash;
+    collectionRef.current = saved.collection;
+    unitemizedPickedRef.current = saved.unitemizedPicked;
+
+    setGameMode(game.mode);
+    setSound(game.sound);
+    setCollection(saved.collection);
+    setLegacyUnitemizedCount(saved.unitemizedPicked);
+    setHud((current) => ({
+      ...current,
+      hours: journeyHoursForEraProgress(game.era, game.progress),
+      picked: game.picked,
+      era: game.era,
+      journeyEra: game.era,
+      progress: game.progress,
+      radius: game.radius,
+      zooms: game.zooms,
+    }));
+
+    if (loaded.sourceVersion < 4) {
+      localStorage.setItem(SAVE_KEYS.v4, serializeSaveData(saved));
     }
   }, []);
+
+  useEffect(() => {
+    const onPageHide = () => persistSnapshot();
+    const onVisibilityChange = () => {
+      if (document.hidden) persistSnapshot();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [persistSnapshot]);
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent) => {
@@ -417,6 +623,10 @@ export default function Home() {
         setShowAtlas(false);
         return;
       }
+      if (key === "escape" && showGuideRef.current) {
+        setShowGuide(false);
+        return;
+      }
       if (interactive) return;
       keysRef.current[key] = true;
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
@@ -424,6 +634,7 @@ export default function Home() {
       }
       if (key === "m") toggleSound();
       if (key === "i") setShowAtlas((value) => !value);
+      if (key === "g") setShowGuide((value) => !value);
       if (!gameRef.current.running && [" ", "enter"].includes(key)) begin();
     };
     const onUp = (event: KeyboardEvent) => {
@@ -453,6 +664,8 @@ export default function Home() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     const compactGpu = window.innerWidth <= 860;
     let qualityTier: QualityTier = compactGpu ? "balanced" : "high";
+    const reducedWorldDetail = () =>
+      compactGpu || qualityTier !== "high";
     renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio || 1,
@@ -542,35 +755,408 @@ export default function Home() {
     const dustField = new THREE.Points(dustGeometry, dustMaterial);
     scene.add(dustField);
 
+    const farPickupMesh = new THREE.InstancedMesh(
+      new THREE.IcosahedronGeometry(1, 1),
+      new THREE.MeshToonMaterial({
+        color: "#ffffff",
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.88,
+      }),
+      256,
+    );
+    farPickupMesh.count = 0;
+    farPickupMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    farPickupMesh.frustumCulled = false;
+    scene.add(farPickupMesh);
+    const pickupColorCache = new Map<string, THREE.Color>();
+
     const environmentGroup = new THREE.Group();
     scene.add(environmentGroup);
     const substrateGroup = new THREE.Group();
     scene.add(substrateGroup);
+    let centralSceneryCompact: boolean | null = null;
 
-    const buildSubstrate = (index: number) => {
+    const PERIODIC_TILE_OFFSETS = [
+      [-1, -1], [0, -1], [1, -1],
+      [-1, 0], [1, 0],
+      [-1, 1], [0, 1], [1, 1],
+    ] as const;
+
+    const addPeriodicSubstrateCopies = (
+      root: THREE.Group,
+      chunkSize: number,
+    ) => {
+      const authoredChildren = [...root.children];
+      const allTiles = [[0, 0], ...PERIODIC_TILE_OFFSETS] as const;
+      authoredChildren.forEach((child) => {
+        if (child instanceof THREE.InstancedMesh) {
+          const combined = new THREE.InstancedMesh(
+            child.geometry,
+            child.material,
+            child.count * allTiles.length,
+          );
+          combined.userData.periodicCopy = true;
+          const sourceMatrix = new THREE.Matrix4();
+          const tileMatrix = new THREE.Matrix4();
+          const combinedMatrix = new THREE.Matrix4();
+          const instanceColor = new THREE.Color();
+          let target = 0;
+          allTiles.forEach(([tileX, tileZ]) => {
+            tileMatrix.makeTranslation(
+              tileX * chunkSize,
+              0,
+              tileZ * chunkSize,
+            );
+            for (let source = 0; source < child.count; source += 1) {
+              child.getMatrixAt(source, sourceMatrix);
+              combinedMatrix.multiplyMatrices(tileMatrix, sourceMatrix);
+              combined.setMatrixAt(target, combinedMatrix);
+              if (child.instanceColor) {
+                child.getColorAt(source, instanceColor);
+                combined.setColorAt(target, instanceColor);
+              }
+              target += 1;
+            }
+          });
+          combined.count = target;
+          combined.instanceMatrix.needsUpdate = true;
+          if (combined.instanceColor) {
+            combined.instanceColor.needsUpdate = true;
+          }
+          combined.castShadow = false;
+          combined.receiveShadow = false;
+          root.remove(child);
+          root.add(combined);
+          return;
+        }
+        if (child instanceof THREE.Points) {
+          const sourcePositions = child.geometry.getAttribute("position");
+          const sourceColors = child.geometry.getAttribute("color");
+          const positions: number[] = [];
+          const colors: number[] = [];
+          allTiles.forEach(([tileX, tileZ]) => {
+            for (let point = 0; point < sourcePositions.count; point += 1) {
+              positions.push(
+                sourcePositions.getX(point) + tileX * chunkSize,
+                sourcePositions.getY(point),
+                sourcePositions.getZ(point) + tileZ * chunkSize,
+              );
+              if (sourceColors) {
+                colors.push(
+                  sourceColors.getX(point),
+                  sourceColors.getY(point),
+                  sourceColors.getZ(point),
+                );
+              }
+            }
+          });
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute(
+            "position",
+            new THREE.Float32BufferAttribute(positions, 3),
+          );
+          if (colors.length > 0) {
+            geometry.setAttribute(
+              "color",
+              new THREE.Float32BufferAttribute(colors, 3),
+            );
+          }
+          const combined = new THREE.Points(geometry, child.material);
+          combined.userData.periodicCopy = true;
+          root.remove(child);
+          child.geometry.dispose();
+          root.add(combined);
+        }
+      });
+    };
+
+    const addPeriodicEnvironmentLod = (
+      root: THREE.Group,
+      chunkSize: number,
+    ) => {
+      const authoredChildren = [...root.children];
+      const instancedFamilies: THREE.InstancedMesh[] = [];
+      const proxyDescriptors: {
+        center: THREE.Vector3;
+        size: THREE.Vector3;
+        color: THREE.Color;
+      }[] = [];
+      root.updateMatrixWorld(true);
+
+      authoredChildren.forEach((child) => {
+        let containsInstancedMesh = false;
+        let color = new THREE.Color(activeEra.palette[1]);
+        child.traverse((object) => {
+          if (object instanceof THREE.InstancedMesh) {
+            containsInstancedMesh = true;
+            instancedFamilies.push(object);
+          }
+          if (object instanceof THREE.Mesh) {
+            const firstMaterial = Array.isArray(object.material)
+              ? object.material[0]
+              : object.material;
+            if (firstMaterial && "color" in firstMaterial) {
+              color = (
+                firstMaterial as THREE.MeshBasicMaterial
+              ).color.clone();
+            }
+          }
+        });
+        if (containsInstancedMesh) {
+          return;
+        }
+        const bounds = new THREE.Box3().setFromObject(child);
+        if (bounds.isEmpty()) return;
+        const center = bounds.getCenter(new THREE.Vector3());
+        root.worldToLocal(center);
+        const size = bounds.getSize(new THREE.Vector3());
+        if (size.lengthSq() <= 0.0001) return;
+        child.userData.authoredSceneryDetail = true;
+        proxyDescriptors.push({ center, size, color });
+      });
+
+      const rootInverse = root.matrixWorld.clone().invert();
+      instancedFamilies.forEach((family) => {
+        family.updateMatrixWorld(true);
+        const familyToRoot = new THREE.Matrix4().multiplyMatrices(
+          rootInverse,
+          family.matrixWorld,
+        );
+        const combined = new THREE.InstancedMesh(
+          family.geometry,
+          family.material,
+          family.count * PERIODIC_TILE_OFFSETS.length,
+        );
+        combined.userData.periodicCopy = true;
+        const sourceMatrix = new THREE.Matrix4();
+        const tileMatrix = new THREE.Matrix4();
+        const rootedMatrix = new THREE.Matrix4();
+        const combinedMatrix = new THREE.Matrix4();
+        const instanceColor = new THREE.Color();
+        let target = 0;
+        PERIODIC_TILE_OFFSETS.forEach(([tileX, tileZ]) => {
+          tileMatrix.makeTranslation(
+            tileX * chunkSize,
+            0,
+            tileZ * chunkSize,
+          );
+          for (let source = 0; source < family.count; source += 1) {
+            family.getMatrixAt(source, sourceMatrix);
+            rootedMatrix.multiplyMatrices(familyToRoot, sourceMatrix);
+            combinedMatrix.multiplyMatrices(tileMatrix, rootedMatrix);
+            combined.setMatrixAt(target, combinedMatrix);
+            if (family.instanceColor) {
+              family.getColorAt(source, instanceColor);
+              combined.setColorAt(target, instanceColor);
+            }
+            target += 1;
+          }
+        });
+        combined.count = target;
+        combined.instanceMatrix.needsUpdate = true;
+        if (combined.instanceColor) {
+          combined.instanceColor.needsUpdate = true;
+        }
+        combined.castShadow = false;
+        combined.receiveShadow = false;
+        root.add(combined);
+      });
+
+      const addProxyTiles = (
+        tileOffsets: readonly (readonly [number, number])[],
+        maximumInstances: number,
+        opacity: number,
+        central = false,
+      ) => {
+        const instanceLimit = Math.min(
+          proxyDescriptors.length * tileOffsets.length,
+          maximumInstances,
+        );
+        if (instanceLimit === 0) return;
+        const proxies = new THREE.InstancedMesh(
+          new THREE.BoxGeometry(1, 1, 1),
+          new THREE.MeshToonMaterial({
+            color: "#ffffff",
+            vertexColors: true,
+            transparent: true,
+            opacity,
+          }),
+          instanceLimit,
+        );
+        proxies.userData.periodicCopy = true;
+        proxies.userData.centralSceneryProxy = central;
+        proxies.visible = !central;
+        const dummy = new THREE.Object3D();
+        let instance = 0;
+        for (const [tileX, tileZ] of tileOffsets) {
+          for (const descriptor of proxyDescriptors) {
+            if (instance >= instanceLimit) break;
+            dummy.position.set(
+              descriptor.center.x + tileX * chunkSize,
+              descriptor.center.y,
+              descriptor.center.z + tileZ * chunkSize,
+            );
+            dummy.rotation.set(0, 0, 0);
+            dummy.scale.set(
+              Math.max(0.04, descriptor.size.x),
+              Math.max(0.04, descriptor.size.y),
+              Math.max(0.04, descriptor.size.z),
+            );
+            dummy.updateMatrix();
+            proxies.setMatrixAt(instance, dummy.matrix);
+            proxies.setColorAt(instance, descriptor.color);
+            instance += 1;
+          }
+        }
+        proxies.count = instance;
+        proxies.instanceMatrix.needsUpdate = true;
+        if (proxies.instanceColor) proxies.instanceColor.needsUpdate = true;
+        proxies.castShadow = false;
+        proxies.receiveShadow = false;
+        root.add(proxies);
+      };
+      const instanceBudget = worldPerformanceBudget(qualityTier).maxInstances;
+      addProxyTiles(
+        PERIODIC_TILE_OFFSETS,
+        Math.floor(instanceBudget * 0.45),
+        0.68,
+      );
+      addProxyTiles([[0, 0]], Math.floor(instanceBudget * 0.1), 0.78, true);
+    };
+
+    const setCentralSceneryLod = (compact: boolean) => {
+      if (compact === centralSceneryCompact) return;
+      centralSceneryCompact = compact;
+      environmentGroup.children.forEach((child) => {
+        if (child.userData.authoredSceneryDetail) {
+          child.visible = !compact;
+        } else if (child.userData.centralSceneryProxy) {
+          child.visible = compact;
+        }
+      });
+    };
+
+    type SceneryCollider = {
+      x: number;
+      z: number;
+      halfWidth: number;
+      halfDepth: number;
+    };
+    let sceneryColliders: SceneryCollider[] = [];
+    let semanticResidencyKey = "";
+
+    const substrateKeyFor = (viewScale: number) =>
+      residentLayerIndices(viewScale, ERAS.length)
+        .filter((layer) => layer < viewScale)
+        .join(":");
+
+    const buildSubstrate = (viewScale: number) => {
       substrateGroup.traverse((object) => {
-        if (object instanceof THREE.Points) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
           object.geometry.dispose();
-          object.material.dispose();
+          const materials = Array.isArray(object.material)
+            ? object.material
+            : [object.material];
+          materials.forEach((material) => material.dispose());
         }
       });
       substrateGroup.clear();
-      const oldestVisible = Math.max(0, index - 5);
-      for (let layer = oldestVisible; layer < index; layer += 1) {
-        const depth = index - layer;
+
+      const priorLayers = residentLayerIndices(viewScale, ERAS.length).filter(
+        (layer) => layer < viewScale,
+      );
+      priorLayers.forEach((layer, residentPosition) => {
+        const depth = Math.max(1, Math.ceil(viewScale) - layer);
+        const era = ERAS[layer];
+        if (residentPosition === 0) {
+          const geometries = [
+            new THREE.IcosahedronGeometry(0.34, 1),
+            new THREE.CapsuleGeometry(0.15, 0.42, 3, 6),
+            new THREE.TorusGeometry(0.3, 0.055, 5, 12),
+            new THREE.BoxGeometry(0.46, 0.3, 0.4),
+            new THREE.ConeGeometry(0.3, 0.5, 6),
+          ];
+          const familyFor = (shape: Curio["shape"]) => {
+            if (["fiber", "object", "chair", "car"].includes(shape)) return 1;
+            if (["atom", "molecule", "system", "galaxy"].includes(shape)) return 2;
+            if (shape === "house") return 3;
+            if (["mountain", "planet", "star", "universe"].includes(shape)) return 4;
+            return 0;
+          };
+          const count = reducedWorldDetail() ? 52 : 84;
+          const families = geometries.map(() => [] as number[]);
+          for (let item = 0; item < count; item += 1) {
+            const curio = era.curios[item % era.curios.length];
+            families[familyFor(curio.shape)].push(item);
+          }
+          const dummy = new THREE.Object3D();
+          families.forEach((items, family) => {
+            if (items.length === 0) {
+              geometries[family].dispose();
+              return;
+            }
+            const material = new THREE.MeshToonMaterial({
+              color: "#ffffff",
+              vertexColors: true,
+              transparent: true,
+              opacity: 0.76,
+            });
+            const instances = new THREE.InstancedMesh(
+              geometries[family],
+              material,
+              items.length,
+            );
+            items.forEach((item, instance) => {
+              const curio = era.curios[item % era.curios.length];
+              const angle = pseudo(layer * 379 + item * 17.3) * Math.PI * 2;
+              const radius = 2.4 + pseudo(layer * 113 + item * 5.7) * 66;
+              dummy.position.set(
+                Math.cos(angle) * radius,
+                0.07 + pseudo(item * 2.1) * 0.035,
+                Math.sin(angle) * radius,
+              );
+              dummy.rotation.set(
+                pseudo(item + 31) * 0.45,
+                pseudo(item + 47) * Math.PI * 2,
+                pseudo(item + 71) * 0.45,
+              );
+              const scale = 0.62 + pseudo(item + layer * 23) * 0.8;
+              dummy.scale.setScalar(scale);
+              dummy.updateMatrix();
+              instances.setMatrixAt(instance, dummy.matrix);
+              instances.setColorAt(
+                instance,
+                new THREE.Color(curio.color).lerp(
+                  new THREE.Color(era.palette[2]),
+                  0.22,
+                ),
+              );
+            });
+            instances.instanceMatrix.needsUpdate = true;
+            if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
+            instances.receiveShadow = false;
+            instances.castShadow = false;
+            substrateGroup.add(instances);
+          });
+          return;
+        }
+
         const positions: number[] = [];
         const colors: number[] = [];
-        const color = new THREE.Color(ERAS[layer].palette[2]);
-        const count = compactGpu ? 28 : 44;
+        const count = reducedWorldDetail() ? 260 : 420;
+        const color = new THREE.Color(era.palette[2]);
         for (let point = 0; point < count; point += 1) {
           const angle = pseudo(layer * 317 + point * 11.3) * Math.PI * 2;
-          const radius = 3 + pseudo(layer * 97 + point * 7.1) * 68;
+          const radius = 1.8 + pseudo(layer * 97 + point * 7.1) * 72;
           positions.push(
             Math.cos(angle) * radius,
-            0.025 - depth * 0.002,
+            0.018 - depth * 0.002,
             Math.sin(angle) * radius,
           );
-          const faded = color.clone().lerp(new THREE.Color("#fff4d6"), depth * 0.08);
+          const faded = color
+            .clone()
+            .lerp(new THREE.Color("#fff4d6"), 0.18 + depth * 0.08);
           colors.push(faded.r, faded.g, faded.b);
         }
         const geometry = new THREE.BufferGeometry();
@@ -579,15 +1165,25 @@ export default function Home() {
           new THREE.Float32BufferAttribute(positions, 3),
         );
         geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-        const material = new THREE.PointsMaterial({
-          size: Math.max(0.018, 0.12 / depth),
-          transparent: true,
-          opacity: Math.max(0.12, 0.48 - depth * 0.055),
-          vertexColors: true,
-          depthWrite: false,
-        });
-        substrateGroup.add(new THREE.Points(geometry, material));
-      }
+        substrateGroup.add(
+          new THREE.Points(
+            geometry,
+            new THREE.PointsMaterial({
+              size: 0.045,
+              transparent: true,
+              opacity: 0.34,
+              vertexColors: true,
+              depthWrite: false,
+            }),
+          ),
+        );
+      });
+
+      addPeriodicSubstrateCopies(
+        substrateGroup,
+        worldChunkSize(activeWorldKind),
+      );
+      semanticResidencyKey = substrateKeyFor(viewScale);
     };
 
     const playerRoot = new THREE.Group();
@@ -706,22 +1302,10 @@ export default function Home() {
     }
     rollGroup.add(foamCluster);
 
-    type EnvironmentMode =
-      | "quantum"
-      | "micro"
-      | "room"
-      | "neighborhood"
-      | "planet"
-      | "cosmic";
+    type EnvironmentMode = LegacyVisualStage;
 
-    const environmentModeFor = (index: number): EnvironmentMode => {
-      if (index <= 3) return "quantum";
-      if (index <= 8) return "micro";
-      if (index <= 11) return "room";
-      if (index <= 13) return "neighborhood";
-      if (index <= 15) return "planet";
-      return "cosmic";
-    };
+    const environmentModeFor = (index: number): EnvironmentMode =>
+      worldSpecForEra(ERAS[index].name).legacyStage;
 
     const environmentNames: Record<EnvironmentMode, string> = {
       quantum: "the quantum void",
@@ -731,31 +1315,9 @@ export default function Home() {
       planet: "a whole curved world",
       cosmic: "deep space",
     };
-    const eraWorldNames = [
-      "a foaming spacetime void",
-      "an unresolved measurement abyss",
-      "a quark–gluon plasma storm",
-      "a crowded hadron forge",
-      "a soft electron-cloud world",
-      "a bonded molecular lattice",
-      "a folded macromolecule reef",
-      "a living cellular sea",
-      "a forest of fibers and pollen",
-      "a sunlit country of dust",
-      "a giant tabletop world",
-      "a very rollable house",
-      "a busy vehicle yard",
-      "a growing neighborhood",
-      "a curved living landscape",
-      "the horizon of a whole planet",
-      "a blazing stellar field",
-      "an ocean of orbital systems",
-      "a garden of galaxies",
-      "the luminous cosmic web",
-      "a speculative infinity of realities",
-    ];
 
     let environmentMode = environmentModeFor(activeIndex);
+    let activeWorldKind = worldSpecForEra(activeEra.name).kind;
     let eraTransitionAge = 99;
 
     const disposeEnvironment = () => {
@@ -773,6 +1335,7 @@ export default function Home() {
         }
       });
       environmentGroup.clear();
+      sceneryColliders = [];
     };
 
     const addScenery = (
@@ -791,6 +1354,15 @@ export default function Home() {
       mesh.receiveShadow = false;
       parent.add(mesh);
       return mesh;
+    };
+
+    const addSceneryCollider = (
+      x: number,
+      z: number,
+      halfWidth: number,
+      halfDepth: number,
+    ) => {
+      sceneryColliders.push({ x, z, halfWidth, halfDepth });
     };
 
     const sceneryToon = (color: THREE.ColorRepresentation) =>
@@ -830,7 +1402,7 @@ export default function Home() {
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
       const material = new THREE.PointsMaterial({
-        size: compactGpu ? 0.17 : 0.22,
+        size: reducedWorldDetail() ? 0.17 : 0.22,
         transparent: true,
         opacity: 0.88,
         vertexColors: true,
@@ -843,6 +1415,7 @@ export default function Home() {
     let coreSurfaceTexture: THREE.CanvasTexture | null = null;
 
     const makeScalePatternTexture = (index: number, forCore = false) => {
+      const visualIndex = legacyVisualIndexForEra(index);
       const canvas = document.createElement("canvas");
       canvas.width = forCore ? 384 : 512;
       canvas.height = forCore ? 384 : 512;
@@ -875,7 +1448,7 @@ export default function Home() {
         context.fill();
       };
 
-      if (index <= 1) {
+      if (visualIndex <= 1) {
         for (let motif = 0; motif < 44; motif += 1) {
           const x = pseudo(motif + index * 17) * size;
           const y = pseudo(motif * 3.7 + index * 31) * size;
@@ -887,7 +1460,7 @@ export default function Home() {
           context.arc(x, y, radius, 0, Math.PI * 2);
           context.stroke();
         }
-      } else if (index <= 3) {
+      } else if (visualIndex <= 3) {
         for (let motif = 0; motif < 72; motif += 1) {
           const x = pseudo(motif * 2.3 + index) * size;
           const y = pseudo(motif * 5.9 + index) * size;
@@ -902,7 +1475,7 @@ export default function Home() {
             context.stroke();
           }
         }
-      } else if (index === 4) {
+      } else if (visualIndex === 4) {
         for (let cloud = 0; cloud < 34; cloud += 1) {
           const x = pseudo(cloud * 4.7) * size;
           const y = pseudo(cloud * 8.2) * size;
@@ -917,10 +1490,10 @@ export default function Home() {
           context.fill();
           dot(x, y, 2.5, "#fff3a5");
         }
-      } else if (index <= 6) {
+      } else if (visualIndex <= 6) {
         context.strokeStyle = shadow.getStyle();
         context.globalAlpha = 0.34;
-        context.lineWidth = index === 5 ? 5 : 8;
+        context.lineWidth = visualIndex === 5 ? 5 : 8;
         for (let chain = 0; chain < 24; chain += 1) {
           const x = pseudo(chain * 4.3) * size;
           const y = pseudo(chain * 9.7) * size;
@@ -937,7 +1510,7 @@ export default function Home() {
             chain % 2 ? "#fff0b2" : ink.getStyle(),
           );
         }
-      } else if (index === 7) {
+      } else if (visualIndex === 7) {
         for (let cell = 0; cell < 26; cell += 1) {
           const x = pseudo(cell * 6.7) * size;
           const y = pseudo(cell * 2.9) * size;
@@ -950,7 +1523,7 @@ export default function Home() {
           context.stroke();
           dot(x + radius * 0.2, y, radius * 0.22, shadow.getStyle());
         }
-      } else if (index === 8) {
+      } else if (visualIndex === 8) {
         context.globalAlpha = 0.38;
         context.lineWidth = 6;
         for (let fiber = -8; fiber < 18; fiber += 1) {
@@ -960,7 +1533,7 @@ export default function Home() {
           context.bezierCurveTo(120, fiber * 28 + 45, 360, fiber * 28 - 45, size + 40, fiber * 28 + 8);
           context.stroke();
         }
-      } else if (index === 9) {
+      } else if (visualIndex === 9) {
         for (let speck = 0; speck < 620; speck += 1) {
           dot(
             pseudo(speck * 3.71) * size,
@@ -969,7 +1542,7 @@ export default function Home() {
             speck % 5 ? shadow.getStyle() : ink.getStyle(),
           );
         }
-      } else if (index <= 11) {
+      } else if (visualIndex <= 11) {
         context.globalAlpha = 0.34;
         for (let grain = 0; grain < 28; grain += 1) {
           context.strokeStyle = grain % 2 ? shadow.getStyle() : ink.getStyle();
@@ -983,8 +1556,8 @@ export default function Home() {
       } else {
         context.globalAlpha = 0.32;
         context.strokeStyle = shadow.getStyle();
-        context.lineWidth = index === 12 ? 5 : 3;
-        const step = index === 12 ? 64 : 38;
+        context.lineWidth = visualIndex === 12 ? 5 : 3;
+        const step = visualIndex === 12 ? 64 : 38;
         for (let line = 0; line <= size; line += step) {
           context.beginPath();
           context.moveTo(line, 0);
@@ -995,29 +1568,55 @@ export default function Home() {
         }
       }
 
+      if (!forCore && index > 0) {
+        for (let layer = 0; layer < index; layer += 1) {
+          const buriedColor = new THREE.Color(ERAS[layer].palette[2])
+            .lerp(base, 0.38)
+            .getStyle();
+          context.globalAlpha = Math.max(0.035, 0.15 - layer * 0.003);
+          for (let trace = 0; trace < 7; trace += 1) {
+            dot(
+              pseudo(layer * 97 + trace * 13.1) * size,
+              pseudo(layer * 151 + trace * 7.7) * size,
+              0.7 + pseudo(layer * 31 + trace) * 1.8,
+              buriedColor,
+            );
+          }
+        }
+      }
+
       context.globalAlpha = 1;
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.RepeatWrapping;
       texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(forCore ? 1.8 : index <= 8 ? 22 : 12, forCore ? 1.8 : index <= 8 ? 22 : 12);
+      texture.repeat.set(
+        forCore ? 1.8 : visualIndex <= 8 ? 22 : 12,
+        forCore ? 1.8 : visualIndex <= 8 ? 22 : 12,
+      );
       texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
       return texture;
     };
 
-    const applyScaleTextures = (index: number) => {
+    const applyGroundScaleTexture = (viewScale: number) => {
       groundTexture?.dispose();
-      coreSurfaceTexture?.dispose();
-      groundTexture = makeScalePatternTexture(index);
-      coreSurfaceTexture = makeScalePatternTexture(index, true);
+      const visibleFoundation = Math.max(0, Math.ceil(viewScale) - 1);
+      groundTexture = makeScalePatternTexture(visibleFoundation);
       groundMaterial.map = groundTexture;
       groundMaterial.needsUpdate = true;
+    };
+
+    const applyScaleTextures = (index: number) => {
+      applyGroundScaleTexture(index);
+      coreSurfaceTexture?.dispose();
+      coreSurfaceTexture = makeScalePatternTexture(index, true);
       coreMaterial.map = coreSurfaceTexture;
       coreMaterial.needsUpdate = true;
     };
 
     const addEraSignature = (index: number) => {
-      if (index === 0) {
+      const visualIndex = legacyVisualIndexForEra(index);
+      if (visualIndex === 0) {
         for (let bubble = 0; bubble < 18; bubble += 1) {
           addScenery(
             new THREE.SphereGeometry(0.6 + pseudo(bubble) * 2.2, 18, 12),
@@ -1029,7 +1628,7 @@ export default function Home() {
             ],
           );
         }
-      } else if (index === 1) {
+      } else if (visualIndex === 1) {
         [-16, 0, 16].forEach((x, plane) => {
           addScenery(
             new THREE.PlaneGeometry(22, 22, 9, 9),
@@ -1038,7 +1637,7 @@ export default function Home() {
             [0.15, plane * 0.45, 0],
           );
         });
-      } else if (index === 2) {
+      } else if (visualIndex === 2) {
         for (let knot = 0; knot < 12; knot += 1) {
           const angle = (knot / 12) * Math.PI * 2;
           addScenery(
@@ -1048,7 +1647,7 @@ export default function Home() {
             [pseudo(knot) * Math.PI, pseudo(knot + 8) * Math.PI, 0],
           );
         }
-      } else if (index === 3) {
+      } else if (visualIndex === 3) {
         for (let cluster = 0; cluster < 13; cluster += 1) {
           const angle = (cluster / 13) * Math.PI * 2;
           const parent = new THREE.Group();
@@ -1069,7 +1668,7 @@ export default function Home() {
             );
           });
         }
-      } else if (index === 4) {
+      } else if (visualIndex === 4) {
         for (let cloud = 0; cloud < 16; cloud += 1) {
           const angle = (cloud / 16) * Math.PI * 2;
           addScenery(
@@ -1080,7 +1679,7 @@ export default function Home() {
             [1.4, 0.75 + (cloud % 2) * 0.35, 1],
           );
         }
-      } else if (index === 5) {
+      } else if (visualIndex === 5) {
         for (let molecule = 0; molecule < 18; molecule += 1) {
           const angle = (molecule / 18) * Math.PI * 2;
           const parent = new THREE.Group();
@@ -1098,7 +1697,7 @@ export default function Home() {
             );
           }
         }
-      } else if (index === 6) {
+      } else if (visualIndex === 6) {
         for (let helix = 0; helix < 12; helix += 1) {
           const angle = (helix / 12) * Math.PI * 2;
           addScenery(
@@ -1109,7 +1708,7 @@ export default function Home() {
             [0.7, 1.35, 0.7],
           );
         }
-      } else if (index === 7) {
+      } else if (visualIndex === 7) {
         for (let cell = 0; cell < 14; cell += 1) {
           const angle = (cell / 14) * Math.PI * 2;
           addScenery(
@@ -1120,7 +1719,7 @@ export default function Home() {
             [1.2, 0.72, 1],
           );
         }
-      } else if (index === 8) {
+      } else if (visualIndex === 8) {
         for (let fiber = 0; fiber < 22; fiber += 1) {
           const angle = (fiber / 22) * Math.PI * 2;
           addScenery(
@@ -1130,7 +1729,7 @@ export default function Home() {
             [0.2 + pseudo(fiber) * 0.5, angle, 0.25],
           );
         }
-      } else if (index === 9) {
+      } else if (visualIndex === 9) {
         for (let mote = 0; mote < 38; mote += 1) {
           addScenery(
             new THREE.DodecahedronGeometry(0.14 + pseudo(mote) * 0.24, 0),
@@ -1142,15 +1741,15 @@ export default function Home() {
             ],
           );
         }
-      } else if (index === 10) {
+      } else if (visualIndex === 10) {
         addScenery(new THREE.CylinderGeometry(17, 17, 0.7, 48), sceneryToon("#b97861"), [0, -0.34, 0]);
-      } else if (index === 11) {
+      } else if (visualIndex === 11) {
         addScenery(new THREE.BoxGeometry(18, 9, 4), sceneryToon("#ec9d69"), [-28, 4.5, -29]);
-      } else if (index === 12) {
+      } else if (visualIndex === 12) {
         for (let barrier = -4; barrier <= 4; barrier += 1) {
           addScenery(new THREE.BoxGeometry(3.5, 0.5, 0.5), sceneryToon(barrier % 2 ? "#fff0d1" : "#ff7469"), [barrier * 5, 0.4, -28]);
         }
-      } else if (index === 13) {
+      } else if (visualIndex === 13) {
         for (let tower = 0; tower < 9; tower += 1) {
           addScenery(
             new THREE.BoxGeometry(3 + (tower % 3), 9 + (tower % 4) * 4, 3 + ((tower + 1) % 3)),
@@ -1158,7 +1757,7 @@ export default function Home() {
             [-28 + tower * 7, 4.5 + (tower % 4) * 2, -34],
           );
         }
-      } else if (index === 16) {
+      } else if (visualIndex === 16) {
         for (let flare = 0; flare < 9; flare += 1) {
           const angle = (flare / 9) * Math.PI * 2;
           addScenery(
@@ -1167,7 +1766,7 @@ export default function Home() {
             [Math.cos(angle) * 35, 8 + (flare % 4) * 6, Math.sin(angle) * 35],
           );
         }
-      } else if (index === 17) {
+      } else if (visualIndex === 17) {
         [13, 22, 34, 48].forEach((radius, orbit) => {
           addScenery(
             new THREE.TorusGeometry(radius, 0.04 + orbit * 0.015, 5, 96),
@@ -1183,12 +1782,16 @@ export default function Home() {
       disposeEnvironment();
       applyScaleTextures(index);
       environmentMode = environmentModeFor(index);
+      activeWorldKind = worldSpecForEra(ERAS[index].name).kind;
       ground.visible = true;
       grid.visible = false;
       dustField.visible = true;
       environmentGroup.rotation.set(0, 0, 0);
 
-      if (environmentMode === "quantum") {
+      if (
+        activeWorldKind === "void" ||
+        activeWorldKind === "particle-field"
+      ) {
         const voidColor = deepColor.clone().multiplyScalar(0.54);
         scene.background = voidColor;
         scene.fog = new THREE.FogExp2(voidColor, 0.009);
@@ -1197,7 +1800,35 @@ export default function Home() {
         dustMaterial.opacity = 0.82;
         hemisphere.intensity = 1.55;
         keyLight.intensity = 1.6;
-        addStarField(compactGpu ? 150 : 240, 72, index + 2);
+        addStarField(reducedWorldDetail() ? 150 : 240, 72, index + 2);
+        if (activeWorldKind === "particle-field") {
+          const foamCount = reducedWorldDetail() ? 72 : 110;
+          const foam = new THREE.InstancedMesh(
+            new THREE.IcosahedronGeometry(0.42, 1),
+            sceneryGlow(activeEra.palette[2], 0.2, true),
+            foamCount,
+          );
+          const dummy = new THREE.Object3D();
+          for (let cell = 0; cell < foamCount; cell += 1) {
+            const angle = pseudo(cell * 5.17 + index) * Math.PI * 2;
+            const radius = 2 + pseudo(cell * 8.73 + index) * 58;
+            dummy.position.set(
+              Math.cos(angle) * radius,
+              -0.2 + pseudo(cell * 3.11 + 8) * 5.4,
+              Math.sin(angle) * radius,
+            );
+            dummy.rotation.set(
+              pseudo(cell + 7),
+              pseudo(cell + 13) * Math.PI,
+              pseudo(cell + 19),
+            );
+            dummy.scale.setScalar(0.5 + pseudo(cell + 23) * 1.8);
+            dummy.updateMatrix();
+            foam.setMatrixAt(cell, dummy.matrix);
+          }
+          foam.instanceMatrix.needsUpdate = true;
+          environmentGroup.add(foam);
+        }
         for (let ring = 0; ring < 11; ring += 1) {
           const radius = 1.8 + pseudo(ring + 17) * 5.2;
           addScenery(
@@ -1230,7 +1861,10 @@ export default function Home() {
         return;
       }
 
-      if (environmentMode === "micro") {
+      if (
+        activeWorldKind === "microscopic-sea" ||
+        activeWorldKind === "fiber-bed"
+      ) {
         const seaColor = new THREE.Color("#062e39").lerp(deepColor, 0.35);
         scene.background = seaColor;
         scene.fog = new THREE.FogExp2(seaColor, 0.018);
@@ -1287,7 +1921,81 @@ export default function Home() {
         return;
       }
 
-      if (environmentMode === "room") {
+      if (
+        activeWorldKind === "dust-surface" ||
+        activeWorldKind === "tabletop"
+      ) {
+        const tabletop = activeWorldKind === "tabletop";
+        scene.background = new THREE.Color(tabletop ? "#f3bfd0" : "#efc9ad");
+        scene.fog = new THREE.FogExp2(
+          tabletop ? 0xf3bfd0 : 0xefc9ad,
+          tabletop ? 0.009 : 0.013,
+        );
+        groundMaterial.color.set(tabletop ? "#9d684d" : "#a96f52");
+        dustMaterial.size = tabletop ? 0.04 : 0.052;
+        dustMaterial.opacity = tabletop ? 0.14 : 0.22;
+        hemisphere.intensity = 1.28;
+        keyLight.intensity = 2.55;
+
+        if (tabletop) {
+          addScenery(
+            new THREE.CylinderGeometry(72, 72, 1.5, 64),
+            sceneryToon("#a96b4e"),
+            [0, -0.78, 0],
+          );
+          [-34, 34].forEach((x) => {
+            [-31, 31].forEach((z) => {
+              addScenery(
+                new THREE.BoxGeometry(5, 34, 5),
+                sceneryToon("#744737"),
+                [x, -17.7, z],
+              );
+            });
+          });
+          addScenery(
+            new THREE.BoxGeometry(18, 0.6, 13),
+            sceneryToon("#e6d9bd"),
+            [31, 0.55, -25],
+            [0, -0.24, 0],
+          );
+          addScenery(
+            new THREE.CylinderGeometry(4.7, 4.7, 7, 32, 1, true),
+            sceneryToon("#71b8cc"),
+            [-29, 3.5, -27],
+          );
+          addSceneryCollider(31, -25, 9, 6.5);
+          addSceneryCollider(-29, -27, 5.2, 5.2);
+        } else {
+          for (let board = -11; board <= 11; board += 1) {
+            addScenery(
+              new THREE.BoxGeometry(170, 0.025, 0.09),
+              sceneryToon(board % 2 ? "#754a3e" : "#cf9070"),
+              [0, 0.025, board * 7.2],
+            );
+          }
+          addScenery(
+            new THREE.PlaneGeometry(170, 42),
+            sceneryToon("#f6d7c0"),
+            [0, 21, -70],
+          );
+          addScenery(
+            new THREE.BoxGeometry(170, 0.7, 0.6),
+            sceneryToon("#fff0df"),
+            [0, 0.35, -69.6],
+          );
+          [-48, 48].forEach((x) => {
+            addScenery(
+              new THREE.CylinderGeometry(3.6, 4.2, 32, 12),
+              sceneryToon("#73504a"),
+              [x, 16, -47],
+            );
+          });
+        }
+        addEraSignature(index);
+        return;
+      }
+
+      if (activeWorldKind === "interior") {
         scene.background = new THREE.Color("#f6b8cb");
         scene.fog = new THREE.FogExp2(0xf6b8cb, 0.012);
         groundMaterial.color.set("#9a5d57");
@@ -1309,6 +2017,9 @@ export default function Home() {
           [46, 15, 0],
           [0, -Math.PI / 2, 0],
         );
+        addSceneryCollider(-46, 0, 0.45, 43);
+        addSceneryCollider(46, 0, 0.45, 43);
+        addSceneryCollider(0, -40, 46, 0.45);
         for (let board = -8; board <= 8; board += 1) {
           addScenery(
             new THREE.BoxGeometry(92, 0.025, 0.08),
@@ -1337,14 +2048,52 @@ export default function Home() {
             addScenery(new THREE.BoxGeometry(0.8, 8, 0.8), sceneryToon("#56304f"), [x, 4.2, z], [0, 0, 0], [1, 1, 1], furniture);
           });
         });
+        addSceneryCollider(25, -26, 6.8, 4.4);
+        addScenery(
+          new THREE.BoxGeometry(120, 0.05, 48),
+          sceneryToon("#76a968"),
+          [0, 0.035, 65],
+        );
+        addScenery(
+          new THREE.BoxGeometry(120, 0.06, 12),
+          sceneryToon("#4d5561"),
+          [0, 0.08, 83],
+        );
+        [-11.5, 11.5].forEach((x) => {
+          addScenery(
+            new THREE.BoxGeometry(1.1, 12, 1.1),
+            sceneryToon("#fff0df"),
+            [x, 6, 39],
+          );
+        });
+        addScenery(
+          new THREE.BoxGeometry(24, 1.1, 1.1),
+          sceneryToon("#fff0df"),
+          [0, 11.5, 39],
+        );
+        [-32, 32].forEach((x, house) => {
+          addScenery(
+            new THREE.BoxGeometry(18, 12, 14),
+            sceneryToon(house ? "#a8d2df" : "#ffd1ac"),
+            [x, 6, 104],
+          );
+          addScenery(
+            new THREE.ConeGeometry(13, 6, 4),
+            sceneryToon("#72485a"),
+            [x, 15, 104],
+            [0, Math.PI / 4, 0],
+          );
+        });
         addEraSignature(index);
         return;
       }
 
-      if (environmentMode === "neighborhood") {
+      if (activeWorldKind === "yard") {
         scene.background = new THREE.Color("#82d7f3");
         scene.fog = new THREE.FogExp2(0x82d7f3, 0.009);
-        groundMaterial.color.set(index === 12 ? "#779667" : "#6ea25c");
+        groundMaterial.color.set(
+          activeEra.name === "Vehicle Yard" ? "#779667" : "#6ea25c",
+        );
         dustMaterial.size = 0.035;
         dustMaterial.opacity = 0.12;
         hemisphere.intensity = 1.55;
@@ -1355,8 +2104,10 @@ export default function Home() {
           addScenery(new THREE.BoxGeometry(0.22, 0.025, 3.3), sceneryToon("#ffe894"), [0, 0.14, dash * 8]);
           addScenery(new THREE.BoxGeometry(3.3, 0.025, 0.22), sceneryToon("#ffe894"), [dash * 8, 0.14, 0]);
         }
-        for (let house = 0; house < 12; house += 1) {
-          const angle = (house / 12) * Math.PI * 2 + 0.24;
+        for (let house = 0; house < 8; house += 1) {
+          // Diagonal placement leaves the connected north/south/east/west
+          // streets as explicit gateways even at the largest roll envelope.
+          const angle = (house / 8) * Math.PI * 2 + Math.PI / 8;
           const distance = 32 + (house % 3) * 5;
           const houseGroup = new THREE.Group();
           houseGroup.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
@@ -1369,24 +2120,189 @@ export default function Home() {
           const treeX = house % 2 ? 5.5 : -5.5;
           addScenery(new THREE.CylinderGeometry(0.45, 0.62, 4, 7), sceneryToon("#7c5138"), [treeX, 2, 0], [0, 0, 0], [1, 1, 1], houseGroup);
           addScenery(new THREE.IcosahedronGeometry(2.1, 1), sceneryToon("#45a957"), [treeX, 5.1, 0], [0, 0, 0], [1, 1, 1], houseGroup);
+          addScenery(
+            new THREE.BoxGeometry(3.2, 0.035, 12),
+            sceneryToon("#d9ccb6"),
+            [0, 0.11, 9],
+            [0, 0, 0],
+            [1, 1, 1],
+            houseGroup,
+          );
+          addSceneryCollider(
+            houseGroup.position.x,
+            houseGroup.position.z,
+            4.8,
+            4.8,
+          );
         }
         addEraSignature(index);
         return;
       }
 
-      if (environmentMode === "planet") {
-        const skyColor = index === 14 ? new THREE.Color("#3e87b7") : new THREE.Color("#071946");
+      if (activeWorldKind === "city") {
+        scene.background = new THREE.Color("#88cde7");
+        scene.fog = new THREE.FogExp2(0x88cde7, 0.0065);
+        groundMaterial.color.set("#768b7b");
+        dustMaterial.size = 0.026;
+        dustMaterial.opacity = 0.08;
+        hemisphere.intensity = 1.45;
+        keyLight.intensity = 2.85;
+
+        const roadCenters = [-64, -32, 0, 32, 64];
+        roadCenters.forEach((position) => {
+          addScenery(
+            new THREE.BoxGeometry(10, 0.055, 180),
+            sceneryToon("#404a55"),
+            [position, 0.075, 0],
+          );
+          addScenery(
+            new THREE.BoxGeometry(180, 0.05, 10),
+            sceneryToon("#46505a"),
+            [0, 0.07, position],
+          );
+        });
+
+        const blockCenters = [-48, -16, 16, 48];
+        const buildingGroups = ["#a7b7cc", "#efad9e", "#9fc7b4"].map(
+          (color) =>
+            new THREE.InstancedMesh(
+              new THREE.BoxGeometry(1, 1, 1),
+              sceneryToon(color),
+              16,
+            ),
+        );
+        const buildingCounts = [0, 0, 0];
+        const dummy = new THREE.Object3D();
+        blockCenters.forEach((x, column) => {
+          blockCenters.forEach((z, row) => {
+            addScenery(
+              new THREE.BoxGeometry(22, 0.09, 22),
+              sceneryToon("#d7d0bd"),
+              [x, 0.1, z],
+            );
+            const slot = column * blockCenters.length + row;
+            if (slot % 7 === 0) {
+              addScenery(
+                new THREE.CylinderGeometry(1.1, 1.35, 5.5, 8),
+                sceneryToon("#6b4a37"),
+                [x, 2.75, z],
+              );
+              addScenery(
+                new THREE.IcosahedronGeometry(3.3, 1),
+                sceneryToon("#48a45b"),
+                [x, 7, z],
+              );
+              return;
+            }
+            const family = slot % buildingGroups.length;
+            const height = 8 + pseudo(slot + index * 41) * 27;
+            dummy.position.set(x, height / 2 + 0.15, z);
+            dummy.scale.set(
+              10 + pseudo(slot + 13) * 5,
+              height,
+              10 + pseudo(slot + 29) * 5,
+            );
+            dummy.rotation.set(0, 0, 0);
+            dummy.updateMatrix();
+            buildingGroups[family].setMatrixAt(
+              buildingCounts[family],
+              dummy.matrix,
+            );
+            buildingCounts[family] += 1;
+            addSceneryCollider(x, z, 7.8, 7.8);
+          });
+        });
+        buildingGroups.forEach((buildings, family) => {
+          buildings.count = buildingCounts[family];
+          buildings.instanceMatrix.needsUpdate = true;
+          environmentGroup.add(buildings);
+        });
+        addEraSignature(index);
+        return;
+      }
+
+      if (activeWorldKind === "landscape") {
+        scene.background = new THREE.Color("#72b9d6");
+        scene.fog = new THREE.FogExp2(0x72b9d6, 0.0052);
+        groundMaterial.color.set("#668f58");
+        dustMaterial.size = 0.025;
+        dustMaterial.opacity = 0.075;
+        hemisphere.intensity = 1.55;
+        keyLight.intensity = 2.9;
+
+        const river = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-86, 0.16, -58),
+          new THREE.Vector3(-44, 0.16, -12),
+          new THREE.Vector3(-7, 0.16, -2),
+          new THREE.Vector3(31, 0.16, 25),
+          new THREE.Vector3(83, 0.16, 62),
+        ]);
+        addScenery(
+          new THREE.TubeGeometry(river, 72, 2.8, 8, false),
+          sceneryToon("#5cb9d5"),
+          [0, 0, 0],
+        );
+        for (let ridge = 0; ridge < 24; ridge += 1) {
+          const side = ridge % 2 === 0 ? -1 : 1;
+          const x = -74 + (ridge % 12) * 13.5;
+          const z = side * (36 + pseudo(ridge + 44) * 24);
+          const height = 4 + pseudo(ridge + 63) * 10;
+          addScenery(
+            new THREE.ConeGeometry(
+              3.5 + pseudo(ridge + 72) * 4,
+              height,
+              7,
+            ),
+            sceneryToon(ridge % 3 ? "#648161" : "#7e7c69"),
+            [x, height / 2, z],
+            [0, pseudo(ridge + 81) * Math.PI, 0],
+          );
+        }
+        for (let town = 0; town < 38; town += 1) {
+          const x = 38 + (town % 7) * 2.4;
+          const z = -35 + Math.floor(town / 7) * 2.7;
+          addScenery(
+            new THREE.BoxGeometry(1.5, 0.8 + (town % 4) * 0.35, 1.5),
+            sceneryToon(["#d9c5a3", "#b9c5cd", "#e2b29e"][town % 3]),
+            [x, 0.5 + (town % 4) * 0.18, z],
+          );
+        }
+        addScenery(
+          new THREE.BoxGeometry(72, 0.04, 1.1),
+          sceneryToon("#d9c38c"),
+          [9, 0.13, 45],
+          [0, -0.28, 0],
+        );
+        addEraSignature(index);
+        return;
+      }
+
+      if (activeWorldKind === "planet-surface") {
+        const gasGiant = activeEra.name === "Giant Worlds";
+        const atmosphere =
+          activeEra.name === "Planetary Pantry" || gasGiant;
+        const skyColor = atmosphere
+          ? new THREE.Color(gasGiant ? "#9d7b73" : "#3e87b7")
+          : new THREE.Color("#071946");
         scene.background = skyColor;
-        scene.fog = new THREE.FogExp2(skyColor, index === 14 ? 0.006 : 0.0035);
+        scene.fog = new THREE.FogExp2(skyColor, atmosphere ? 0.006 : 0.0035);
         ground.visible = false;
         dustMaterial.size = 0.04;
-        dustMaterial.opacity = index === 14 ? 0.12 : 0.42;
+        dustMaterial.opacity = atmosphere ? 0.12 : 0.42;
         hemisphere.intensity = 1.25;
         keyLight.intensity = 3;
         addScenery(
-          new THREE.SphereGeometry(80, compactGpu ? 48 : 72, compactGpu ? 32 : 48),
+          new THREE.SphereGeometry(
+            80,
+            reducedWorldDetail() ? 48 : 72,
+            reducedWorldDetail() ? 32 : 48,
+          ),
           new THREE.MeshStandardMaterial({
-            color: index === 14 ? "#5f9d63" : "#3c77ad",
+            color: gasGiant
+              ? "#c99a6f"
+              : atmosphere
+                ? "#5f9d63"
+                : "#3c77ad",
             roughness: 0.92,
             metalness: 0,
             flatShading: true,
@@ -1398,17 +2314,34 @@ export default function Home() {
           sceneryGlow("#8ce7ff", 0.14, true),
           [0, -79, 0],
         );
-        for (let mountain = 0; mountain < 18; mountain += 1) {
-          const angle = (mountain / 18) * Math.PI * 2;
-          const distance = 27 + pseudo(mountain + 211) * 16;
-          addScenery(
-            new THREE.ConeGeometry(2.5 + pseudo(mountain + 221) * 2.5, 4 + pseudo(mountain + 231) * 5, 6),
-            sceneryToon(mountain % 3 ? "#6a7f6d" : "#8b7891"),
-            [Math.cos(angle) * distance, 2.3, Math.sin(angle) * distance],
-            [0, pseudo(mountain + 241) * Math.PI, 0],
-          );
+        if (gasGiant) {
+          [-26, -14, 0, 15, 28].forEach((latitude, band) => {
+            const radius = Math.sqrt(80 ** 2 - latitude ** 2);
+            addScenery(
+              new THREE.TorusGeometry(radius, band % 2 ? 1.5 : 2.4, 7, 96),
+              sceneryGlow(
+                ["#f2c78d", "#b86f62", "#ffe0a6"][band % 3],
+                0.22,
+              ),
+              [0, -79 + latitude, 0],
+              [Math.PI / 2, 0, 0],
+            );
+          });
+        } else {
+          for (let mountain = 0; mountain < 18; mountain += 1) {
+            const angle = (mountain / 18) * Math.PI * 2;
+            const distance = 27 + pseudo(mountain + 211) * 16;
+            addScenery(
+              new THREE.ConeGeometry(2.5 + pseudo(mountain + 221) * 2.5, 4 + pseudo(mountain + 231) * 5, 6),
+              sceneryToon(mountain % 3 ? "#6a7f6d" : "#8b7891"),
+              [Math.cos(angle) * distance, 2.3, Math.sin(angle) * distance],
+              [0, pseudo(mountain + 241) * Math.PI, 0],
+            );
+          }
         }
-        if (index >= 15) addStarField(compactGpu ? 260 : 430, 100, 315);
+        if (!atmosphere) {
+          addStarField(reducedWorldDetail() ? 260 : 430, 100, 315);
+        }
         addEraSignature(index);
         return;
       }
@@ -1419,8 +2352,16 @@ export default function Home() {
       dustField.visible = false;
       hemisphere.intensity = 0.72;
       keyLight.intensity = 3.3;
-      addStarField(compactGpu ? 520 : 900, 108, index * 19);
-      const galaxyCount = index >= 18 ? (compactGpu ? 7 : 11) : 4;
+      addStarField(reducedWorldDetail() ? 520 : 900, 108, index * 19);
+      const galaxyCount = [
+        "galaxy-field",
+        "cosmic-web",
+        "speculative-beyond",
+      ].includes(activeWorldKind)
+        ? reducedWorldDetail()
+          ? 7
+          : 11
+        : 4;
       for (let galaxy = 0; galaxy < galaxyCount; galaxy += 1) {
         const galaxyGroup = new THREE.Group();
         const angle = (galaxy / galaxyCount) * Math.PI * 2 + 0.35;
@@ -1449,7 +2390,10 @@ export default function Home() {
         }
         addScenery(new THREE.IcosahedronGeometry(0.62, 1), sceneryGlow("#fff4b0", 0.86), [0, 0, 0], [0, 0, 0], [1, 1, 1], galaxyGroup);
       }
-      if (index >= 19) {
+      if (
+        activeWorldKind === "cosmic-web" ||
+        activeWorldKind === "speculative-beyond"
+      ) {
         [42, 68, 98].forEach((radius, shell) => {
           addScenery(
             new THREE.SphereGeometry(radius, 28, 18),
@@ -1458,7 +2402,7 @@ export default function Home() {
           );
         });
       }
-      if (index >= 20) {
+      if (activeWorldKind === "speculative-beyond") {
         for (let bubble = 0; bubble < 9; bubble += 1) {
           const angle = (bubble / 9) * Math.PI * 2;
           addScenery(
@@ -1473,6 +2417,17 @@ export default function Home() {
         }
       }
       addEraSignature(index);
+    };
+
+    const rebuildEnvironment = (index: number) => {
+      buildEnvironment(index);
+      if (PERIODIC_WORLD_KINDS.has(activeWorldKind)) {
+        addPeriodicEnvironmentLod(
+          environmentGroup,
+          worldChunkSize(activeWorldKind),
+        );
+      }
+      centralSceneryCompact = null;
     };
 
     const applyEraTheme = (index: number, announce = false) => {
@@ -1515,13 +2470,13 @@ export default function Home() {
       });
       core.castShadow = !early;
       core.receiveShadow = !early;
-      buildEnvironment(index);
+      rebuildEnvironment(index);
       buildSubstrate(index);
 
       if (announce) {
         eraTransitionAge = 0;
         setToast(
-          `ZOOMING OUT! ${activeEra.name} opens into ${eraWorldNames[index] ?? environmentNames[environmentMode]}.`,
+          `ZOOMING OUT! ${activeEra.name} opens into ${WORLD_NAMES[activeWorldKind] ?? environmentNames[environmentMode]}.`,
         );
         setLastFact({
           name: activeEra.name,
@@ -1532,7 +2487,7 @@ export default function Home() {
       }
     };
 
-    buildEnvironment(activeIndex);
+    rebuildEnvironment(activeIndex);
     buildSubstrate(activeIndex);
 
     const createMaterial = (color: string, emissive = false) => {
@@ -1565,7 +2520,7 @@ export default function Home() {
 
     const buildVisual = (curio: Curio, rich = true) => {
       const group = new THREE.Group();
-      const identity = collectibleIdentityFor(curio.name, curio.shape);
+      const identity = collectibleIdentityFor(curio.id, curio.shape);
       const curioSeed = identity.seed;
       const variant = identity.visualVariant % 4;
       const name = curio.name.toLowerCase();
@@ -1583,8 +2538,216 @@ export default function Home() {
       const dark = createMaterial("#261b38");
       const pale = createMaterial("#f6f2e8");
       const shape = curio.shape;
+      const form = curio.visualForm;
 
-      if (shape === "bubble") {
+      if (form === "nuclear-cluster") {
+        const nucleons: [number, number, number][] = [
+          [-0.32, 0.2, 0.05],
+          [0.3, 0.2, -0.08],
+          [-0.05, -0.26, 0.24],
+          [0.08, -0.16, -0.3],
+          [-0.3, -0.18, -0.18],
+          [0.3, -0.14, 0.2],
+        ];
+        nucleons.forEach((position, index) => {
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.3, 18, 13),
+            index % 2 ? material : accent,
+            position,
+          );
+        });
+        if (rich) {
+          addPart(
+            group,
+            new THREE.IcosahedronGeometry(0.78, 2),
+            sceneryGlow(curio.color, 0.16, true),
+            [0, 0, 0],
+          );
+        }
+      } else if (form === "string") {
+        const stringCurve = new THREE.CatmullRomCurve3(
+          Array.from({ length: 11 }, (_, point) => {
+            const x = (point - 5) * 0.16;
+            return new THREE.Vector3(
+              x,
+              Math.sin(point * 1.25) * 0.22,
+              Math.cos(point * 0.72) * 0.08,
+            );
+          }),
+        );
+        addPart(
+          group,
+          new THREE.TubeGeometry(stringCurve, 40, 0.055, 7, false),
+          material,
+          [0, 0, 0],
+        );
+        if (rich) {
+          [-0.8, 0.8].forEach((x) =>
+            addPart(
+              group,
+              new THREE.SphereGeometry(0.12, 12, 9),
+              accent,
+              [x, Math.sin((x / 0.16 + 5) * 1.25) * 0.22, 0],
+            ),
+          );
+        }
+      } else if (form === "double-helix") {
+        const helixPoints = (offset: number) =>
+          Array.from({ length: 25 }, (_, point) => {
+            const angle = (point / 24) * Math.PI * 4 + offset;
+            return new THREE.Vector3(
+              Math.cos(angle) * 0.32,
+              (point / 24 - 0.5) * 1.55,
+              Math.sin(angle) * 0.32,
+            );
+          });
+        [0, Math.PI].forEach((offset, rail) => {
+          addPart(
+            group,
+            new THREE.TubeGeometry(
+              new THREE.CatmullRomCurve3(helixPoints(offset)),
+              64,
+              0.045,
+              7,
+              false,
+            ),
+            rail ? accent : material,
+            [0, 0, 0],
+          );
+        });
+        for (let rung = 1; rung < 12; rung += 2) {
+          const angle = (rung / 12) * Math.PI * 4;
+          addPart(
+            group,
+            new THREE.BoxGeometry(0.62, 0.045, 0.045),
+            rung % 4 === 1 ? pale : accent,
+            [0, (rung / 12 - 0.5) * 1.55, 0],
+            [1, 1, 1],
+            [0, -angle, 0],
+          );
+        }
+      } else if (form === "protein") {
+        addPart(
+          group,
+          new THREE.TorusKnotGeometry(0.43, 0.12, 72, 10, 2, 3),
+          material,
+          [0, 0, 0],
+          [1.05, 0.82, 0.92],
+          [0.45, 0.3, 0.2],
+        );
+        if (rich) {
+          [
+            [-0.44, 0.24, 0.16],
+            [0.38, 0.34, -0.18],
+            [0.2, -0.42, 0.24],
+          ].forEach((position, index) =>
+            addPart(
+              group,
+              new THREE.SphereGeometry(0.13, 12, 9),
+              index % 2 ? accent : pale,
+              position as [number, number, number],
+            ),
+          );
+        }
+      } else if (form === "crystal") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.94, 0.94, 0.94),
+          material,
+          [0, 0, 0],
+          [1, 1, 1],
+          [0.06, 0.28, 0.04],
+        );
+        if (rich) {
+          addPart(
+            group,
+            new THREE.BoxGeometry(0.5, 0.5, 0.08),
+            sceneryGlow("#ffffff", 0.26),
+            [0.12, 0.12, 0.48],
+            [1, 1, 1],
+            [0, 0, 0.12],
+          );
+        }
+      } else if (form === "seed") {
+        if (name.includes("lentil")) {
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.58, 24, 16),
+            material,
+            [0, 0, 0],
+            [1.2, 0.38, 0.88],
+          );
+        } else {
+          addPart(
+            group,
+            new THREE.CapsuleGeometry(0.25, 0.82, 7, 16),
+            material,
+            [0, 0, 0],
+            [1, 0.82, 1],
+            [0.12, 0.18, Math.PI / 2],
+          );
+        }
+        if (rich) {
+          addPart(
+            group,
+            new THREE.CapsuleGeometry(0.025, 0.58, 2, 6),
+            accent,
+            [0, 0.02, 0.23],
+            [1, 1, 1],
+            [0, 0, Math.PI / 2],
+          );
+        }
+      } else if (form === "bead") {
+        addPart(
+          group,
+          new THREE.SphereGeometry(0.62, 26, 18),
+          material,
+          [0, 0, 0],
+        );
+        if (rich) {
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.17, 14, 10),
+            sceneryGlow("#ffffff", 0.4),
+            [-0.25, 0.27, 0.45],
+          );
+        }
+      } else if (form === "park") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.5, 0.14, 1.18),
+          createMaterial("#72bd6a"),
+          [0, -0.35, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.5, 0.025, 0.16),
+          pale,
+          [0, -0.26, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.16, 0.025, 1.18),
+          pale,
+          [0, -0.25, 0],
+        );
+        [-0.48, 0.48].forEach((x, index) => {
+          addPart(
+            group,
+            new THREE.CylinderGeometry(0.07, 0.09, 0.46, 8),
+            dark,
+            [x, -0.06, index ? 0.34 : -0.34],
+          );
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.3, 14, 10),
+            index ? material : accent,
+            [x, 0.28, index ? 0.34 : -0.34],
+            [1, 0.86, 1],
+          );
+        });
+      } else if (shape === "bubble") {
         const bubbleMaterial = new THREE.MeshPhysicalMaterial({
           color: curio.color,
           emissive: curio.color,
@@ -1748,6 +2911,29 @@ export default function Home() {
             );
           }
         }
+      } else if (form === "antibody") {
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.11, 0.72, 5, 12),
+          material,
+          [0, -0.2, 0],
+        );
+        [-1, 1].forEach((side) => {
+          addPart(
+            group,
+            new THREE.CapsuleGeometry(0.11, 0.7, 5, 12),
+            side > 0 ? material : accent,
+            [side * 0.28, 0.34, 0],
+            [1, 1, 1],
+            [0, 0, side * -0.66],
+          );
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.18, 14, 10),
+            pale,
+            [side * 0.56, 0.63, 0],
+          );
+        });
       } else if (shape === "molecule") {
         const atomPositions: [number, number, number][] =
           name.includes("water")
@@ -1778,8 +2964,39 @@ export default function Home() {
           addPart(group, new THREE.CapsuleGeometry(0.08, 0.9, 4, 8), accent, [0, -0.52, 0.1], [1, 1, 1], [0.15, 0.2, 0]);
           addPart(group, new THREE.CapsuleGeometry(0.08, 0.9, 4, 8), material, [0.22, -0.52, -0.1], [1, 1, 1], [-0.1, -0.2, 0.08]);
         }
+      } else if (form === "bacteriophage") {
+        addPart(
+          group,
+          new THREE.IcosahedronGeometry(0.46, 2),
+          material,
+          [0, 0.36, 0],
+        );
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.08, 0.12, 0.72, 8),
+          accent,
+          [0, -0.18, 0],
+        );
+        for (let leg = 0; leg < 6; leg += 1) {
+          const angle = (leg / 6) * Math.PI * 2;
+          addPart(
+            group,
+            new THREE.CapsuleGeometry(0.025, 0.42, 3, 6),
+            pale,
+            [Math.cos(angle) * 0.2, -0.62, Math.sin(angle) * 0.2],
+            [1, 1, 1],
+            [Math.sin(angle) * 0.7, 0, Math.cos(angle) * 0.7],
+          );
+        }
       } else if (shape === "virus") {
-        addPart(group, new THREE.IcosahedronGeometry(0.58, 2), material, [0, 0, 0]);
+        addPart(
+          group,
+          form === "virus-enveloped"
+            ? new THREE.SphereGeometry(0.58, 22, 16)
+            : new THREE.IcosahedronGeometry(0.58, 2),
+          material,
+          [0, 0, 0],
+        );
         const spikeCount = rich ? 8 + variant * 2 : 6;
         for (let i = 0; i < spikeCount; i += 1) {
           const angle = (i / spikeCount) * Math.PI * 2;
@@ -1789,6 +3006,122 @@ export default function Home() {
           addPart(group, new THREE.ConeGeometry(0.08, 0.3, 6), accent, [0, 0, 0.72], [1, 1, 1], [Math.PI / 2, 0, 0]);
           addPart(group, new THREE.ConeGeometry(0.08, 0.3, 6), accent, [0, 0, -0.72], [1, 1, 1], [-Math.PI / 2, 0, 0]);
         }
+      } else if (form === "tardigrade") {
+        for (let segment = 0; segment < 4; segment += 1) {
+          const x = (segment - 1.5) * 0.34;
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.31, 16, 12),
+            segment % 2 ? material : accent,
+            [x, 0, 0],
+            [1.18, 0.85, 0.94],
+          );
+          [-1, 1].forEach((side) => {
+            addPart(
+              group,
+              new THREE.CapsuleGeometry(0.055, 0.3, 3, 7),
+              material,
+              [x, side * -0.31, 0],
+              [1, 1, 1],
+              [0, 0, side * 0.52],
+            );
+          });
+        }
+        addPart(
+          group,
+          new THREE.SphereGeometry(0.2, 14, 10),
+          pale,
+          [0.72, 0.08, 0],
+        );
+      } else if (form === "pollen") {
+        addPart(
+          group,
+          new THREE.IcosahedronGeometry(0.55, 3),
+          material,
+          [0, 0, 0],
+        );
+        const pollenSpikes = rich ? 12 : 8;
+        for (let spike = 0; spike < pollenSpikes; spike += 1) {
+          const theta = (spike / pollenSpikes) * Math.PI * 2;
+          addPart(
+            group,
+            new THREE.ConeGeometry(0.08, 0.28, 6),
+            accent,
+            [Math.cos(theta) * 0.64, Math.sin(theta) * 0.64, 0],
+            [1, 1, 1],
+            [0, 0, theta - Math.PI / 2],
+          );
+        }
+      } else if (form === "diatom") {
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.38, 0.72, 7, 16),
+          material,
+          [0, 0, 0],
+          [1, 0.62, 1],
+          [0, 0, Math.PI / 2],
+        );
+        for (let rib = -2; rib <= 2; rib += 1) {
+          addPart(
+            group,
+            new THREE.TorusGeometry(0.33, 0.025, 5, 16),
+            accent,
+            [rib * 0.18, 0, 0],
+            [0.72, 1, 1],
+            [0, Math.PI / 2, 0],
+          );
+        }
+      } else if (form === "ciliate") {
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.38, 0.86, 8, 18),
+          material,
+          [0, 0, 0],
+          [1, 0.74, 1],
+          [0, 0, Math.PI / 2],
+        );
+        for (let cilium = 0; cilium < 12; cilium += 1) {
+          const angle = (cilium / 12) * Math.PI * 2;
+          addPart(
+            group,
+            new THREE.CapsuleGeometry(0.018, 0.2, 2, 5),
+            pale,
+            [Math.cos(angle) * 0.48, Math.sin(angle) * 0.34, 0],
+            [1, 1, 1],
+            [0, 0, angle],
+          );
+        }
+      } else if (form === "mite") {
+        addPart(
+          group,
+          new THREE.SphereGeometry(0.48, 20, 14),
+          material,
+          [0, 0, 0],
+          [1.15, 0.68, 0.82],
+        );
+        for (let leg = 0; leg < 8; leg += 1) {
+          const side = leg % 2 ? 1 : -1;
+          const row = Math.floor(leg / 2);
+          addPart(
+            group,
+            new THREE.CapsuleGeometry(0.035, 0.38, 3, 7),
+            accent,
+            [(row - 1.5) * 0.17, side * 0.34, 0],
+            [1, 1, 1],
+            [0, 0, side * (0.72 + row * 0.08)],
+          );
+        }
+      } else if (form === "worm") {
+        for (let segment = 0; segment < 6; segment += 1) {
+          const x = (segment - 2.5) * 0.22;
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.22, 14, 10),
+            segment % 2 ? material : accent,
+            [x, Math.sin(segment * 1.2) * 0.12, 0],
+            [1.2, 0.72, 0.72],
+          );
+        }
       } else if (shape === "cell") {
         const membrane = new THREE.MeshPhysicalMaterial({
           color: curio.color,
@@ -1797,12 +3130,27 @@ export default function Home() {
           roughness: 0.3,
           transmission: 0.12,
         });
-        if (name.includes("red blood")) {
+        if (form === "blood-cell") {
           addPart(group, new THREE.TorusGeometry(0.48, 0.22, 16, 32), membrane, [0, 0, 0], [1.15, 0.32, 1.15], [Math.PI / 2, 0, 0]);
-        } else if (name.includes("bacter")) {
+        } else if (form === "immune-cell") {
+          addPart(
+            group,
+            new THREE.IcosahedronGeometry(0.62, 3),
+            membrane,
+            [0, 0, 0],
+            [1.05, 0.92, 1],
+          );
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.28, 18, 13),
+            dark,
+            [-0.12, 0.05, 0.18],
+            [1.2, 0.78, 0.9],
+          );
+        } else if (form === "bacterium") {
           addPart(group, new THREE.CapsuleGeometry(0.34, 0.78, 8, 18), membrane, [0, 0, 0], [1, 1, 1], [0.2, 0.2, Math.PI / 2]);
           addPart(group, new THREE.TorusKnotGeometry(0.2, 0.025, 44, 5, 2, 3), accent, [0, 0, 0]);
-        } else if (name.includes("plant cell")) {
+        } else if (form === "plant-cell") {
           addPart(group, new THREE.BoxGeometry(1.25, 0.88, 0.86), membrane, [0, 0, 0]);
           addPart(group, new THREE.SphereGeometry(0.3, 18, 12), sceneryGlow("#b5f3c5", 0.46), [0.12, 0.02, 0.06]);
           [-0.38, 0.34].forEach((x) =>
@@ -1812,7 +3160,7 @@ export default function Home() {
           addPart(group, new THREE.SphereGeometry(0.58, 24, 18), membrane, [-0.08, 0, 0]);
           addPart(group, new THREE.SphereGeometry(0.28, 18, 12), membrane.clone(), [0.5, 0.25, 0]);
           addPart(group, new THREE.SphereGeometry(0.18, 16, 11), dark, [-0.06, 0.04, 0.1]);
-        } else if (name.includes("neuron")) {
+        } else if (form === "neuron") {
           addPart(group, new THREE.SphereGeometry(0.38, 22, 16), membrane, [-0.2, 0, 0]);
           for (let branch = 0; branch < 5; branch += 1) {
             addPart(
@@ -1825,7 +3173,7 @@ export default function Home() {
             );
           }
           addPart(group, new THREE.CapsuleGeometry(0.055, 1.15, 4, 9), material, [0.76, 0, 0], [1, 1, 1], [0, 0, Math.PI / 2]);
-        } else if (name.includes("sperm")) {
+        } else if (form === "sperm") {
           addPart(group, new THREE.SphereGeometry(0.3, 20, 14), membrane, [-0.35, 0, 0]);
           addPart(group, new THREE.TorusKnotGeometry(0.34, 0.035, 62, 5, 2, 3), accent, [0.32, 0, 0], [1.35, 0.45, 0.45], [0, 0, Math.PI / 2]);
         } else {
@@ -1833,7 +3181,7 @@ export default function Home() {
           addPart(group, new THREE.SphereGeometry(0.24, 18, 12), dark, [0.18, 0.05, 0.18]);
           addPart(group, new THREE.SphereGeometry(0.1, 12, 8), pale, [-0.3, 0.22, 0.2]);
         }
-        if (rich && !name.includes("neuron") && !name.includes("sperm")) {
+        if (rich && form !== "neuron" && form !== "sperm") {
           addPart(group, new THREE.CapsuleGeometry(0.07, 0.24, 3, 8), accent, [-0.26, -0.2, 0.25], [1, 1, 1], [0.5, 0.2, 0.8]);
           addPart(group, new THREE.SphereGeometry(0.075, 9, 7), pale, [0.3, 0.28, -0.25]);
         }
@@ -1863,7 +3211,353 @@ export default function Home() {
         } else if (rich) {
           addPart(group, new THREE.DodecahedronGeometry(0.23, 0), accent, [0.44, -0.18, 0.15]);
         }
-      } else if (shape === "object" && name.includes("button")) {
+      } else if (form === "pencil") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.13, 0.13, 1.25, 6),
+          material,
+          [0, 0, 0],
+          [1, 1, 1],
+          [0, 0, Math.PI / 2],
+        );
+        addPart(
+          group,
+          new THREE.ConeGeometry(0.14, 0.34, 6),
+          pale,
+          [0.78, 0, 0],
+          [1, 1, 1],
+          [0, 0, -Math.PI / 2],
+        );
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.14, 0.14, 0.2, 6),
+          accent,
+          [-0.72, 0, 0],
+          [1, 1, 1],
+          [0, 0, Math.PI / 2],
+        );
+      } else if (form === "mug") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.46, 0.4, 0.72, 22),
+          material,
+          [0, 0, 0],
+        );
+        addPart(
+          group,
+          new THREE.TorusGeometry(0.32, 0.09, 8, 24),
+          accent,
+          [0.48, 0.02, 0],
+          [1, 1, 1],
+          [Math.PI / 2, 0, 0],
+        );
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.33, 0.33, 0.035, 22),
+          dark,
+          [0, 0.37, 0],
+        );
+      } else if (form === "book") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.2, 0.24, 0.82),
+          material,
+          [0, 0, 0],
+          [1, 1, 1],
+          [0.04, 0.12, -0.04],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.05, 0.16, 0.75),
+          pale,
+          [0.04, 0.02, 0],
+          [1, 1, 1],
+          [0.04, 0.12, -0.04],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.08, 0.28, 0.82),
+          accent,
+          [-0.56, 0, 0],
+          [1, 1, 1],
+          [0.04, 0.12, -0.04],
+        );
+      } else if (form === "spoon") {
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.07, 0.9, 4, 10),
+          material,
+          [-0.16, 0, 0],
+          [1, 1, 1],
+          [0, 0, Math.PI / 2],
+        );
+        addPart(
+          group,
+          new THREE.SphereGeometry(0.34, 20, 14),
+          accent,
+          [0.58, 0, 0],
+          [1.25, 0.28, 0.78],
+        );
+      } else if (form === "coin") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.54, 0.54, 0.12, 28),
+          material,
+          [0, 0, 0],
+          [1, 1, 1],
+          [Math.PI / 2, 0, 0],
+        );
+        addPart(
+          group,
+          new THREE.TorusGeometry(0.38, 0.035, 6, 28),
+          accent,
+          [0, 0, 0.07],
+        );
+      } else if (form === "key") {
+        addPart(
+          group,
+          new THREE.TorusGeometry(0.3, 0.11, 8, 22),
+          material,
+          [-0.42, 0, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.9, 0.14, 0.16),
+          material,
+          [0.22, 0, 0],
+        );
+        [0.42, 0.68].forEach((x, tooth) =>
+          addPart(
+            group,
+            new THREE.BoxGeometry(0.13, 0.2 + tooth * 0.08, 0.16),
+            accent,
+            [x, -0.15, 0],
+          ),
+        );
+      } else if (form === "die") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.92, 0.92, 0.92),
+          material,
+          [0, 0, 0],
+          [1, 1, 1],
+          [0.12, 0.2, 0.08],
+        );
+        [-0.22, 0.22].forEach((x) =>
+          [-0.22, 0.22].forEach((y) =>
+            addPart(
+              group,
+              new THREE.SphereGeometry(0.07, 10, 8),
+              dark,
+              [x, y, 0.48],
+            ),
+          ),
+        );
+      } else if (form === "guitar") {
+        addPart(
+          group,
+          new THREE.SphereGeometry(0.42, 20, 14),
+          material,
+          [-0.32, -0.08, 0],
+          [0.85, 1.15, 0.4],
+        );
+        addPart(
+          group,
+          new THREE.SphereGeometry(0.34, 20, 14),
+          material,
+          [0.08, 0.18, 0],
+          [0.78, 1, 0.38],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.18, 1.15, 0.16),
+          dark,
+          [0.42, 0.62, 0],
+          [1, 1, 1],
+          [0, 0, -0.3],
+        );
+      } else if (form === "table") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.35, 0.16, 0.9),
+          material,
+          [0, 0.35, 0],
+        );
+        [-0.52, 0.52].forEach((x) =>
+          [-0.31, 0.31].forEach((z) =>
+            addPart(
+              group,
+              new THREE.BoxGeometry(0.13, 0.85, 0.13),
+              dark,
+              [x, -0.08, z],
+            ),
+          ),
+        );
+      } else if (form === "screen") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.25, 0.78, 0.16),
+          dark,
+          [0, 0.2, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.06, 0.59, 0.05),
+          material,
+          [0, 0.2, 0.105],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.16, 0.42, 0.16),
+          accent,
+          [0, -0.38, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.7, 0.1, 0.42),
+          accent,
+          [0, -0.58, 0],
+        );
+      } else if (form === "potted-plant") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.3, 0.46, 0.58, 16),
+          material,
+          [0, -0.38, 0],
+        );
+        [-0.28, 0, 0.28].forEach((x, leaf) =>
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.34, 16, 12),
+            leaf % 2 ? accent : createMaterial("#60a85d"),
+            [x, 0.22 + (leaf % 2) * 0.2, 0],
+            [0.72, 1.15, 0.48],
+            [0, 0, x * 1.4],
+          ),
+        );
+      } else if (form === "bed") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.45, 0.32, 0.92),
+          material,
+          [0, -0.12, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.34, 0.17, 0.83),
+          pale,
+          [0, 0.13, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.16, 0.92, 0.92),
+          accent,
+          [-0.68, 0.27, 0],
+        );
+      } else if (form === "appliance") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.94, 1.35, 0.82),
+          material,
+          [0, 0, 0],
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.75, 0.045, 0.08),
+          accent,
+          [0, 0.22, 0.44],
+        );
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.035, 0.34, 3, 8),
+          dark,
+          [0.29, 0.49, 0.46],
+        );
+      } else if (form === "bathtub") {
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.42, 0.72, 8, 18),
+          material,
+          [0, 0, 0],
+          [1.45, 0.46, 1],
+          [0, 0, Math.PI / 2],
+        );
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.3, 0.58, 8, 18),
+          pale,
+          [0, 0.16, 0],
+          [1.35, 0.3, 0.86],
+          [0, 0, Math.PI / 2],
+        );
+        addPart(
+          group,
+          new THREE.TorusGeometry(0.16, 0.035, 7, 20, Math.PI),
+          accent,
+          [-0.48, 0.42, 0],
+          [1, 1, 1],
+          [Math.PI / 2, 0, 0],
+        );
+      } else if (form === "tree") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.13, 0.2, 1.05, 10),
+          dark,
+          [0, -0.18, 0],
+        );
+        [
+          [-0.3, 0.48, 0],
+          [0.28, 0.52, 0.08],
+          [0, 0.78, -0.08],
+        ].forEach((position, crown) =>
+          addPart(
+            group,
+            new THREE.DodecahedronGeometry(0.46, 1),
+            crown % 2 ? material : accent,
+            position as [number, number, number],
+          ),
+        );
+      } else if (form === "pool") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.72, 0.76, 0.24, 28),
+          material,
+          [0, 0, 0],
+        );
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.6, 0.6, 0.04, 28),
+          createMaterial("#64d8e8", true),
+          [0, 0.14, 0],
+        );
+      } else if (form === "train") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.55, 0.68, 0.66),
+          material,
+          [0, 0.06, 0],
+        );
+        [-0.48, 0, 0.48].forEach((x) =>
+          addPart(
+            group,
+            new THREE.BoxGeometry(0.24, 0.24, 0.04),
+            pale,
+            [x, 0.18, 0.35],
+          ),
+        );
+        [-0.52, 0.52].forEach((x) =>
+          [-0.32, 0.32].forEach((z) =>
+            addPart(
+              group,
+              new THREE.CylinderGeometry(0.16, 0.16, 0.1, 14),
+              dark,
+              [x, -0.35, z],
+              [1, 1, 1],
+              [Math.PI / 2, 0, 0],
+            ),
+          ),
+        );
+      } else if (form === "button") {
         addPart(group, new THREE.CylinderGeometry(0.58, 0.58, 0.16, 28), material, [0, 0, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
         [
           [-0.18, 0.09, 0.17],
@@ -1873,30 +3567,30 @@ export default function Home() {
         ].forEach((position) =>
           addPart(group, new THREE.CylinderGeometry(0.055, 0.055, 0.19, 10), dark, position as [number, number, number], [1, 1, 1], [Math.PI / 2, 0, 0]),
         );
-      } else if (shape === "object" && name.includes("toy brick")) {
+      } else if (form === "brick") {
         addPart(group, new THREE.BoxGeometry(1.2, 0.48, 0.72), material, [0, 0, 0]);
         [-0.4, 0, 0.4].forEach((x) =>
           [-0.22, 0.22].forEach((z) =>
             addPart(group, new THREE.CylinderGeometry(0.12, 0.12, 0.14, 14), accent, [x, 0.31, z]),
           ),
         );
-      } else if (shape === "object" && name.includes("bottle cap")) {
+      } else if (form === "bottle-cap") {
         addPart(group, new THREE.CylinderGeometry(0.58, 0.62, 0.3, 24), material, [0, 0, 0]);
         addPart(group, new THREE.CylinderGeometry(0.42, 0.42, 0.06, 24), pale, [0, 0.18, 0]);
         for (let ridge = 0; ridge < 12; ridge += 1) {
           const angle = (ridge / 12) * Math.PI * 2;
           addPart(group, new THREE.BoxGeometry(0.08, 0.28, 0.12), accent, [Math.cos(angle) * 0.61, 0, Math.sin(angle) * 0.61], [1, 1, 1], [0, -angle, 0]);
         }
-      } else if (shape === "object" && name.includes("shoe")) {
+      } else if (form === "shoe") {
         addPart(group, new THREE.CapsuleGeometry(0.32, 0.82, 6, 14), material, [0.05, -0.08, 0], [1, 0.68, 1.2], [0.1, 0.1, Math.PI / 2]);
         addPart(group, new THREE.BoxGeometry(0.66, 0.5, 0.62), accent, [0.25, 0.2, 0]);
         addPart(group, new THREE.BoxGeometry(1.25, 0.09, 0.68), pale, [0, -0.35, 0]);
-      } else if (shape === "object" && name.includes("floor lamp")) {
+      } else if (form === "lamp") {
         addPart(group, new THREE.CylinderGeometry(0.3, 0.42, 0.12, 20), dark, [0, -0.7, 0]);
         addPart(group, new THREE.CylinderGeometry(0.055, 0.055, 1.35, 10), material, [0, 0, 0]);
         addPart(group, new THREE.ConeGeometry(0.5, 0.72, 20, 1, true), accent, [0, 0.85, 0]);
         addPart(group, new THREE.SphereGeometry(0.12, 12, 9), pale, [0, 0.65, 0]);
-      } else if (shape === "object" && name.includes("couch")) {
+      } else if (form === "couch") {
         addPart(group, new THREE.BoxGeometry(1.45, 0.48, 0.68), material, [0, -0.12, 0]);
         addPart(group, new THREE.BoxGeometry(1.45, 0.7, 0.22), accent, [0, 0.38, 0.3]);
         [-0.66, 0.66].forEach((x) =>
@@ -1904,7 +3598,7 @@ export default function Home() {
         );
         addPart(group, new THREE.BoxGeometry(0.62, 0.12, 0.58), pale, [-0.33, 0.17, -0.03]);
         addPart(group, new THREE.BoxGeometry(0.62, 0.12, 0.58), pale, [0.33, 0.17, -0.03]);
-      } else if (shape === "object" && name.includes("bicycle")) {
+      } else if (form === "bicycle") {
         [-0.54, 0.54].forEach((x) =>
           addPart(group, new THREE.TorusGeometry(0.34, 0.055, 8, 28), dark, [x, -0.22, 0], [1, 1, 1], [0, 0, 0]),
         );
@@ -1919,6 +3613,53 @@ export default function Home() {
             addPart(group, new THREE.BoxGeometry(0.12, 0.12, 0.82), accent, [x, 0.18, 0]),
           );
         }
+      } else if (form === "motorcycle") {
+        [-0.54, 0.54].forEach((x) =>
+          addPart(
+            group,
+            new THREE.TorusGeometry(0.31, 0.065, 8, 24),
+            dark,
+            [x, -0.26, 0],
+          ),
+        );
+        addPart(
+          group,
+          new THREE.TorusGeometry(0.4, 0.055, 7, 18),
+          material,
+          [0, -0.02, 0],
+          [1, 0.76, 1],
+        );
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.06, 0.56, 3, 8),
+          accent,
+          [0.31, 0.13, 0],
+          [1, 1, 1],
+          [0, 0, -0.68],
+        );
+      } else if (form === "sailboat") {
+        addPart(
+          group,
+          new THREE.CapsuleGeometry(0.3, 1.05, 6, 16),
+          material,
+          [0, -0.25, 0],
+          [1, 0.52, 1.12],
+          [0, 0, Math.PI / 2],
+        );
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.035, 0.045, 1.45, 8),
+          dark,
+          [0, 0.48, 0],
+        );
+        addPart(
+          group,
+          new THREE.ConeGeometry(0.62, 1.18, 3),
+          pale,
+          [0.31, 0.53, 0],
+          [1, 1, 0.12],
+          [0, 0, -0.05],
+        );
       } else if (shape === "car") {
         addPart(group, new THREE.BoxGeometry(1.45, 0.46, 0.72), material, [0, 0, 0]);
         addPart(group, new THREE.BoxGeometry(0.75, 0.38, 0.67), pale, [-0.1, 0.38, 0]);
@@ -1928,6 +3669,69 @@ export default function Home() {
             addPart(group, new THREE.SphereGeometry(0.09, 10, 8), accent, [-0.72, 0.02, z]),
           );
         }
+      } else if (form === "bridge") {
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.65, 0.18, 0.52),
+          material,
+          [0, -0.2, 0],
+        );
+        [-0.56, 0.56].forEach((x) => {
+          addPart(
+            group,
+            new THREE.BoxGeometry(0.12, 1.05, 0.12),
+            dark,
+            [x, 0.22, 0],
+          );
+          addPart(
+            group,
+            new THREE.TorusGeometry(0.58, 0.025, 5, 20, Math.PI),
+            accent,
+            [x * 0.5, 0.36, 0.02],
+            [1, 1, 1],
+            [0, 0, x > 0 ? 0 : Math.PI],
+          );
+        });
+      } else if (
+        form === "tower"
+      ) {
+        addPart(
+          group,
+          new THREE.BoxGeometry(0.78, 1.6, 0.72),
+          material,
+          [0, 0, 0],
+        );
+        for (let floor = -2; floor <= 2; floor += 1) {
+          [-0.2, 0.2].forEach((x) =>
+            addPart(
+              group,
+              new THREE.BoxGeometry(0.13, 0.13, 0.04),
+              floor % 2 ? pale : accent,
+              [x, floor * 0.25, 0.38],
+            ),
+          );
+        }
+        addPart(
+          group,
+          new THREE.ConeGeometry(0.12, 0.45, 6),
+          accent,
+          [0, 1.02, 0],
+        );
+      } else if (form === "doorway") {
+        [-0.48, 0.48].forEach((x) =>
+          addPart(
+            group,
+            new THREE.BoxGeometry(0.2, 1.45, 0.32),
+            material,
+            [x, 0, 0],
+          ),
+        );
+        addPart(
+          group,
+          new THREE.BoxGeometry(1.16, 0.22, 0.32),
+          accent,
+          [0, 0.72, 0],
+        );
       } else if (shape === "house") {
         if (name.includes("water tower")) {
           addPart(group, new THREE.SphereGeometry(0.58, 24, 16), material, [0, 0.45, 0], [1.05, 0.82, 1.05]);
@@ -2103,7 +3907,7 @@ export default function Home() {
 
     const visualTemplates = new Map<string, THREE.Object3D>();
     const makeVisual = (curio: Curio, rich = true) => {
-      const key = `${curio.name}:${rich ? "rich" : "simple"}`;
+      const key = `${curio.id}:${rich ? "rich" : "simple"}`;
       let template = visualTemplates.get(key);
       if (!template) {
         template = buildVisual(curio, rich);
@@ -2172,6 +3976,81 @@ export default function Home() {
     let pickups: Pickup[] = [];
     const historyEnabled = labEra === null;
     const attachments: THREE.Object3D[] = [];
+    const mashProxyMesh = new THREE.InstancedMesh(
+      new THREE.IcosahedronGeometry(1, 1),
+      new THREE.MeshToonMaterial({
+        color: "#ffffff",
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.82,
+      }),
+      96,
+    );
+    mashProxyMesh.count = 0;
+    mashProxyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mashProxyMesh.frustumCulled = false;
+    mashGroup.add(mashProxyMesh);
+    const mashProxyDummy = new THREE.Object3D();
+    const mashProxyRecords: {
+      record: MashRecordV4;
+      color: string;
+    }[] = [];
+    let mashProxyIncludesRich = false;
+    const richMashLimit = () =>
+      qualityTier === "high" ? 24 : qualityTier === "balanced" ? 18 : 12;
+    const refreshMashProxy = () => {
+      const visibleProxyRecords = [
+        ...mashProxyRecords,
+        ...(mashProxyIncludesRich
+          ? attachments.flatMap((visual) => {
+              const record = visual.userData.mashRecord as
+                | MashRecordV4
+                | undefined;
+              return record
+                ? [
+                    {
+                      record,
+                      color: String(
+                        visual.userData.mashColor ?? activeEra.palette[2],
+                      ),
+                    },
+                  ]
+                : [];
+            })
+          : []),
+      ].slice(-96);
+      visibleProxyRecords.forEach(({ record, color }, index) => {
+        mashProxyDummy.position.set(...record.position);
+        mashProxyDummy.rotation.set(...record.rotation);
+        const authoredScale = Math.max(...record.scale.map(Math.abs));
+        mashProxyDummy.scale.setScalar(
+          Math.max(0.07, Math.min(0.42, authoredScale * 0.52)),
+        );
+        mashProxyDummy.updateMatrix();
+        mashProxyMesh.setMatrixAt(index, mashProxyDummy.matrix);
+        mashProxyMesh.setColorAt(index, new THREE.Color(color));
+      });
+      mashProxyMesh.count = visibleProxyRecords.length;
+      mashProxyMesh.instanceMatrix.needsUpdate = true;
+      if (mashProxyMesh.instanceColor) {
+        mashProxyMesh.instanceColor.needsUpdate = true;
+      }
+      mashProxyMesh.visible = mashProxyMesh.count > 0;
+    };
+    const setMashProxyLod = (compact: boolean) => {
+      if (compact === mashProxyIncludesRich) return;
+      mashProxyIncludesRich = compact;
+      attachments.forEach((visual) => {
+        visual.visible = !compact;
+      });
+      refreshMashProxy();
+    };
+    const addMashProxy = (record: MashRecordV4, color: string) => {
+      mashProxyRecords.push({ record, color });
+      const proxyLimit = Math.max(0, 96 - richMashLimit());
+      while (mashProxyRecords.length > proxyLimit) mashProxyRecords.shift();
+      refreshMashProxy();
+    };
     const popBursts: {
       mesh: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
       born: number;
@@ -2227,13 +4106,24 @@ export default function Home() {
     };
 
     const visibleMashRecords = mashHistoryRef.current.filter(
-      (record) => record.sourceEra === activeIndex,
+      (record) => record.eraId === activeEra.id,
     );
     if (historyEnabled) mashHistoryRef.current = visibleMashRecords;
+    const restoredRichStart = Math.max(
+      0,
+      visibleMashRecords.length - richMashLimit(),
+    );
     visibleMashRecords.forEach((record, recordIndex) => {
-      const sourceEra = ERAS[record.sourceEra];
-      const curio = sourceEra?.curios[record.curioIndex];
-      if (!curio) return;
+      const sourceEraIndex = ERAS.findIndex((era) => era.id === record.eraId);
+      const sourceEra = ERAS[sourceEraIndex];
+      const curio = sourceEra?.curios.find(
+        (candidate) => candidate.id === record.curioId,
+      );
+      if (!curio || sourceEraIndex < 0) return;
+      if (recordIndex < restoredRichStart) {
+        addMashProxy(record, curio.color);
+        return;
+      }
       const restoredPosition = new THREE.Vector3(...record.position);
       const legacyInside =
         record.mergedInside && restoredPosition.length() < game.radius * 0.58;
@@ -2255,12 +4145,14 @@ export default function Home() {
       }
       const visual = makeVisual(curio);
       const restoredMarker = makeMarker(curio.symbol);
-      restoredMarker.visible = record.sourceEra >= activeIndex;
+      restoredMarker.visible = sourceEraIndex >= activeIndex;
       visual.add(restoredMarker);
-      visual.userData.sourceEra = record.sourceEra;
+      visual.userData.sourceEra = sourceEraIndex;
       visual.position.copy(restoredPosition);
       visual.rotation.set(...record.rotation);
       visual.scale.set(...record.scale);
+      visual.userData.mashRecord = record;
+      visual.userData.mashColor = curio.color;
       if (record.mergedInside) makeFieldLike(visual);
       mashGroup.add(visual);
       attachments.push(visual);
@@ -2282,8 +4174,33 @@ export default function Home() {
         disposeVisual(attachment);
       });
       attachments.length = 0;
+      mashProxyRecords.length = 0;
+      refreshMashProxy();
       stickingPieces.length = 0;
       if (historyEnabled) mashHistoryRef.current = [];
+    };
+
+    const collapseRichMashToBudget = () => {
+      let collapsed = false;
+      while (attachments.length > richMashLimit()) {
+        const oldest = attachments.shift();
+        if (!oldest) break;
+        collapsed = true;
+        const record = oldest.userData.mashRecord as MashRecordV4 | undefined;
+        if (record) {
+          addMashProxy(
+            record,
+            String(oldest.userData.mashColor ?? activeEra.palette[2]),
+          );
+        }
+        const stickingIndex = stickingPieces.findIndex(
+          (piece) => piece.visual === oldest,
+        );
+        if (stickingIndex >= 0) stickingPieces.splice(stickingIndex, 1);
+        mashGroup.remove(oldest);
+        disposeVisual(oldest);
+      }
+      if (collapsed) refreshMashProxy();
     };
 
     const spawnPickup = (seed: number, forcedSourceEra?: number) => {
@@ -2292,7 +4209,7 @@ export default function Home() {
         bandRoll > 0.84 && activeIndex < ERAS.length - 1
           ? activeIndex + 1
           : activeIndex;
-      const obstacleLimit = compactGpu ? 3 : 5;
+      const obstacleLimit = reducedWorldDetail() ? 3 : 5;
       if (
         chosenEra > activeIndex &&
         pickups.filter((pickup) => pickup.sourceEra > activeIndex).length >=
@@ -2308,7 +4225,7 @@ export default function Home() {
       const source = ERAS[sourceEra];
       const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
       const curio = source.curios[curioIndex];
-      const identity = collectibleIdentityFor(curio.name, curio.shape);
+      const identity = collectibleIdentityFor(curio.id, curio.shape);
       let big = levelDelta > 0;
       let size = Math.max(
         0.11,
@@ -2363,8 +4280,29 @@ export default function Home() {
       let spawnX = game.x;
       let spawnZ = game.z;
       let bestClearance = Number.NEGATIVE_INFINITY;
-      const attempts = big ? 36 : 1;
+      const attempts = big ? 36 : 18;
       const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
+      const chunkSize = worldChunkSize(activeWorldKind);
+      const sceneryClearanceAt = (x: number, z: number) => {
+        const localX = localChunkCoordinate(x, chunkSize);
+        const localZ = localChunkCoordinate(z, chunkSize);
+        return sceneryColliders.reduce(
+          (minimum, collider) =>
+            Math.min(
+              minimum,
+              circleAabbClearance(
+                localX,
+                localZ,
+                visualRadius + (big ? rollingEnvelope : 0) + 0.45,
+                collider.x,
+                collider.z,
+                collider.halfWidth,
+                collider.halfDepth,
+              ),
+            ),
+          Number.POSITIVE_INFINITY,
+        );
+      };
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         const candidateRadius = big
           ? Math.max(
@@ -2375,7 +4313,7 @@ export default function Home() {
         const candidateAngle = pseudo(seed + 13 + attempt * 19) * Math.PI * 2;
         const candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
         const candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
-        const clearance = big
+        const pickupClearance = big
           ? pickups.reduce((minimum, other) => {
               if (!other.big) return minimum;
               const separation = Math.hypot(
@@ -2390,6 +4328,19 @@ export default function Home() {
               return Math.min(minimum, separation - required);
             }, Number.POSITIVE_INFINITY)
           : Number.POSITIVE_INFINITY;
+        const localX = localChunkCoordinate(candidateX, chunkSize);
+        const localZ = localChunkCoordinate(candidateZ, chunkSize);
+        const corridorClearance =
+          big &&
+          PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
+          (Math.abs(localX) < 16 || Math.abs(localZ) < 16)
+            ? -1
+            : Number.POSITIVE_INFINITY;
+        const clearance = Math.min(
+          pickupClearance,
+          sceneryClearanceAt(candidateX, candidateZ),
+          corridorClearance,
+        );
         if (clearance > bestClearance) {
           bestClearance = clearance;
           spawnX = candidateX;
@@ -2397,7 +4348,7 @@ export default function Home() {
         }
         if (clearance >= 0) break;
       }
-      if (big && bestClearance < 0) {
+      if (bestClearance < 0) {
         disposeVisual(visual);
         return false;
       }
@@ -2412,7 +4363,6 @@ export default function Home() {
         marker,
         curio,
         sourceEra,
-        curioIndex,
         size,
         visualRadius,
         bulkRadius,
@@ -2457,18 +4407,34 @@ export default function Home() {
     const collect = (pickup: Pickup, now: number) => {
       game.picked += 1;
       game.lastPickup = now / 1000;
+      const sourceEra = ERAS[pickup.sourceEra];
+      collectionRef.current = aggregatePickups(
+        [
+          {
+            eraId: sourceEra.id,
+            curioId: pickup.curio.id,
+            pickedAt: Date.now(),
+          },
+        ],
+        collectionRef.current,
+      );
+      setCollection([...collectionRef.current]);
       const isCurrentScale = pickup.sourceEra === activeIndex;
       const gameplayBulkFactor = GAMEPLAY_BULK_FACTORS[pickup.curio.shape];
-      game.progress = Math.min(
-        1,
-        game.progress +
-          collectionProgressGain(
-            game.radius,
-            pickup.bulkRadius,
-            gameplayBulkFactor,
-          ),
+      game.progress = progressAfterPickup(
+        game.progress,
+        pickup.sourceEra,
+        activeIndex,
+        collectionProgressGain(
+          game.radius,
+          pickup.bulkRadius,
+          gameplayBulkFactor,
+          game.mode,
+        ),
       );
-      game.radius = radiusForLayerProgress(game.progress);
+      if (isCurrentScale) {
+        game.radius = radiusForLayerProgress(game.progress);
+      }
       const contributionLabel =
         gameplayBulkFactor >= 1
           ? "chunky gameplay bulk"
@@ -2545,27 +4511,30 @@ export default function Home() {
           targetScale,
           startedAt: now,
         });
+        const mashRecord: MashRecordV4 = {
+          eraId: sourceEra.id,
+          curioId: pickup.curio.id,
+          position: pickup.visual.position.toArray() as [number, number, number],
+          rotation: [
+            pickup.visual.rotation.x,
+            pickup.visual.rotation.y,
+            pickup.visual.rotation.z,
+          ],
+          scale: targetScale.toArray() as [number, number, number],
+          mergedInside: fieldLike,
+        };
+        pickup.visual.userData.mashRecord = mashRecord;
+        pickup.visual.userData.mashColor = pickup.curio.color;
         if (historyEnabled) {
-          mashHistoryRef.current.push({
-            sourceEra: pickup.sourceEra,
-            curioIndex: pickup.curioIndex,
-            position: pickup.visual.position.toArray() as [number, number, number],
-            rotation: [
-              pickup.visual.rotation.x,
-              pickup.visual.rotation.y,
-              pickup.visual.rotation.z,
-            ],
-            scale: targetScale.toArray() as [number, number, number],
-            mergedInside: fieldLike,
-          });
-        }
-        if (attachments.length > 96) {
-          const oldest = attachments.shift();
-          if (historyEnabled) mashHistoryRef.current.shift();
-          if (oldest) {
-            mashGroup.remove(oldest);
-            disposeVisual(oldest);
+          mashHistoryRef.current.push(mashRecord);
+          if (mashHistoryRef.current.length > 96) {
+            mashHistoryRef.current.shift();
           }
+        }
+        collapseRichMashToBudget();
+        if (mashProxyIncludesRich) {
+          pickup.visual.visible = false;
+          refreshMashProxy();
         }
       } else {
         disposeVisual(pickup.visual);
@@ -2606,17 +4575,18 @@ export default function Home() {
     let rollRadiusClock = 0;
     let performanceWindowStarted = performance.now();
     let performanceFrames = 0;
+    let measuredFps = 60;
     let effectiveRollRadius = game.radius;
     const rollBounds = new THREE.Box3();
     const rollDimensions = new THREE.Vector3();
     const desiredCamera = new THREE.Vector3();
     const cameraTarget = new THREE.Vector3();
+    const farPickupDummy = new THREE.Object3D();
     let transitionWorldScale = 1;
-
     const animate = (now: number) => {
       const dt = Math.min(0.033, (now - last) / 1000);
       last = now;
-      if (document.hidden || showAtlasRef.current) {
+      if (document.hidden || modalOpenRef.current) {
         performanceWindowStarted = now;
         performanceFrames = 0;
         frame = requestAnimationFrame(animate);
@@ -2625,8 +4595,18 @@ export default function Home() {
       performanceFrames += 1;
       const performanceWindow = now - performanceWindowStarted;
       if (performanceWindow >= 5000) {
-        const measuredFps = (performanceFrames * 1000) / performanceWindow;
-        const nextQualityTier = qualityTierForFps(measuredFps, qualityTier);
+        measuredFps = (performanceFrames * 1000) / performanceWindow;
+        const performanceBudget = worldPerformanceBudget(qualityTier);
+        const overRenderBudget =
+          renderer.info.render.calls > performanceBudget.maxDrawCalls ||
+          renderer.info.render.triangles > performanceBudget.maxTriangles;
+        const budgetAdjustedFps = overRenderBudget
+          ? Math.min(measuredFps, qualityTier === "high" ? 40 : 28)
+          : measuredFps;
+        const nextQualityTier = qualityTierForFps(
+          budgetAdjustedFps,
+          qualityTier,
+        );
         if (nextQualityTier !== qualityTier) {
           qualityTier = nextQualityTier;
           renderer.setPixelRatio(
@@ -2643,6 +4623,15 @@ export default function Home() {
             const pickup = pickups.pop();
             if (pickup) removePickup(pickup);
           }
+          collapseRichMashToBudget();
+          const qualityViewScale = semanticViewScale(
+            activeIndex,
+            game.lens,
+            ERAS.length,
+          );
+          rebuildEnvironment(activeIndex);
+          buildSubstrate(qualityViewScale);
+          applyGroundScaleTexture(qualityViewScale);
         }
         performanceWindowStarted = now;
         performanceFrames = 0;
@@ -2691,6 +4680,52 @@ export default function Home() {
         }
         game.x += game.vx * dt;
         game.z += game.vz * dt;
+        const colliderChunkSize = worldChunkSize(activeWorldKind);
+        const shiftX = floatingOriginShift(
+          game.x,
+          colliderChunkSize,
+        );
+        const shiftZ = floatingOriginShift(
+          game.z,
+          colliderChunkSize,
+        );
+        if (shiftX !== 0 || shiftZ !== 0) {
+          game.originX += shiftX;
+          game.originZ += shiftZ;
+          game.x -= shiftX;
+          game.z -= shiftZ;
+          pickups.forEach((pickup) => {
+            pickup.root.position.x -= shiftX;
+            pickup.root.position.z -= shiftZ;
+          });
+          popBursts.forEach((burst) => {
+            burst.mesh.position.x -= shiftX;
+            burst.mesh.position.z -= shiftZ;
+          });
+          camera.position.x -= shiftX;
+          camera.position.z -= shiftZ;
+        }
+        const colliderChunkX =
+          Math.round(game.x / colliderChunkSize) * colliderChunkSize;
+        const colliderChunkZ =
+          Math.round(game.z / colliderChunkSize) * colliderChunkSize;
+        sceneryColliders.forEach((collider) => {
+          const collision = resolveCircleAabbCollision(
+            game.x,
+            game.z,
+            game.vx,
+            game.vz,
+            effectiveRollRadius,
+            colliderChunkX + collider.x,
+            colliderChunkZ + collider.z,
+            collider.halfWidth,
+            collider.halfDepth,
+          );
+          game.x = collision.x;
+          game.z = collision.z;
+          game.vx = collision.vx;
+          game.vz = collision.vz;
+        });
         rollGroup.rotation.x += (game.vz * dt) / Math.max(0.5, game.radius);
         rollGroup.rotation.z -= (game.vx * dt) / Math.max(0.5, game.radius);
 
@@ -2747,6 +4782,8 @@ export default function Home() {
         dustField.scale.setScalar(transitionWorldScale);
         if (progress >= 1) {
           const nextIndex = Math.min(ERAS.length - 1, game.era + 1);
+          const unlockedDeepLens =
+            nextIndex === ERAS.length - 1 && game.era < nextIndex;
           game.era = nextIndex;
           game.progress = 0;
           game.radius = CORE_RADIUS_MIN;
@@ -2764,6 +4801,11 @@ export default function Home() {
           pickups.forEach((pickup) => removePickup(pickup));
           pickups = [];
           applyEraTheme(nextIndex, true);
+          if (unlockedDeepLens) {
+            setToast(
+              "Known-universe journey complete! The free lens now opens from 1/256× to 256×.",
+            );
+          }
           scaleTransitionStarted = -1;
           populate();
         }
@@ -2790,6 +4832,17 @@ export default function Home() {
         });
       }
 
+      const continuousViewScale = semanticViewScale(
+        activeIndex,
+        game.lens,
+        ERAS.length,
+      );
+      const nextResidencyKey = substrateKeyFor(continuousViewScale);
+      if (nextResidencyKey !== semanticResidencyKey) {
+        buildSubstrate(continuousViewScale);
+        applyGroundScaleTexture(continuousViewScale);
+      }
+
       spawnClock += dt;
       const lowPickupThreshold = Math.floor(activePickupBudget() * 0.84);
       if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
@@ -2800,17 +4853,52 @@ export default function Home() {
       const floatHeight =
         game.radius * 0.94 + (early ? Math.sin(now * 0.0017) * 0.035 : 0);
       playerRoot.position.set(game.x, floatHeight, game.z);
-      environmentGroup.position.set(game.x, 0, game.z);
-      substrateGroup.position.set(game.x, 0, game.z);
+      const mashProjectedSize = projectedDiameterPixels(
+        effectiveRollRadius * 2 * transitionWorldScale,
+        camera.position.distanceTo(playerRoot.position),
+        camera.fov,
+        height,
+      );
+      setMashProxyLod(lodForProjectedDiameter(mashProjectedSize) !== "rich");
+      const sceneryProjectedSize = projectedDiameterPixels(
+        3 * transitionWorldScale,
+        camera.position.distanceTo(playerRoot.position),
+        camera.fov,
+        height,
+      );
+      setCentralSceneryLod(
+        PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
+          lodForProjectedDiameter(sceneryProjectedSize) !== "rich",
+      );
+      const activeChunkSize = worldChunkSize(activeWorldKind);
+      const chunkX = Math.round(game.x / activeChunkSize) * activeChunkSize;
+      const chunkZ = Math.round(game.z / activeChunkSize) * activeChunkSize;
+      if (PERIODIC_WORLD_KINDS.has(activeWorldKind)) {
+        environmentGroup.position.set(chunkX, 0, chunkZ);
+      } else {
+        // Sky/planet/cosmic environments are centered continuously instead of
+        // snapping a single diorama at chunk boundaries.
+        environmentGroup.position.set(game.x, 0, game.z);
+      }
+      substrateGroup.position.set(chunkX, 0, chunkZ);
       ground.position.set(game.x, 0, game.z);
       if (groundTexture) {
-        groundTexture.offset.set(game.x * 0.018, -game.z * 0.018);
+        groundTexture.offset.set(
+          (game.x + game.originX) * 0.018,
+          -(game.z + game.originZ) * 0.018,
+        );
       }
       const gridCell = 170 / 90;
+      const phaseX = game.x + game.originX;
+      const phaseZ = game.z + game.originZ;
       grid.position.set(
-        game.x - THREE.MathUtils.euclideanModulo(game.x, gridCell),
+        phaseX -
+          THREE.MathUtils.euclideanModulo(phaseX, gridCell) -
+          game.originX,
         0.012,
-        game.z - THREE.MathUtils.euclideanModulo(game.z, gridCell),
+        phaseZ -
+          THREE.MathUtils.euclideanModulo(phaseZ, gridCell) -
+          game.originZ,
       );
       dustField.position.set(game.x, 0, game.z);
       const faceScale = game.radius * 0.94;
@@ -2843,15 +4931,34 @@ export default function Home() {
       dustField.rotation.y += dt * (early ? 0.014 : 0.003);
       glowLight.position.set(game.x + 4, floatHeight + 4, game.z - 3);
 
+      let farPickupCount = 0;
+      let richPickupCount = 0;
+      const richPickupBudget =
+        worldPerformanceBudget(qualityTier).maxRichObjects;
       pickups.forEach((pickup, index) => {
         const distance = Math.hypot(
           pickup.root.position.x - game.x,
           pickup.root.position.z - game.z,
         );
-        if (pickup.marker) {
-          pickup.marker.visible = pickup.sourceEra >= activeIndex && distance < 20;
-        }
         pickup.big = pickup.visualRadius > effectiveRollRadius * 1.08;
+        const projectedSize = projectedDiameterPixels(
+          pickup.visualRadius * 2 * transitionWorldScale,
+          camera.position.distanceTo(pickup.root.position),
+          camera.fov,
+          height,
+        );
+        const projectedLod = lodForProjectedDiameter(projectedSize);
+        const useRichVisual =
+          richPickupCount < richPickupBudget &&
+          (projectedLod === "rich" ||
+            (pickup.big && projectedLod === "simple" && distance < 30));
+        pickup.root.visible = useRichVisual;
+        if (pickup.marker) {
+          pickup.marker.visible =
+            useRichVisual &&
+            pickup.sourceEra >= activeIndex &&
+            distance < 20;
+        }
         const identity = pickup.identity;
         const motionTime =
           now * 0.001 * identity.motionRate + pickup.wiggle + index * 0.017;
@@ -2867,6 +4974,37 @@ export default function Home() {
           identity.motion === "pulse"
             ? 1 + Math.sin(motionTime * 3.1) * 0.045
             : 1;
+
+        if (!useRichVisual) {
+          farPickupDummy.position.set(
+            pickup.root.position.x,
+            pickup.baseY + Math.sin(motionTime * 1.7) * motionAmount * 0.45,
+            pickup.root.position.z,
+          );
+          farPickupDummy.rotation.set(
+            0,
+            motionTime * 0.13,
+            Math.sin(motionTime) * 0.12,
+          );
+          farPickupDummy.scale.setScalar(
+            pickup.visualRadius * motionScale * transitionWorldScale,
+          );
+          farPickupDummy.updateMatrix();
+          farPickupMesh.setMatrixAt(farPickupCount, farPickupDummy.matrix);
+          let farColor = pickupColorCache.get(pickup.curio.color);
+          if (!farColor) {
+            farColor = new THREE.Color(pickup.curio.color);
+            pickupColorCache.set(pickup.curio.color, farColor);
+          }
+          farPickupMesh.setColorAt(
+            farPickupCount,
+            farColor,
+          );
+          farPickupCount += 1;
+          return;
+        }
+
+        richPickupCount += 1;
         pickup.root.scale.setScalar(motionScale * transitionWorldScale);
 
         switch (identity.motion) {
@@ -2915,6 +5053,12 @@ export default function Home() {
             break;
         }
       });
+      farPickupMesh.count = farPickupCount;
+      farPickupMesh.visible = farPickupCount > 0;
+      farPickupMesh.instanceMatrix.needsUpdate = true;
+      if (farPickupMesh.instanceColor) {
+        farPickupMesh.instanceColor.needsUpdate = true;
+      }
 
       for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
         const piece = stickingPieces[index];
@@ -2944,15 +5088,30 @@ export default function Home() {
 
       const mobileView = width <= 860;
       desiredCamera.set(
-        game.x + game.vx * 0.24,
-        floatHeight + (mobileView ? 7.1 : 5.2) + game.radius * 1.4,
-        game.z + (mobileView ? 13.2 : 9.5) + game.radius * 2.1,
+        game.x + game.vx * 0.24 * game.lens,
+        floatHeight +
+          ((mobileView ? 7.1 : 5.2) + game.radius * 1.4) * game.lens,
+        game.z +
+          ((mobileView ? 13.2 : 9.5) + game.radius * 2.1) * game.lens,
       );
       eraTransitionAge = Math.min(3, eraTransitionAge + dt);
       if (eraTransitionAge < 2.6) {
         const pullback = Math.sin((eraTransitionAge / 2.6) * Math.PI);
-        desiredCamera.y += pullback * (mobileView ? 5.2 : 7);
-        desiredCamera.z += pullback * (mobileView ? 8 : 11);
+        desiredCamera.y += pullback * (mobileView ? 5.2 : 7) * game.lens;
+        desiredCamera.z += pullback * (mobileView ? 8 : 11) * game.lens;
+      }
+      const desiredNear = Math.max(
+        0.0005,
+        0.06 * Math.min(1, game.lens),
+      );
+      const desiredFar = Math.max(220, game.lens * 96);
+      if (
+        Math.abs(camera.near - desiredNear) > 0.0001 ||
+        Math.abs(camera.far - desiredFar) > 1
+      ) {
+        camera.near = desiredNear;
+        camera.far = desiredFar;
+        camera.updateProjectionMatrix();
       }
       camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, dt));
       cameraTarget.set(game.x, floatHeight * 0.82, game.z - 0.7);
@@ -2973,25 +5132,18 @@ export default function Home() {
           journeyEra,
           progress,
           radius: game.radius,
+          lens: game.lens,
           zooms: game.zooms,
           quality: qualityTier,
+          fps: measuredFps,
+          drawCalls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
         });
         hudClock = 0;
       }
 
       if (labEra === null && now - game.lastSave > 5000) {
-        const save: SaveData = {
-          version: 3,
-          era: game.era,
-          progress: game.progress,
-          picked: game.picked,
-          x: game.x,
-          z: game.z,
-          zooms: game.zooms,
-          sound: game.sound,
-          mash: mashHistoryRef.current,
-        };
-        localStorage.setItem("everything-roll-save-v3", JSON.stringify(save));
+        persistSnapshot();
         game.lastSave = now;
       }
 
@@ -3029,6 +5181,8 @@ export default function Home() {
       coreSurfaceTexture?.dispose();
       dustGeometry.dispose();
       dustMaterial.dispose();
+      grid.geometry.dispose();
+      gridMaterials.forEach((material) => material.dispose());
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -3041,15 +5195,19 @@ export default function Home() {
       disposed = true;
       disposeScene?.();
     };
-  }, [started, labEra, ping, playPickupSound]);
+  }, [started, labEra, persistSnapshot, ping, playPickupSound]);
 
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
+    const insideInteractiveUi = Boolean(
+      target.closest("button, a, input, select, textarea, .modal, dialog"),
+    );
     if (
-      !started ||
-      target.closest("button") ||
-      target.closest("a") ||
-      target.closest(".modal")
+      !canStartPointerSteering(
+        started,
+        modalOpenRef.current,
+        insideInteractiveUi,
+      )
     ) {
       return;
     }
@@ -3070,6 +5228,11 @@ export default function Home() {
   const pointerUp = () => {
     joystickRef.current.active = false;
   };
+  const wheelLens = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!started || modalOpenRef.current) return;
+    event.preventDefault();
+    adjustLens(event.deltaY > 0 ? 1.08 : 0.92);
+  };
 
   const era = ERAS[hud.era];
   const journeyIndex = hud.journeyEra;
@@ -3079,9 +5242,24 @@ export default function Home() {
       ? formatEraScale(journeyIndex, hud.progress)
       : formatEraScale(labEra, 0);
   const atlasItem = ERAS[atlasEra];
+  const collectibleCount = ERAS.reduce(
+    (total, item) => total + item.curios.length,
+    0,
+  );
+  const scienceSourceCount = new Set(
+    ERAS.flatMap((item) => item.sources.map((source) => source.url)),
+  ).size;
+  const semanticScale = semanticViewScale(
+    labEra ?? journeyIndex,
+    hud.lens,
+    ERAS.length,
+  );
+  const semanticFoundationIndex = Math.ceil(semanticScale) - 1;
+  const semanticFoundation =
+    semanticFoundationIndex >= 0 ? ERAS[semanticFoundationIndex] : null;
 
   return (
-    <main className="shell">
+    <main className="shell" data-release="v17-nested-worlds">
       <div
         ref={mountRef}
         className={`world ${started ? "started" : "awaiting-start"}`}
@@ -3095,6 +5273,7 @@ export default function Home() {
         onPointerMove={pointerMove}
         onPointerUp={pointerUp}
         onPointerCancel={pointerUp}
+        onWheel={wheelLens}
       >
         <header className="topbar hud">
           <div className="brand">
@@ -3106,10 +5285,21 @@ export default function Home() {
           </div>
           <div className="actions">
             <button
+              aria-label="Open rolled-up field guide"
               onClick={() => {
+                setShowAtlas(false);
+                setShowGuide(true);
+              }}
+            >
+              <span aria-hidden="true">✦</span> <span>Field guide</span>
+            </button>
+            <button
+              onClick={() => {
+                setShowGuide(false);
                 setAtlasEra(journeyIndex);
                 setShowAtlas(true);
               }}
+              aria-label="Open scale and science atlas"
             >
               <span aria-hidden="true">⌁</span> <span>Scale & science</span>
             </button>
@@ -3126,7 +5316,7 @@ export default function Home() {
         {labEra !== null && (
           <div className="lab-banner hud">
             <span>Scale Lab preview · progress paused</span>
-            <button onClick={() => setLabEra(null)}>Return to journey</button>
+            <button onClick={returnToJourney}>Return to journey</button>
           </div>
         )}
 
@@ -3146,6 +5336,32 @@ export default function Home() {
             <span>{labEra === null ? `Next: ${nextEra.name}` : "Scale Lab specimen"}</span>
             <span>{labEra === null ? `${(hud.progress * 100).toFixed(2)}%` : "PREVIEW"}</span>
           </div>
+          <div
+            className="lens-control"
+            aria-label="Free scale lens"
+            title="Optical zoom also selects which earlier layer is resolved as the non-interactive fabric underfoot; it never changes journey progress."
+          >
+            <button
+              type="button"
+              onClick={() => adjustLens(0.82)}
+              aria-label="Zoom camera in"
+            >
+              −
+            </button>
+            <span>
+              {formatLens(hud.lens)}× lens ·{" "}
+              {semanticFoundation
+                ? `${semanticFoundation.name} fabric`
+                : "no prior fabric"}
+            </span>
+            <button
+              type="button"
+              onClick={() => adjustLens(1.22)}
+              aria-label="Zoom camera out"
+            >
+              +
+            </button>
+          </div>
         </section>
 
         <aside className="stats hud">
@@ -3160,14 +5376,25 @@ export default function Home() {
           <div className="fact-kicker">WHAT YOU JUST ROLLED UP</div>
           <h2>{lastFact.name}</h2>
           <p>{lastFact.fact}</p>
-          <a
-            className="fact-source"
-            href={lastFact.source.url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {lastFact.source.organization} · {lastFact.source.label} ↗
-          </a>
+          <div className="fact-actions">
+            <a
+              className="fact-source"
+              href={lastFact.source.url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {lastFact.source.organization} · {lastFact.source.label} ↗
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAtlas(false);
+                setShowGuide(true);
+              }}
+            >
+              See every find
+            </button>
+          </div>
         </aside>
 
         <div className="toast hud" role="status" aria-live="polite">
@@ -3179,7 +5406,11 @@ export default function Home() {
           <span><kbd>WASD</kbd> / arrows to roll</span>
           <span><kbd>SPACE</kbd> to surge</span>
           <span><kbd>I</kbd> science</span>
-          <span className="quality-mode">{hud.quality} graphics</span>
+          <span><kbd>G</kbd> field guide</span>
+          <span className="quality-mode">
+            {hud.quality} · {Math.round(hud.fps)} fps · {hud.drawCalls} draws ·{" "}
+            {Math.round(hud.triangles / 1000)}k tris
+          </span>
         </div>
         <div className="touch-tip hud">◎ drag anywhere to roll</div>
 
@@ -3201,23 +5432,53 @@ export default function Home() {
               <b>Scientific honesty:</b> everything in the opening playground is
               explicitly speculative. “Rolling” before matter exists is a navigation
               metaphor. Physical footprint alone decides what fits; shape-specific
-              gameplay bulk only tunes growth. Measured science resumes at the
-              particle frontier, and metre labels stop when known cosmology does.
+              gameplay bulk only tunes growth. Experimental anchoring begins at
+              the particle frontier, named measured particles follow, and metre
+              labels stop when known cosmology does.
+            </div>
+            <div className="mode-picker" role="group" aria-label="Choose game pace">
+              <button
+                type="button"
+                className={gameMode === "journey" ? "selected" : ""}
+                aria-pressed={gameMode === "journey"}
+                onClick={() => chooseMode("journey")}
+              >
+                <b>Long game</b>
+                <span>40× the collecting journey · default</span>
+              </button>
+              <button
+                type="button"
+                className={gameMode === "learning" ? "selected" : ""}
+                aria-pressed={gameMode === "learning"}
+                onClick={() => chooseMode("learning")}
+              >
+                <b>Learning tour</b>
+                <span>See every scale quickly</span>
+              </button>
             </div>
             <button className="start" onClick={begin}>
               <span>Begin becoming</span>
               <b>→</b>
             </button>
             <div className="welcome-foot">
-              <span>168 UNIQUE PICKUP VOICES</span><span>•</span>
-              <span>~62 SCIENCE-ANCHORED ORDERS</span><span>•</span>
+              <span>{collectibleCount} UNIQUE SPECIMENS</span><span>•</span>
+              <span>{ERAS.length} SCALE LAYERS</span><span>•</span>
+              <span>{scienceSourceCount} PRIMARY LINKS</span><span>•</span>
               <span>THEORY ON BOTH ENDS</span>
             </div>
           </section>
         )}
 
         {showAtlas && (
-          <section className="atlas-bg modal" role="dialog" aria-modal="true" aria-label="Scale and science atlas">
+          <dialog
+            ref={atlasDialogRef}
+            className="atlas-bg modal"
+            aria-label="Scale and science atlas"
+            onCancel={(event) => {
+              event.preventDefault();
+              setShowAtlas(false);
+            }}
+          >
             <div className="atlas">
               <header>
                 <div>
@@ -3227,14 +5488,37 @@ export default function Home() {
                     Preview any era without changing your save. Confidence labels
                     separate observations from models, unknowns, and deliberate fiction.
                   </p>
+                  <div className="atlas-mode" role="group" aria-label="Game pace">
+                    <span>GAME PACE</span>
+                    <button
+                      type="button"
+                      aria-pressed={gameMode === "journey"}
+                      onClick={() => chooseMode("journey")}
+                    >
+                      Long game · 40×
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={gameMode === "learning"}
+                      onClick={() => chooseMode("learning")}
+                    >
+                      Learning tour
+                    </button>
+                  </div>
                 </div>
-                <button onClick={() => setShowAtlas(false)} aria-label="Close atlas">×</button>
+                <button
+                  className="atlas-close"
+                  onClick={() => setShowAtlas(false)}
+                  aria-label="Close atlas"
+                >
+                  ×
+                </button>
               </header>
               <div className="era-list">
                 <div className="scale-scrubber">
                   <div>
                     <span>UNKNOWN BELOW</span>
-                    <b>drag across all 21 layers</b>
+                    <b>drag across all {ERAS.length} layers</b>
                     <span>FICTION BEYOND</span>
                   </div>
                   <input
@@ -3273,7 +5557,7 @@ export default function Home() {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      {atlasItem.sources[0].organization} source ↗
+                      {atlasItem.sources[0].organization} reference ↗
                     </a>
                     <button onClick={() => previewEra(atlasEra)}>
                       {labEra === atlasEra ? "Viewing" : "Preview in 3D"}
@@ -3282,12 +5566,13 @@ export default function Home() {
                 </article>
                 <article className="sources">
                   <div>
-                    <span>PRIMARY SOURCES</span>
+                    <span>AUTHORITATIVE REFERENCES</span>
                     <h3>Built to teach without pretending certainty</h3>
                     <p>
-                      The progression compresses scale and uses magical adhesion. Every
-                      collectible fact links to an authoritative era source, while
-                      confidence labels keep observation, models, unknowns, and fiction
+                      The progression compresses scale and uses magical adhesion. Each
+                      collectible links to an authoritative scale or topic reference;
+                      that link is context, not a citation for every playful sentence.
+                      Confidence labels keep observation, models, unknowns, and fiction
                       visibly separate.
                     </p>
                   </div>
@@ -3300,8 +5585,14 @@ export default function Home() {
                 </article>
               </div>
             </div>
-          </section>
+          </dialog>
         )}
+        <FieldGuide
+          open={showGuide}
+          entries={collection}
+          legacyUnitemizedCount={legacyUnitemizedCount}
+          onClose={() => setShowGuide(false)}
+        />
       </div>
     </main>
   );

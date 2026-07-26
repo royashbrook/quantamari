@@ -1,4 +1,5 @@
 export type QualityTier = "high" | "balanced" | "battery";
+export type GameMode = "journey" | "learning";
 
 export type PickupMotion =
   | "bob"
@@ -67,10 +68,10 @@ function unit(seed: number, salt: number) {
 /**
  * Every named collectible receives a deterministic visual motion and a
  * three-note generative sound signature. The identity is stable across saves,
- * devices, and releases as long as the collectible name and shape stay stable.
+ * devices, and releases as long as the collectible stable ID and shape stay stable.
  */
-export function collectibleIdentityFor(name: string, shape: string): CollectibleIdentity {
-  const seed = stableNameSeed(`${shape}:${name}`);
+export function collectibleIdentityFor(stableId: string, shape: string): CollectibleIdentity {
+  const seed = stableNameSeed(`${shape}:${stableId}`);
   const fifth = 1.45 + unit(seed, 5) * 0.18;
   const colorTone = 1.12 + unit(seed, 7) * 0.32;
   const octave = unit(seed, 11) > 0.72 ? 2 : 1;
@@ -99,6 +100,18 @@ export function canCollectPickup(
   return pickupBulkRadius <= rollingRadius * 1.08;
 }
 
+export function canStartPointerSteering(
+  started: boolean,
+  modalOpen: boolean,
+  insideInteractiveUi: boolean,
+) {
+  return started && !modalOpen && !insideInteractiveUi;
+}
+
+export function deepLensUnlocked(activeLayer: number, layerCount: number) {
+  return layerCount > 0 && activeLayer >= layerCount - 1;
+}
+
 export function radiusForLayerProgress(progress: number) {
   const t = Math.max(0, Math.min(1, progress));
   return Math.cbrt(
@@ -111,12 +124,25 @@ export function collectionProgressGain(
   rollingRadius: number,
   pickupBulkRadius: number,
   gameplayBulkFactor: number,
+  mode: GameMode = "learning",
 ) {
   const relativeBulk = pickupBulkRadius / Math.max(0.001, rollingRadius);
-  return Math.max(
+  const learningGain = Math.max(
     0.022,
     Math.min(0.095, relativeBulk ** 2 * gameplayBulkFactor * 0.15),
   );
+  return learningGain * (mode === "journey" ? 0.025 : 1);
+}
+
+export function progressAfterPickup(
+  progress: number,
+  sourceEra: number,
+  activeEra: number,
+  gain: number,
+) {
+  const current = Math.max(0, Math.min(1, progress));
+  if (sourceEra !== activeEra) return current;
+  return Math.max(0, Math.min(1, current + Math.max(0, gain)));
 }
 
 export function nextLayerObstacleRadius(rollingEnvelope: number) {
@@ -164,6 +190,117 @@ export function resolveCircularCollision(
         ? velocityZ - normalVelocity * normalZ
         : velocityZ,
   };
+}
+
+export function resolveCircleAabbCollision(
+  playerX: number,
+  playerZ: number,
+  velocityX: number,
+  velocityZ: number,
+  radius: number,
+  boxX: number,
+  boxZ: number,
+  halfWidth: number,
+  halfDepth: number,
+) {
+  const nearestX = Math.max(
+    boxX - halfWidth,
+    Math.min(playerX, boxX + halfWidth),
+  );
+  const nearestZ = Math.max(
+    boxZ - halfDepth,
+    Math.min(playerZ, boxZ + halfDepth),
+  );
+  const dx = playerX - nearestX;
+  const dz = playerZ - nearestZ;
+  const distance = Math.hypot(dx, dz);
+  if (distance >= radius) {
+    return { x: playerX, z: playerZ, vx: velocityX, vz: velocityZ };
+  }
+
+  if (distance > 0.0001) {
+    const normalX = dx / distance;
+    const normalZ = dz / distance;
+    const overlap = radius - distance + 0.002;
+    const normalVelocity = velocityX * normalX + velocityZ * normalZ;
+    return {
+      x: playerX + normalX * overlap,
+      z: playerZ + normalZ * overlap,
+      vx:
+        normalVelocity < 0
+          ? velocityX - normalVelocity * normalX
+          : velocityX,
+      vz:
+        normalVelocity < 0
+          ? velocityZ - normalVelocity * normalZ
+          : velocityZ,
+    };
+  }
+
+  const exits = [
+    {
+      distance: playerX - (boxX - halfWidth - radius),
+      x: boxX - halfWidth - radius - 0.002,
+      z: playerZ,
+      nx: -1,
+      nz: 0,
+    },
+    {
+      distance: boxX + halfWidth + radius - playerX,
+      x: boxX + halfWidth + radius + 0.002,
+      z: playerZ,
+      nx: 1,
+      nz: 0,
+    },
+    {
+      distance: playerZ - (boxZ - halfDepth - radius),
+      x: playerX,
+      z: boxZ - halfDepth - radius - 0.002,
+      nx: 0,
+      nz: -1,
+    },
+    {
+      distance: boxZ + halfDepth + radius - playerZ,
+      x: playerX,
+      z: boxZ + halfDepth + radius + 0.002,
+      nx: 0,
+      nz: 1,
+    },
+  ].sort((a, b) => a.distance - b.distance);
+  const exit = exits[0];
+  const normalVelocity = velocityX * exit.nx + velocityZ * exit.nz;
+  return {
+    x: exit.x,
+    z: exit.z,
+    vx:
+      normalVelocity < 0
+        ? velocityX - normalVelocity * exit.nx
+        : velocityX,
+    vz:
+      normalVelocity < 0
+        ? velocityZ - normalVelocity * exit.nz
+        : velocityZ,
+  };
+}
+
+export function circleAabbClearance(
+  circleX: number,
+  circleZ: number,
+  radius: number,
+  boxX: number,
+  boxZ: number,
+  halfWidth: number,
+  halfDepth: number,
+) {
+  const nearestX = Math.max(
+    boxX - halfWidth,
+    Math.min(circleX, boxX + halfWidth),
+  );
+  const nearestZ = Math.max(
+    boxZ - halfDepth,
+    Math.min(circleZ, boxZ + halfDepth),
+  );
+  return Math.hypot(circleX - nearestX, circleZ - nearestZ) - radius;
 }
 
 export function scaleTransitionFrame(progress: number) {

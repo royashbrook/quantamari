@@ -11,9 +11,107 @@ export type Shape =
   | "chair" | "car" | "house" | "mountain" | "planet" | "star"
   | "system" | "galaxy" | "universe";
 
+export const VISUAL_FORMS = [
+  "foam",
+  "field-ripple",
+  "spark",
+  "string",
+  "quark",
+  "hadron",
+  "nuclear-cluster",
+  "atom-cloud",
+  "molecule",
+  "molecule-bent",
+  "molecule-linear",
+  "protein",
+  "double-helix",
+  "vesicle",
+  "antibody",
+  "virus-enveloped",
+  "virus-faceted",
+  "bacteriophage",
+  "cell-soft",
+  "bacterium",
+  "blood-cell",
+  "immune-cell",
+  "plant-cell",
+  "neuron",
+  "sperm",
+  "ciliate",
+  "diatom",
+  "pollen",
+  "tardigrade",
+  "mite",
+  "worm",
+  "fiber",
+  "dust-cluster",
+  "grain",
+  "crystal",
+  "seed",
+  "bead",
+  "button",
+  "brick",
+  "bottle-cap",
+  "coin",
+  "key",
+  "die",
+  "pencil",
+  "mug",
+  "book",
+  "spoon",
+  "shoe",
+  "lamp",
+  "chair",
+  "couch",
+  "guitar",
+  "table",
+  "screen",
+  "potted-plant",
+  "bed",
+  "appliance",
+  "bathtub",
+  "doorway",
+  "bicycle",
+  "motorcycle",
+  "sailboat",
+  "vehicle",
+  "train",
+  "tree",
+  "pool",
+  "house",
+  "tower",
+  "bridge",
+  "stadium",
+  "park",
+  "landform",
+  "river-system",
+  "forest",
+  "weather-front",
+  "world",
+  "ringed-world",
+  "asteroid",
+  "comet",
+  "star",
+  "dense-star",
+  "orbit-system",
+  "star-cluster",
+  "nebula",
+  "galaxy",
+  "galaxy-cluster",
+  "cosmic-web",
+  "cosmic-void",
+  "horizon",
+  "speculative-reality",
+  "artifact",
+] as const;
+
+export type VisualForm = (typeof VISUAL_FORMS)[number];
+
 export type Curio = {
+  id: string;
   name: string;
   shape: Shape;
+  visualForm: VisualForm;
   color: string;
   fact: string;
   symbol: string;
@@ -21,6 +119,7 @@ export type Curio = {
 };
 
 export type Era = {
+  id: string;
   at: number;
   logMeters: number;
   name: string;
@@ -31,6 +130,11 @@ export type Era = {
   lesson: string;
   curios: Curio[];
   sources: ScienceSource[];
+};
+
+type CurioDraft = Omit<Curio, "id" | "source">;
+type EraDraft = Omit<Era, "id" | "curios" | "sources"> & {
+  curios: CurioDraft[];
 };
 
 const SHAPE_SYMBOLS: Record<Shape, string> = {
@@ -57,19 +161,428 @@ const SHAPE_SYMBOLS: Record<Shape, string> = {
   universe: "∞",
 };
 
+const FORM_NAMES: Partial<Record<VisualForm, readonly string[]>> = {
+  foam: ["foam bubble", "geometry pulse", "topology question"],
+  "field-ripple": [
+    "field ripple",
+    "unresolved structure",
+    "field excitation",
+    "probe limit",
+  ],
+  string: ["vibrating string", "extra-dimensional chord"],
+  "nuclear-cluster": [
+    "deuteron",
+    "helium-4 nucleus",
+    "carbon-12 nucleus",
+    "fission fragment",
+  ],
+  "molecule-bent": ["water molecule"],
+  "molecule-linear": ["carbon dioxide"],
+  protein: ["protein complex", "ribosome"],
+  "double-helix": ["dna loop"],
+  vesicle: ["membrane vesicle"],
+  antibody: ["antibody"],
+  "virus-faceted": ["adenovirus", "giant virus"],
+  "virus-enveloped": [
+    "small virus",
+    "influenza virion",
+    "coronavirus virion",
+  ],
+  bacteriophage: ["bacteriophage"],
+  bacterium: ["bacterium", "e. coli bacterium", "cyanobacterium"],
+  "blood-cell": ["red blood cell"],
+  "immune-cell": ["white blood cell"],
+  "plant-cell": ["plant cell"],
+  neuron: ["neuron"],
+  sperm: ["sperm cell"],
+  ciliate: ["paramecium"],
+  diatom: ["diatom"],
+  pollen: ["pollen grain", "moss spore"],
+  tardigrade: ["tardigrade"],
+  mite: ["dust mite"],
+  worm: ["tiny nematode"],
+  crystal: ["salt crystal", "salt formula unit"],
+  seed: ["rice grain", "lentil"],
+  bead: ["glass bead", "glass marble", "hail pellet"],
+  button: ["button"],
+  brick: ["toy brick"],
+  "bottle-cap": ["bottle cap"],
+  coin: ["coin"],
+  key: ["house key"],
+  die: ["six-sided die"],
+  pencil: ["pencil"],
+  mug: ["coffee mug"],
+  book: ["paperback book"],
+  spoon: ["tablespoon"],
+  shoe: ["shoe"],
+  lamp: ["floor lamp"],
+  couch: ["couch"],
+  guitar: ["guitar"],
+  table: ["kitchen table"],
+  screen: ["television"],
+  "potted-plant": ["potted plant"],
+  bed: ["bed"],
+  appliance: ["refrigerator"],
+  bathtub: ["bathtub"],
+  doorway: ["doorway"],
+  bicycle: ["bicycle"],
+  motorcycle: ["motorcycle"],
+  sailboat: ["sailboat"],
+  train: ["city train"],
+  tree: ["oak tree"],
+  pool: ["backyard pool"],
+  tower: [
+    "water tower",
+    "office block",
+    "skyscraper",
+    "apartment tower",
+    "lighthouse",
+  ],
+  bridge: ["suspension bridge", "river bridge"],
+  stadium: ["stadium"],
+  park: ["park block"],
+  "river-system": ["river basin", "lake system"],
+  forest: ["forest belt"],
+  "weather-front": ["storm front"],
+  "ringed-world": ["saturn"],
+  asteroid: ["asteroid", "small moon"],
+  comet: ["comet nucleus"],
+  "dense-star": ["white dwarf", "neutron star"],
+  "star-cluster": [
+    "open star cluster",
+    "globular cluster",
+    "binary stars",
+    "triple-star system",
+  ],
+  nebula: ["emission nebula", "molecular cloud"],
+  "galaxy-cluster": [
+    "galaxy cluster",
+    "galaxy group",
+    "local group",
+    "virgo cluster",
+  ],
+  "cosmic-web": [
+    "supercluster strand",
+    "cosmic web region",
+    "cosmic filament",
+    "supercluster region",
+  ],
+  "cosmic-void": ["cosmic void", "great void"],
+  horizon: [
+    "observable horizon",
+    "causal patch",
+    "last-scattering patch",
+    "hubble volume",
+  ],
+  "speculative-reality": [
+    "pocket reality",
+    "alternate history",
+    "causality knot",
+    "omniverse crumb",
+    "brane bubble",
+    "timeline braid",
+    "simulation shard",
+    "reality seed",
+  ],
+};
+
+const FORM_BY_NAME = new Map<string, VisualForm>(
+  Object.entries(FORM_NAMES).flatMap(([form, names]) =>
+    (names ?? []).map((name) => [name, form as VisualForm]),
+  ),
+);
+
+const DEFAULT_FORM_BY_SHAPE: Record<Shape, VisualForm> = {
+  bubble: "foam",
+  spark: "spark",
+  quark: "quark",
+  hadron: "hadron",
+  atom: "atom-cloud",
+  molecule: "molecule",
+  virus: "virus-enveloped",
+  cell: "cell-soft",
+  fiber: "fiber",
+  dust: "dust-cluster",
+  stone: "grain",
+  object: "artifact",
+  chair: "chair",
+  car: "vehicle",
+  house: "house",
+  mountain: "landform",
+  planet: "world",
+  star: "star",
+  system: "orbit-system",
+  galaxy: "galaxy",
+  universe: "horizon",
+};
+
+export function visualFormFor(name: string, shape: Shape): VisualForm {
+  return FORM_BY_NAME.get(name.toLowerCase()) ?? DEFAULT_FORM_BY_SHAPE[shape];
+}
+
 const c = (
   name: string,
   shape: Shape,
   color: string,
   fact: string,
   symbol = SHAPE_SYMBOLS[shape],
-): Curio => ({
-  name, shape, color, fact, symbol,
+): CurioDraft => ({
+  name,
+  shape,
+  visualForm: visualFormFor(name, shape),
+  color,
+  fact,
+  symbol,
 });
 
 export const JOURNEY_HOURS = 500;
 
-const BASE_ERAS: Omit<Era, "sources">[] = [
+export const LEGACY_V3_ERA_NAMES = [
+  "Theory Playground",
+  "Particle Probe Frontier",
+  "Quarks & Gluons",
+  "Hadron Forge",
+  "Atomic Cloud",
+  "Molecular Assembly",
+  "Macromolecule Reef",
+  "Cellular Sea",
+  "Fiber & Pollen",
+  "Dust Country",
+  "Pocket World",
+  "Everyday Kingdom",
+  "Vehicle Yard",
+  "Built Environment",
+  "Landscape Scale",
+  "Planetary Pantry",
+  "Stellar Buffet",
+  "System Sweep",
+  "Galaxy Garden",
+  "Observable Universe",
+  "Metaversal Beyond",
+] as const;
+
+export const AUTHORED_CATALOG_IDS = [
+  {
+    eraId: "theory-playground",
+    curioIds: [
+      "foam-bubble", "vibrating-string", "resonance-note", "vacuum-shimmer",
+      "geometry-pulse", "causal-uncertainty", "topology-question",
+      "extra-dimensional-chord",
+    ],
+  },
+  {
+    eraId: "particle-probe-frontier",
+    curioIds: [
+      "field-ripple", "energy-packet", "unresolved-structure",
+      "measurement-horizon", "symmetry-echo", "field-excitation",
+      "unknown-resonance", "probe-limit",
+    ],
+  },
+  {
+    eraId: "quarks-gluons",
+    curioIds: [
+      "up-quark-trace", "down-quark-trace", "gluon-field",
+      "quark-antiquark-pair", "strange-quark-trace", "charm-quark-trace",
+      "color-field-knot", "gluon-spray",
+    ],
+  },
+  {
+    eraId: "hadron-forge",
+    curioIds: [
+      "proton", "neutron", "pion", "antiproton", "kaon", "lambda-baryon",
+      "rho-meson", "delta-baryon",
+    ],
+  },
+  {
+    eraId: "nuclear-heart",
+    curioIds: [
+      "deuteron", "helium-4-nucleus", "carbon-12-nucleus", "fission-fragment",
+    ],
+  },
+  {
+    eraId: "atomic-cloud",
+    curioIds: [
+      "hydrogen-atom", "helium-atom", "carbon-atom", "oxygen-atom",
+      "nitrogen-atom", "silicon-atom", "iron-atom", "uranium-atom",
+    ],
+  },
+  {
+    eraId: "molecular-assembly",
+    curioIds: [
+      "water-molecule", "glucose", "amino-acid", "lipid", "methane",
+      "carbon-dioxide", "caffeine", "salt-formula-unit",
+    ],
+  },
+  {
+    eraId: "macromolecule-reef",
+    curioIds: [
+      "protein-complex", "dna-loop", "membrane-vesicle", "small-virus",
+      "ribosome", "antibody", "collagen-fiber", "bacteriophage",
+    ],
+  },
+  {
+    eraId: "virus-garden",
+    curioIds: [
+      "influenza-virion", "adenovirus", "coronavirus-virion", "giant-virus",
+    ],
+  },
+  {
+    eraId: "cellular-sea",
+    curioIds: [
+      "bacterium", "red-blood-cell", "yeast-cell", "plant-cell",
+      "white-blood-cell", "neuron", "amoeba", "sperm-cell",
+    ],
+  },
+  {
+    eraId: "microbe-meadow",
+    curioIds: [
+      "e-coli-bacterium", "cyanobacterium", "diatom", "paramecium",
+    ],
+  },
+  {
+    eraId: "fiber-pollen",
+    curioIds: [
+      "pollen-grain", "hair-fiber", "paper-fiber", "tardigrade", "moss-spore",
+      "skin-flake", "fungal-hypha", "tiny-nematode",
+    ],
+  },
+  {
+    eraId: "dust-country",
+    curioIds: [
+      "dust-mite", "sand-grain", "fabric-lint", "crumb", "soot-fleck",
+      "salt-crystal", "insect-scale", "microplastic",
+    ],
+  },
+  {
+    eraId: "granule-ground",
+    curioIds: ["rice-grain", "lentil", "hail-pellet", "glass-bead"],
+  },
+  {
+    eraId: "pocket-world",
+    curioIds: [
+      "pebble", "button", "toy-brick", "bottle-cap", "coin", "house-key",
+      "six-sided-die", "glass-marble",
+    ],
+  },
+  {
+    eraId: "tabletop-trek",
+    curioIds: ["pencil", "coffee-mug", "paperback-book", "tablespoon"],
+  },
+  {
+    eraId: "everyday-kingdom",
+    curioIds: [
+      "shoe", "floor-lamp", "chair", "couch", "guitar", "kitchen-table",
+      "television", "potted-plant",
+    ],
+  },
+  {
+    eraId: "room-scale",
+    curioIds: ["bed", "refrigerator", "bathtub", "doorway"],
+  },
+  {
+    eraId: "vehicle-yard",
+    curioIds: [
+      "bicycle", "compact-car", "delivery-van", "city-bus", "motorcycle",
+      "pickup-truck", "sailboat", "fire-engine",
+    ],
+  },
+  {
+    eraId: "house-yard",
+    curioIds: ["garden-shed", "oak-tree", "garage", "backyard-pool"],
+  },
+  {
+    eraId: "built-environment",
+    curioIds: [
+      "bungalow", "water-tower", "office-block", "stadium", "townhouse",
+      "lighthouse", "suspension-bridge", "skyscraper",
+    ],
+  },
+  {
+    eraId: "city-streets",
+    curioIds: [
+      "apartment-tower", "city-train", "park-block", "river-bridge",
+    ],
+  },
+  {
+    eraId: "landscape-scale",
+    curioIds: [
+      "hill", "small-island", "mountain", "metro-area", "volcano", "glacier",
+      "canyon", "megacity",
+    ],
+  },
+  {
+    eraId: "regional-map",
+    curioIds: ["river-basin", "forest-belt", "lake-system", "storm-front"],
+  },
+  {
+    eraId: "moon-scale",
+    curioIds: ["ceres", "europa", "earth-s-moon", "pluto"],
+  },
+  {
+    eraId: "planetary-pantry",
+    curioIds: [
+      "small-moon", "mercury", "earth", "gas-giant", "asteroid",
+      "comet-nucleus", "mars", "saturn",
+    ],
+  },
+  {
+    eraId: "giant-worlds",
+    curioIds: ["jupiter", "saturn", "uranus", "neptune"],
+  },
+  {
+    eraId: "stellar-buffet",
+    curioIds: [
+      "red-dwarf", "sun-like-star", "blue-giant", "red-supergiant",
+      "white-dwarf", "neutron-star", "orange-subgiant", "blue-hypergiant",
+    ],
+  },
+  {
+    eraId: "system-sweep",
+    curioIds: [
+      "planetary-system", "binary-stars", "oort-cloud-analogue",
+      "rogue-planet", "asteroid-belt", "protoplanetary-disk",
+      "triple-star-system", "kuiper-belt-analogue",
+    ],
+  },
+  {
+    eraId: "stellar-neighborhood",
+    curioIds: [
+      "open-star-cluster", "globular-cluster", "emission-nebula",
+      "molecular-cloud",
+    ],
+  },
+  {
+    eraId: "galaxy-garden",
+    curioIds: [
+      "dwarf-galaxy", "spiral-galaxy", "elliptical-galaxy", "galaxy-cluster",
+      "irregular-galaxy", "barred-spiral", "active-galaxy", "galaxy-group",
+    ],
+  },
+  {
+    eraId: "galaxy-cluster-web",
+    curioIds: [
+      "local-group", "virgo-cluster", "cosmic-void", "supercluster-strand",
+    ],
+  },
+  {
+    eraId: "observable-universe",
+    curioIds: [
+      "cosmic-web-region", "observable-horizon", "great-void", "causal-patch",
+      "cosmic-filament", "supercluster-region", "last-scattering-patch",
+      "hubble-volume",
+    ],
+  },
+  {
+    eraId: "metaversal-beyond",
+    curioIds: [
+      "pocket-reality", "alternate-history", "causality-knot",
+      "omniverse-crumb", "brane-bubble", "timeline-braid", "simulation-shard",
+      "reality-seed",
+    ],
+  },
+] as const;
+
+const BASE_ERAS: EraDraft[] = [
   {
     at: 0,
     logMeters: Math.log10(1.616255e-35),
@@ -135,6 +648,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 0.16,
+    logMeters: -14,
+    name: "Nuclear Heart",
+    quip: "Whole atoms have not arrived, but their centers have",
+    confidence: "MEASURED",
+    realm: "particle",
+    palette: ["#151344", "#4f4b99", "#ff8b6f"],
+    lesson: "Atomic nuclei are compact quantum systems made from protons and neutrons. Nuclear size grows roughly with the cube root of nucleon count, not in direct proportion to atomic diameter.",
+    curios: [
+      c("deuteron", "hadron", "#78b9ff", "A deuteron is the nucleus of heavy hydrogen, containing one proton and one neutron.", "D"),
+      c("helium-4 nucleus", "hadron", "#ffd66f", "A helium-4 nucleus contains two protons and two neutrons and is also called an alpha particle.", "α"),
+      c("carbon-12 nucleus", "hadron", "#85e2ba", "Carbon-12 has six protons and six neutrons in its nucleus.", "C"),
+      c("fission fragment", "hadron", "#ff8f9d", "Heavy nuclear fission produces energetic daughter nuclei rather than tiny pieces of classical solid.", "ƒ"),
+    ],
+  },
+  {
     at: 0.25,
     logMeters: -10,
     name: "Atomic Cloud",
@@ -183,6 +712,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 4,
+    logMeters: -7,
+    name: "Virus Garden",
+    quip: "Tiny packages built to borrow a cell",
+    confidence: "MEASURED",
+    realm: "matter",
+    palette: ["#183543", "#396c72", "#d59bff"],
+    lesson: "Viruses span a broad range of nanometre-scale forms. Their capsids and envelopes have recognizable structures, but viruses depend on host cells for reproduction.",
+    curios: [
+      c("influenza virion", "virus", "#9ec9ff", "Influenza virions carry segmented RNA inside a protein shell and lipid envelope.", "I"),
+      c("adenovirus", "virus", "#f1c96e", "Adenoviruses have an icosahedral capsid with fibers projecting from its vertices.", "A"),
+      c("coronavirus virion", "virus", "#ff9fb4", "Coronaviruses are enveloped RNA viruses whose spike proteins form a crown-like fringe.", "Co"),
+      c("giant virus", "virus", "#b18bea", "Some giant viruses are larger than many bacteria and carry unusually large genomes.", "G"),
+    ],
+  },
+  {
     at: 5,
     logMeters: -5,
     name: "Cellular Sea",
@@ -196,6 +741,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
       c("red blood cell", "cell", "#ff5c6d", "Human red blood cells are flexible biconcave discs about 7–8 micrometres wide."),
       c("yeast cell", "cell", "#f4e4ac", "Yeasts are single-celled fungi."),
       c("plant cell", "cell", "#78d886", "Plant cells have cellulose walls, chloroplasts in photosynthetic tissue, and large vacuoles."),
+    ],
+  },
+  {
+    at: 8,
+    logMeters: -4.5,
+    name: "Microbe Meadow",
+    quip: "One drop can hold a whole neighborhood",
+    confidence: "MEASURED",
+    realm: "matter",
+    palette: ["#153b32", "#478159", "#83df8f"],
+    lesson: "Micrometre-scale life includes bacteria, archaea, protists, and microscopic algae with radically different body plans. A round blob is not a universal microbe shape.",
+    curios: [
+      c("E. coli bacterium", "cell", "#a7e66d", "Escherichia coli cells are typically rod-shaped bacteria with flexible flagella on many strains.", "E"),
+      c("cyanobacterium", "cell", "#6cd5c3", "Many cyanobacteria form chains or colonies and perform oxygen-producing photosynthesis.", "Cy"),
+      c("diatom", "cell", "#f0d979", "Diatoms build intricate silica cell walls with species-specific geometry.", "Di"),
+      c("paramecium", "cell", "#d4a6f0", "Paramecia are single-celled ciliates whose many beating cilia drive movement and feeding.", "P"),
     ],
   },
   {
@@ -231,6 +792,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 27,
+    logMeters: -2.5,
+    name: "Granule Ground",
+    quip: "The specks are big enough to cast opinions",
+    confidence: "MEASURED",
+    realm: "macroscopic",
+    palette: ["#423a29", "#8d7547", "#f2b96e"],
+    lesson: "Millimetre-scale grains bridge dust and hand-held objects. Shape, porosity, and surface texture now dominate how pieces roll and pack together.",
+    curios: [
+      c("rice grain", "object", "#f2e4bf", "A rice grain is an elongated seed whose size and shape depend on its variety.", "R"),
+      c("lentil", "stone", "#c7855b", "A lentil is a flattened lens-shaped seed rather than a miniature sphere.", "L"),
+      c("hail pellet", "stone", "#dceeff", "Small hailstones grow as layered ice while moving through storm updrafts.", "H"),
+      c("glass bead", "object", "#77d9d2", "Manufactured beads show how regular millimetre-scale geometry differs from natural grains.", "●"),
+    ],
+  },
+  {
     at: 35,
     logMeters: -2,
     name: "Pocket World",
@@ -244,6 +821,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
       c("button", "object", "#ff7395", "Manufactured objects introduce standardized shapes and materials."),
       c("toy brick", "object", "#5cb8ff", "A familiar rigid object can now visibly protrude from the mash."),
       c("bottle cap", "object", "#f5d55c", "Thin, asymmetric objects make the rolling body increasingly uneven."),
+    ],
+  },
+  {
+    at: 48,
+    logMeters: -1,
+    name: "Tabletop Trek",
+    quip: "The surface is a landscape now",
+    confidence: "MEASURED",
+    realm: "macroscopic",
+    palette: ["#49343a", "#98645b", "#77cbe6"],
+    lesson: "At decimetre scales, ordinary desk and kitchen objects become recognizable terrain. Hollow and thin objects can have large footprints without comparable gameplay bulk.",
+    curios: [
+      c("pencil", "object", "#f2c94f", "A pencil is a long wooden composite built around a graphite-rich writing core.", "✎"),
+      c("coffee mug", "object", "#79b8d7", "A mug is a hollow ceramic vessel whose handle creates a distinctive side loop.", "U"),
+      c("paperback book", "object", "#e8859d", "A closed paperback is a layered block of paper joined along one flexible spine.", "B"),
+      c("tablespoon", "object", "#b9c6d2", "A spoon combines a shallow bowl with a long narrow handle.", "S"),
     ],
   },
   {
@@ -263,6 +856,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 78,
+    logMeters: 0.6,
+    name: "Room Scale",
+    quip: "Walls, doors, and the route outside",
+    confidence: "MEASURED",
+    realm: "macroscopic",
+    palette: ["#26485f", "#5e8f91", "#f4a66e"],
+    lesson: "A room is a nested container holding furniture, people, air, and all smaller layers already visited. Doorways turn indoor scale into outdoor traversal.",
+    curios: [
+      c("bed", "chair", "#9aa9df", "A bed is a raised frame supporting flexible layered materials and a mostly hollow space beneath.", "Z"),
+      c("refrigerator", "object", "#c8dde4", "A refrigerator is an insulated cabinet surrounding pumps, coils, shelves, and air.", "F"),
+      c("bathtub", "object", "#8fd2e8", "A bathtub is a hollow basin whose familiar footprint is much larger than its material volume.", "U"),
+      c("doorway", "house", "#dda46d", "A doorway is an opening in a wall and a useful transition between nested environments.", "Π"),
+    ],
+  },
+  {
     at: 95,
     logMeters: 1,
     name: "Vehicle Yard",
@@ -276,6 +885,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
       c("compact car", "car", "#ff5e5e", "A passenger car is several metres long but contains substantial empty interior volume."),
       c("delivery van", "car", "#f2e7d6", "Vehicles make the mash wider and more mechanically awkward."),
       c("city bus", "car", "#f6cf53", "A bus is long enough to reshape the entire rolling silhouette."),
+    ],
+  },
+  {
+    at: 110,
+    logMeters: 1.5,
+    name: "House & Yard",
+    quip: "The room opens into weather",
+    confidence: "MEASURED",
+    realm: "macroscopic",
+    palette: ["#294b49", "#659a5a", "#ffd46f"],
+    lesson: "Homes sit inside yards, streets, drainage, vegetation, and neighboring structures. The building is no longer the world; it is one object inside a larger place.",
+    curios: [
+      c("garden shed", "house", "#d58a62", "A small shed is a framed enclosure whose walls hide mostly empty interior volume.", "⌂"),
+      c("oak tree", "object", "#5bad65", "A mature tree is a branching living structure rooted in soil and filled with transport tissue.", "♣"),
+      c("garage", "house", "#a3abb8", "A garage is a vehicle-sized room connected to a driveway and the surrounding street network.", "G"),
+      c("backyard pool", "house", "#67cde7", "A pool is a lined container whose visible volume is mostly water rather than structure.", "▱"),
     ],
   },
   {
@@ -295,6 +920,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 145,
+    logMeters: 3,
+    name: "City Streets",
+    quip: "Blocks connect instead of floating",
+    confidence: "MEASURED",
+    realm: "macroscopic",
+    palette: ["#273b55", "#596f83", "#ffbb69"],
+    lesson: "Cities are connected networks of streets, blocks, utilities, buildings, parks, and people. A skyline alone is not a city; the spaces between structures make it traversable.",
+    curios: [
+      c("apartment tower", "house", "#9cb3cf", "A residential tower stacks many rooms around shared structure, services, stairs, and elevators.", "▥"),
+      c("city train", "car", "#ed6c62", "Urban rail vehicles follow connected tracks rather than moving as isolated road traffic.", "T"),
+      c("park block", "house", "#72bd6a", "An urban park is a managed open space embedded in the surrounding street grid.", "▦"),
+      c("river bridge", "house", "#8daab9", "A city bridge carries a connected route across water, rail, or another road.", "⌒"),
+    ],
+  },
+  {
     at: 165,
     logMeters: 4,
     name: "Landscape Scale",
@@ -311,6 +952,38 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 190,
+    logMeters: 5.5,
+    name: "Regional Map",
+    quip: "Roads thin into lines and cities into texture",
+    confidence: "MEASURED",
+    realm: "macroscopic",
+    palette: ["#17445b", "#4e8977", "#a8d16b"],
+    lesson: "At regional scales, rivers, forests, coastlines, weather systems, and urban networks become the readable structure. The city remains present as a small patch inside the land.",
+    curios: [
+      c("river basin", "mountain", "#65b9d0", "A drainage basin is the land area whose water flows toward a shared outlet.", "Y"),
+      c("forest belt", "mountain", "#4f9e5c", "A forest seen regionally is a mosaic of habitats, disturbances, waterways, and human land use.", "♣"),
+      c("lake system", "mountain", "#6ec6de", "Connected lakes and rivers form networks shaped by geology and water flow.", "≈"),
+      c("storm front", "system", "#a8b7d8", "A weather front is a moving boundary between air masses, not a solid object.", "⌁"),
+    ],
+  },
+  {
+    at: 205,
+    logMeters: 6.8,
+    name: "Moon Scale",
+    quip: "Whole worlds fit before Earth does",
+    confidence: "MEASURED",
+    realm: "cosmic",
+    palette: ["#122442", "#4d6480", "#d5dcdf"],
+    lesson: "Moons and dwarf planets span hundreds to thousands of kilometres. Gravity rounds the largest bodies while smaller ones retain irregular shapes.",
+    curios: [
+      c("Ceres", "planet", "#aaa9a4", "Ceres is the largest object in the asteroid belt and is massive enough to be rounded by gravity.", "C"),
+      c("Europa", "planet", "#d6c89f", "Europa is an icy moon of Jupiter with strong evidence for a subsurface ocean.", "E"),
+      c("Earth's Moon", "planet", "#c8c8c3", "The Moon is about 3,475 kilometres across and tidally locked to Earth.", "☾"),
+      c("Pluto", "planet", "#d7b799", "Pluto is a dwarf planet with a nitrogen-rich surface and a large moon named Charon.", "P"),
+    ],
+  },
+  {
     at: 215,
     logMeters: 7.1,
     name: "Planetary Pantry",
@@ -324,6 +997,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
       c("Mercury", "planet", "#aaa39e", "Mercury is the smallest planet in our Solar System."),
       c("Earth", "planet", "#3fb9e8", "Earth is an oblate spheroid, slightly wider at the equator."),
       c("gas giant", "planet", "#f2c36f", "Gas giants have no simple solid surface like Earth's."),
+    ],
+  },
+  {
+    at: 260,
+    logMeters: 8.8,
+    name: "Giant Worlds",
+    quip: "Atmospheres wider than smaller planets",
+    confidence: "MEASURED",
+    realm: "cosmic",
+    palette: ["#152044", "#4a4f82", "#efb967"],
+    lesson: "Giant planets are dominated by deep atmospheres and fluid interiors. Rings and moons make each planet the center of a nested local system.",
+    curios: [
+      c("Jupiter", "planet", "#d8aa72", "Jupiter is the Solar System's largest planet and has a deep atmosphere dominated by hydrogen and helium.", "J"),
+      c("Saturn", "planet", "#e6cb85", "Saturn's broad rings are made from countless orbiting particles rather than a solid disc.", "♄"),
+      c("Uranus", "planet", "#8fd7df", "Uranus rotates on its side relative to its orbit and has a cold hydrogen-helium-methane atmosphere.", "U"),
+      c("Neptune", "planet", "#638ddf", "Neptune is an ice giant with powerful winds and a deep blue atmospheric appearance.", "N"),
     ],
   },
   {
@@ -359,6 +1048,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
     ],
   },
   {
+    at: 365,
+    logMeters: 17,
+    name: "Stellar Neighborhood",
+    quip: "Stars become points inside a shared cloud",
+    confidence: "SUPPORTED MODEL",
+    realm: "cosmic",
+    palette: ["#0c1231", "#303969", "#8fcfff"],
+    lesson: "Light-years separate neighboring stars. Clusters, nebulae, and molecular clouds reveal structure between a planetary system and an entire galaxy.",
+    curios: [
+      c("open star cluster", "system", "#b9d7ff", "Open clusters are loose groups of stars formed from the same molecular cloud.", "∴"),
+      c("globular cluster", "system", "#ffe4a2", "Globular clusters are dense, roughly spherical populations of old stars.", "●"),
+      c("emission nebula", "galaxy", "#ef9fd1", "An emission nebula glows when energetic starlight ionizes surrounding gas.", "N"),
+      c("molecular cloud", "system", "#8996bd", "Cold molecular clouds are dense interstellar regions where new stars can form.", "☁"),
+    ],
+  },
+  {
     at: 380,
     logMeters: 21,
     name: "Galaxy Garden",
@@ -372,6 +1077,22 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
       c("spiral galaxy", "galaxy", "#d1b7ff", "Spiral arms are density patterns, not permanent rows of the same stars."),
       c("elliptical galaxy", "galaxy", "#f1d39b", "Elliptical galaxies range from dwarfs to giants."),
       c("galaxy cluster", "galaxy", "#ff93d1", "Galaxy clusters are the largest gravitationally bound structures."),
+    ],
+  },
+  {
+    at: 415,
+    logMeters: 23.5,
+    name: "Galaxy Cluster Web",
+    quip: "Galaxies become beads on enormous filaments",
+    confidence: "SUPPORTED MODEL",
+    realm: "cosmic",
+    palette: ["#0b0628", "#37205d", "#aa8cff"],
+    lesson: "Galaxy groups and clusters trace a large-scale web shaped by gravity and dark matter. Voids and filaments are regions of a continuous cosmic distribution, not hard-edged objects.",
+    curios: [
+      c("Local Group", "galaxy", "#9dbdff", "The Local Group contains the Milky Way, Andromeda, Triangulum, and many smaller galaxies.", "L"),
+      c("Virgo Cluster", "galaxy", "#d2b2ff", "The Virgo Cluster is the nearest large galaxy cluster and contains well over a thousand member galaxies.", "V"),
+      c("cosmic void", "universe", "#45508a", "Cosmic voids are vast underdense regions surrounded by denser filaments and walls.", "○"),
+      c("supercluster strand", "universe", "#e9a1dd", "Supercluster-scale associations trace the cosmic web but are not generally bound as one object.", "≋"),
     ],
   },
   {
@@ -408,7 +1129,7 @@ const BASE_ERAS: Omit<Era, "sources">[] = [
   },
 ];
 
-const EXTRA_CURIOS: Record<string, Curio[]> = {
+const EXTRA_CURIOS: Record<string, CurioDraft[]> = {
   "Theory Playground": [
     c("geometry pulse", "bubble", "#ff9bdd", "This pulse is a visual metaphor for unknown Planck-scale geometry, not an observed object.", "≈"),
     c("causal uncertainty", "spark", "#fff18a", "Known physics does not yet provide an experimentally tested description of causality at the Planck scale.", "?"),
@@ -597,6 +1318,18 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://home.cern/science/physics/standard-model",
     ),
   ],
+  "Nuclear Heart": [
+    source(
+      "Atomic weights and isotopic compositions",
+      "NIST",
+      "https://physics.nist.gov/cgi-bin/Compositions/stand_alone.pl?all=all&ascii=ascii2&isotype=all",
+    ),
+    source(
+      "The Standard Model",
+      "CERN",
+      "https://home.cern/science/physics/standard-model",
+    ),
+  ],
   "Atomic Cloud": [
     source(
       "Atomic Spectra Database",
@@ -633,6 +1366,18 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://wwwnc.cdc.gov/eid/article/26/1/AC-2601_article.htm",
     ),
   ],
+  "Virus Garden": [
+    source(
+      "Viruses at the edge of life",
+      "CDC",
+      "https://wwwnc.cdc.gov/eid/article/26/1/AC-2601_article.htm",
+    ),
+    source(
+      "Types of influenza viruses",
+      "CDC",
+      "https://www.cdc.gov/flu/about/viruses-types.html",
+    ),
+  ],
   "Cellular Sea": [
     source(
       "Inside the cell",
@@ -643,6 +1388,18 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "Yeast cell microscopy",
       "NIGMS",
       "https://www.nigms.nih.gov/image-gallery/1092",
+    ),
+  ],
+  "Microbe Meadow": [
+    source(
+      "Cells by the numbers",
+      "NIGMS",
+      "https://nigms.nih.gov/biobeat/2024/09/cells-by-the-numbers-2",
+    ),
+    source(
+      "Bacteria shapes",
+      "NIGMS",
+      "https://www.nigms.nih.gov/image-gallery/1158",
     ),
   ],
   "Fiber & Pollen": [
@@ -669,6 +1426,18 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://pubs.usgs.gov/of/2006/1046/htmldocs/nomenclature.htm",
     ),
   ],
+  "Granule Ground": [
+    source(
+      "Wentworth grain-size scale",
+      "USGS",
+      "https://pubs.usgs.gov/of/2006/1046/htmldocs/nomenclature.htm",
+    ),
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+  ],
   "Pocket World": [
     source(
       "SI units: length",
@@ -679,6 +1448,18 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "Wentworth grain-size scale",
       "USGS",
       "https://pubs.usgs.gov/of/2006/1046/htmldocs/nomenclature.htm",
+    ),
+  ],
+  "Tabletop Trek": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI units: mass",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-mass",
     ),
   ],
   "Everyday Kingdom": [
@@ -693,7 +1474,31 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://www.nist.gov/pml/owm/si-units-mass",
     ),
   ],
+  "Room Scale": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI base units",
+      "NIST",
+      "https://www.nist.gov/pml/owm/metric-si/si-units",
+    ),
+  ],
   "Vehicle Yard": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI units: mass",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-mass",
+    ),
+  ],
+  "House & Yard": [
     source(
       "SI units: length",
       "NIST",
@@ -717,6 +1522,18 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://www.nist.gov/pml/owm/metric-si/si-units",
     ),
   ],
+  "City Streets": [
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+    source(
+      "SI base units",
+      "NIST",
+      "https://www.nist.gov/pml/owm/metric-si/si-units",
+    ),
+  ],
   "Landscape Scale": [
     source(
       "Geology and landforms",
@@ -729,7 +1546,43 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://www.nist.gov/pml/owm/si-units-length",
     ),
   ],
+  "Regional Map": [
+    source(
+      "Geology and landforms",
+      "USGS",
+      "https://www.usgs.gov/programs/national-cooperative-geologic-mapping-program/science",
+    ),
+    source(
+      "SI units: length",
+      "NIST",
+      "https://www.nist.gov/pml/owm/si-units-length",
+    ),
+  ],
+  "Moon Scale": [
+    source(
+      "Moons",
+      "NASA",
+      "https://science.nasa.gov/solar-system/moons/",
+    ),
+    source(
+      "Dwarf planets",
+      "NASA",
+      "https://science.nasa.gov/dwarf-planets/",
+    ),
+  ],
   "Planetary Pantry": [
+    source(
+      "About the planets",
+      "NASA",
+      "https://science.nasa.gov/solar-system/planets/",
+    ),
+    source(
+      "Solar System facts",
+      "NASA",
+      "https://science.nasa.gov/solar-system/solar-system-facts/",
+    ),
+  ],
+  "Giant Worlds": [
     source(
       "About the planets",
       "NASA",
@@ -765,7 +1618,31 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
       "https://science.nasa.gov/solar-system/solar-system-facts/",
     ),
   ],
+  "Stellar Neighborhood": [
+    source(
+      "Stars",
+      "NASA",
+      "https://science.nasa.gov/universe/stars/",
+    ),
+    source(
+      "Nebulae",
+      "NASA",
+      "https://science.nasa.gov/mission/hubble/science/universe-uncovered/hubble-nebulae/",
+    ),
+  ],
   "Galaxy Garden": [
+    source(
+      "Galaxies",
+      "NASA",
+      "https://science.nasa.gov/universe/galaxies/",
+    ),
+    source(
+      "Large-scale structures",
+      "NASA",
+      "https://science.nasa.gov/universe/galaxies/large-scale-structures/",
+    ),
+  ],
+  "Galaxy Cluster Web": [
     source(
       "Galaxies",
       "NASA",
@@ -805,7 +1682,6 @@ const SCIENCE_SOURCES: Record<string, ScienceSource[]> = {
 
 const SOURCE_OVERRIDES: Record<string, number> = {
   "small virus": 1,
-  "giant virus": 1,
   "virus capsid": 1,
   "viral envelope": 1,
   "yeast cell": 1,
@@ -813,17 +1689,49 @@ const SOURCE_OVERRIDES: Record<string, number> = {
   pebble: 1,
 };
 
-export const ERAS: Era[] = BASE_ERAS.map((era) => ({
-  ...era,
-  sources: SCIENCE_SOURCES[era.name],
-  curios: [...era.curios, ...(EXTRA_CURIOS[era.name] ?? [])].map(
-    (curio) => ({
-      ...curio,
-      source:
-        SCIENCE_SOURCES[era.name][SOURCE_OVERRIDES[curio.name] ?? 0],
-    }),
-  ),
-}));
+export function withAuthoredCatalogIds<
+  TCurio extends object,
+  TEra extends { curios: readonly TCurio[] },
+>(eras: readonly TEra[]) {
+  if (eras.length !== AUTHORED_CATALOG_IDS.length) {
+    throw new RangeError("Authored era IDs do not match the scale catalog");
+  }
+  return eras.map((era, eraIndex) => {
+    const authored = AUTHORED_CATALOG_IDS[eraIndex];
+    if (era.curios.length !== authored.curioIds.length) {
+      throw new RangeError(
+        `Authored curio IDs do not match era ${authored.eraId}`,
+      );
+    }
+    return {
+      ...era,
+      id: authored.eraId,
+      curios: era.curios.map((curio, curioIndex) => ({
+        ...curio,
+        id: `${authored.eraId}/${authored.curioIds[curioIndex]}`,
+      })),
+    };
+  });
+}
+
+export const ERAS: Era[] = withAuthoredCatalogIds(
+  BASE_ERAS.map((era) => ({
+    ...era,
+    sources: SCIENCE_SOURCES[era.name],
+    curios: [...era.curios, ...(EXTRA_CURIOS[era.name] ?? [])].map(
+      (curio) => ({
+        ...curio,
+        source:
+          SCIENCE_SOURCES[era.name][SOURCE_OVERRIDES[curio.name] ?? 0],
+      }),
+    ),
+  })),
+);
+
+export function eraIndexForId(id: string) {
+  const index = ERAS.findIndex((era) => era.id === id);
+  return index < 0 ? 0 : index;
+}
 
 export function journeyHoursForEraProgress(index: number, progress: number) {
   const current = ERAS[Math.max(0, Math.min(ERAS.length - 1, index))];

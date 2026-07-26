@@ -32,5 +32,8 @@ cp \
 node \
   "${SITES_PROJECT_ROOT}/scripts/finalize-static-artifact.mjs" \
   "${SITES_PROJECT_ROOT}"
+node \
+  "${SITES_PROJECT_ROOT}/scripts/inject-precache.mjs" \
+  "${SITES_PROJECT_ROOT}"
 
 "${script_dir}/validate-artifact.sh"
