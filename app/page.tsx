@@ -210,7 +210,10 @@ export default function Home() {
       process.env.NODE_ENV === "production" &&
       "serviceWorker" in navigator
     ) {
-      void navigator.serviceWorker.register("/sw.js");
+      // Register RELATIVE to the current page, so it works at a domain root and under a subpath
+      // (royashbrook.com/quarkatamari) alike. A service worker's scope is its own directory, so a
+      // root-absolute "/sw.js" would 404 (or take the wrong scope) when served under a subpath.
+      void navigator.serviceWorker.register("./sw.js");
     }
   }, []);
 
