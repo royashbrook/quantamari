@@ -12,14 +12,18 @@
 
 # testing
 /coverage
+/tests/results/
 
-# next.js
-/.next/
-/out/
+# sveltekit
+/.svelte-kit/
+/dist/
 
 # misc
 .DS_Store
 *.pem
+/.openai/
+/.wrangler/
+/graphify-out/
 
 # debug
 npm-debug.log*
@@ -34,11 +38,4 @@ yarn-error.log*
 .vercel
 
 # typescript
-next-env.d.ts
 *.tsbuildinfo
-/dist/
-/.wrangler/
-/.sites-runtime/
-/outputs/
-/work/
-/graphify-out/

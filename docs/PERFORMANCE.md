@@ -12,7 +12,8 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   and fabric prior.
 - Prior-layer objects and city buildings use `InstancedMesh`.
 - Far pickups hide their multi-part models and share one colored instanced mesh.
-- Rich pickup models have a quality-tier cap; pickup population, pixel ratio,
+- Rich pickup models have a quality-tier cap; battery mode tightens that cap
+  from measured draw calls until it meets budget. Pickup population, pixel ratio,
   and shadows adapt through frame-rate hysteresis.
 - The mash keeps only 12–24 recent rich toys; older pieces collapse into one
   colored instanced proxy draw. When the mash itself projects below rich-detail
