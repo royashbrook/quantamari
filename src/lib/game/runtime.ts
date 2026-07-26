@@ -365,7 +365,6 @@ export function mountGame(
     new THREE.IcosahedronGeometry(1, 1),
     new THREE.MeshToonMaterial({
       color: "#ffffff",
-      vertexColors: true,
       transparent: true,
       opacity: 0.88,
     }),
@@ -584,7 +583,6 @@ export function mountGame(
         new THREE.BoxGeometry(1, 1, 1),
         new THREE.MeshToonMaterial({
           color: "#ffffff",
-          vertexColors: true,
           transparent: true,
           opacity,
         }),
@@ -704,7 +702,6 @@ export function mountGame(
           }
           const material = new THREE.MeshToonMaterial({
             color: "#ffffff",
-            vertexColors: true,
             transparent: true,
             opacity: 0.76,
           });
@@ -3586,7 +3583,6 @@ export function mountGame(
     new THREE.IcosahedronGeometry(1, 1),
     new THREE.MeshToonMaterial({
       color: "#ffffff",
-      vertexColors: true,
       transparent: true,
       opacity: 0.82,
     }),

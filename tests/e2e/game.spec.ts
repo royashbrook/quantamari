@@ -14,6 +14,18 @@ async function begin(page: Page, mode: "Long game" | "Learning tour" = "Learning
 test("boots the static game at its production subpath", async ({ page }) => {
   const pageErrors: Error[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
+  await page.addInitScript(() => {
+    const scenes: unknown[] = [];
+    const devtools = new EventTarget();
+    devtools.addEventListener("observe", (event) => {
+      const observed = (event as CustomEvent).detail as { isScene?: boolean };
+      if (observed?.isScene) scenes.push(observed);
+    });
+    Object.assign(window, {
+      __THREE_DEVTOOLS__: devtools,
+      __QUARKATAMARI_SCENES__: scenes,
+    });
+  });
 
   await page.goto(appPath);
   await expect(
@@ -41,6 +53,39 @@ test("boots the static game at its production subpath", async ({ page }) => {
       .filter((url) => !url.pathname.startsWith(basePath))
       .map((url) => url.pathname), appPath);
   expect(wrongPathResources).toEqual([]);
+  const instanceColorDiagnostics = await page.evaluate(() => {
+    const scenes = (
+      window as typeof window & {
+        __QUARKATAMARI_SCENES__?: Array<{
+          traverse: (visit: (object: Record<string, any>) => void) => void;
+        }>;
+      }
+    ).__QUARKATAMARI_SCENES__ ?? [];
+    let checked = 0;
+    const offenders: string[] = [];
+    for (const scene of scenes) {
+      scene.traverse((object) => {
+        if (
+          !object.isInstancedMesh ||
+          !object.instanceColor ||
+          object.count === 0 ||
+          object.geometry.getAttribute("color")
+        ) {
+          return;
+        }
+        checked += 1;
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        if (materials.some((material) => material.vertexColors === true)) {
+          offenders.push(object.name || object.uuid);
+        }
+      });
+    }
+    return { checked, offenders };
+  });
+  expect(instanceColorDiagnostics.checked).toBeGreaterThan(0);
+  expect(instanceColorDiagnostics.offenders).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
 
