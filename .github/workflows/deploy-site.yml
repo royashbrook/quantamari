@@ -7,6 +7,10 @@ name: deploy royashbrook.com
 on:
   push:
     branches: [main]
+    # CI config and docs don't change the built game, so they shouldn't burn a site rebuild.
+    paths-ignore:
+      - ".github/**"
+      - "**/*.md"
   # manual re-deploy, so the site can be rebuilt (or this workflow verified) without a dummy commit.
   workflow_dispatch:
 
