@@ -14,8 +14,16 @@ type PerformanceSnapshot = {
     }
   >;
   runtime: {
-    pickups: number;
-    targetPickups: number;
+    pickups: {
+      active: number;
+      queued: number;
+      target: number;
+      totalSpawned: number;
+      spawnedLastFrame: number;
+      maxSpawnedPerFrame: number;
+      maxPerFrame: number;
+      workBudgetMs: number;
+    };
     quality: "high" | "balanced" | "battery";
     drawCalls: number;
     triangles: number;
@@ -39,6 +47,7 @@ async function readPerformanceDiagnostics(page: Page) {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
         snapshot: () => PerformanceSnapshot;
+        removePickups: (count: number) => number;
       };
     };
     return debugWindow.__QUARKATAMARI_PERFORMANCE__?.snapshot() ?? null;
@@ -300,8 +309,11 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
     )
     .toMatchObject({
       runtime: {
-        pickups: expect.any(Number),
-        targetPickups: expect.any(Number),
+        pickups: {
+          active: expect.any(Number),
+          queued: expect.any(Number),
+          target: expect.any(Number),
+        },
       },
       phases: {
         frame: { count: expect.any(Number) },
@@ -318,8 +330,12 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
 
   const diagnostics = await readPerformanceDiagnostics(page);
   expect(diagnostics).toBeDefined();
-  expect(diagnostics?.runtime.pickups).toBe(
-    diagnostics?.runtime.targetPickups,
+  expect(diagnostics?.runtime.pickups.active).toBe(
+    diagnostics?.runtime.pickups.target,
+  );
+  expect(diagnostics?.runtime.pickups.queued).toBe(0);
+  expect(diagnostics?.runtime.pickups.maxSpawnedPerFrame).toBeLessThanOrEqual(
+    diagnostics?.runtime.pickups.maxPerFrame ?? 0,
   );
   for (const summary of Object.values(diagnostics?.phases ?? {})) {
     expect(summary.count).toBeGreaterThan(0);
@@ -327,8 +343,42 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
     expect(summary.p50).toBeLessThanOrEqual(summary.p95);
     expect(summary.p95).toBeLessThanOrEqual(summary.max);
   }
+
+  const removed = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        removePickups: (count: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.removePickups(12) ?? 0;
+  });
+  expect(removed).toBe(12);
+  const depleted = await readPerformanceDiagnostics(page);
+  expect(depleted?.runtime.pickups.active).toBe(
+    (diagnostics?.runtime.pickups.target ?? 0) - removed,
+  );
+  expect(depleted?.runtime.pickups.queued).toBe(removed);
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            active: snapshot.runtime.pickups.active,
+            queued: snapshot.runtime.pickups.queued,
+          }
+        : null;
+    })
+    .toEqual({
+      active: diagnostics?.runtime.pickups.target,
+      queued: 0,
+    });
+  const replenished = await readPerformanceDiagnostics(page);
+  expect(replenished?.runtime.pickups.totalSpawned).toBeGreaterThanOrEqual(
+    (diagnostics?.runtime.pickups.totalSpawned ?? 0) + removed,
+  );
   await testInfo.attach("performance-baseline.json", {
-    body: Buffer.from(JSON.stringify(diagnostics, null, 2)),
+    body: Buffer.from(JSON.stringify(replenished, null, 2)),
     contentType: "application/json",
   });
 });

@@ -51,6 +51,7 @@ import {
   createPhaseRecorder,
   type RuntimePhase,
 } from "./runtime-performance";
+import { createSpawnQueue } from "./spawn-queue";
 
 type Pickup = {
   root: THREE.Group;
@@ -65,6 +66,9 @@ type Pickup = {
   baseY: number;
   wiggle: number;
   identity: CollectibleIdentity;
+  drawCalls: number;
+  bornAt: number;
+  collisionReadyAt: number;
 };
 
 function pseudo(seed: number) {
@@ -166,6 +170,9 @@ const PICKUP_QUIPS = [
   "the mash says nom",
   "rolled up with excellent manners",
 ];
+
+const MAX_PICKUP_PROMOTIONS_PER_FRAME = 3;
+const PICKUP_ENTRANCE_MS = 800;
 
 export type MutableRef<T> = { current: T };
 
@@ -274,15 +281,17 @@ export function mountGame(
     __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
     __QUARKATAMARI_PERFORMANCE__?: {
       snapshot: () => unknown;
+      removePickups: (count: number) => number;
     };
   };
   const phaseRecorder = debugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__
     ? createPhaseRecorder()
     : null;
-  const phaseStart = () => (phaseRecorder ? performance.now() : 0);
+  const readPerformanceClock = () => performance.now();
+  const phaseStart = () => (phaseRecorder ? readPerformanceClock() : 0);
   const phaseEnd = (phase: RuntimePhase, startedAt: number) => {
     if (phaseRecorder) {
-      phaseRecorder.record(phase, performance.now() - startedAt);
+      phaseRecorder.record(phase, readPerformanceClock() - startedAt);
     }
   };
   const compactGpu = window.innerWidth <= 860;
@@ -3533,17 +3542,57 @@ export function mountGame(
     return group;
   };
 
-  const visualTemplates = new Map<string, THREE.Object3D>();
+  type VisualTemplate = {
+    root: THREE.Object3D;
+    visualRadius: number;
+    bulkRadius: number;
+    drawCalls: number;
+  };
+  const visualTemplates = new Map<string, VisualTemplate>();
   const makeVisual = (curio: Curio, rich = true) => {
     const key = `${curio.id}:${rich ? "rich" : "simple"}`;
     let template = visualTemplates.get(key);
+    let builtTemplate = false;
     if (!template) {
-      template = buildVisual(curio, rich);
+      const root = buildVisual(curio, rich);
+      root.updateMatrixWorld(true);
+      const dimensions = new THREE.Vector3();
+      new THREE.Box3().setFromObject(root).getSize(dimensions);
+      let drawCalls = 0;
+      root.traverse((child) => {
+        if (
+          child instanceof THREE.Mesh ||
+          child instanceof THREE.Points ||
+          child instanceof THREE.Line ||
+          child instanceof THREE.Sprite
+        ) {
+          drawCalls += 1;
+        }
+      });
+      template = {
+        root,
+        visualRadius: Math.max(dimensions.x, dimensions.z) / 2,
+        bulkRadius:
+          Math.cbrt(
+            Math.max(
+              0.000001,
+              dimensions.x * dimensions.y * dimensions.z,
+            ),
+          ) / 2,
+        drawCalls,
+      };
       visualTemplates.set(key, template);
+      builtTemplate = true;
     }
-    const visual = template.clone(true);
+    const visual = template.root.clone(true);
     visual.userData.sharedResources = true;
-    return visual;
+    return {
+      visual,
+      visualRadius: template.visualRadius,
+      bulkRadius: template.bulkRadius,
+      drawCalls: template.drawCalls,
+      builtTemplate,
+    };
   };
 
   const markerTextures = new Map<string, THREE.CanvasTexture>();
@@ -3770,7 +3819,7 @@ export function mountGame(
         number,
       ];
     }
-    const visual = makeVisual(curio);
+    const { visual } = makeVisual(curio);
     const restoredMarker = makeMarker(curio.symbol);
     restoredMarker.visible = sourceEraIndex >= activeIndex;
     visual.add(restoredMarker);
@@ -3830,7 +3879,12 @@ export function mountGame(
     if (collapsed) refreshMashProxy();
   };
 
-  const spawnPickup = (seed: number, forcedSourceEra?: number) => {
+  const spawnPickup = (
+    seed: number,
+    bornAt: number,
+    outerRing: boolean,
+    forcedSourceEra?: number,
+  ) => {
     const bandRoll = pseudo(seed + 97);
     let chosenEra =
       bandRoll > 0.84 && activeIndex < ERAS.length - 1
@@ -3859,21 +3913,17 @@ export function mountGame(
       0.18 + pseudo(seed + 53) * game.radius * 0.52,
     );
     const root = new THREE.Group();
-    const visual = makeVisual(curio, sourceEra >= activeIndex);
+    const {
+      visual,
+      visualRadius: unitVisualRadius,
+      bulkRadius: unitBulkRadius,
+      drawCalls,
+      builtTemplate,
+    } = makeVisual(curio, sourceEra >= activeIndex);
     visual.userData.sourceEra = sourceEra;
     visual.scale.setScalar(size);
-    visual.updateMatrixWorld(true);
-    const visualDimensions = new THREE.Vector3();
-    new THREE.Box3().setFromObject(visual).getSize(visualDimensions);
-    let visualRadius =
-      Math.max(visualDimensions.x, visualDimensions.z) / 2;
-    let bulkRadius =
-      Math.cbrt(
-        Math.max(
-          0.000001,
-          visualDimensions.x * visualDimensions.y * visualDimensions.z,
-        ),
-      ) / 2;
+    let visualRadius = unitVisualRadius * size;
+    let bulkRadius = unitBulkRadius * size;
     if (levelDelta <= 0 && visualRadius > game.radius * 0.82) {
       const targetRadius = game.radius * (0.42 + pseudo(seed + 139) * 0.34);
       const fit = targetRadius / visualRadius;
@@ -3934,9 +3984,13 @@ export function mountGame(
       const candidateRadius = big
         ? Math.max(
             game.radius + visualRadius + 3.2,
-            8 + pseudo(seed + game.id * 7 + attempt * 31) * 36,
+            (outerRing ? 30 : 8) +
+              pseudo(seed + game.id * 7 + attempt * 31) *
+                (outerRing ? 16 : 36),
           )
-        : 4.6 + pseudo(seed + game.id * 7) * 24;
+        : outerRing
+          ? 30 + pseudo(seed + game.id * 7 + attempt * 31) * 16
+          : 4.6 + pseudo(seed + game.id * 7) * 24;
       const candidateAngle = pseudo(seed + 13 + attempt * 19) * Math.PI * 2;
       const candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
       const candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
@@ -3977,12 +4031,13 @@ export function mountGame(
     }
     if (bestClearance < 0) {
       disposeVisual(visual);
-      return false;
+      return { spawned: false, builtTemplate };
     }
     root.position.set(spawnX, Math.max(0.22, size * 0.48), spawnZ);
     const baseY = root.position.y;
     const wiggle = pseudo(seed + 181) * Math.PI * 2;
     root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
+    root.scale.setScalar(0);
     scene.add(root);
     pickups.push({
       root,
@@ -3997,9 +4052,12 @@ export function mountGame(
       baseY,
       wiggle,
       identity,
+      drawCalls: drawCalls + (marker ? 1 : 0),
+      bornAt,
+      collisionReadyAt: bornAt + PICKUP_ENTRANCE_MS,
     });
     game.id += 1;
-    return true;
+    return { spawned: true, builtTemplate };
   };
 
   const activePickupBudget = () => {
@@ -4009,8 +4067,24 @@ export function mountGame(
     return base;
   };
 
-  const populate = () => {
-    const startedAt = phaseStart();
+  let pickupSpawnQueue = createSpawnQueue(
+    (game.id + Math.imul(activeIndex + 1, 0x9e3779b9)) >>> 0,
+  );
+  let initialQueuedPickups = 0;
+  let populationQueued = false;
+  let totalSpawned = 0;
+  let spawnedLastFrame = 0;
+  let maxSpawnedPerFrame = 0;
+
+  const resetPickupQueue = () => {
+    pickupSpawnQueue = createSpawnQueue(
+      (game.id + Math.imul(activeIndex + 1, 0x9e3779b9)) >>> 0,
+    );
+    initialQueuedPickups = 0;
+    populationQueued = false;
+  };
+
+  const reconcilePickupQueue = () => {
     const desiredPickupCount = activePickupBudget();
     pickups = pickups.filter((pickup) => {
       const distance = Math.hypot(
@@ -4021,13 +4095,43 @@ export function mountGame(
       removePickup(pickup);
       return false;
     });
-    let attempts = 0;
-    while (pickups.length < desiredPickupCount && attempts < 18) {
-      spawnPickup(
-        performance.now() * 0.002 + (pickups.length + attempts) * 101,
-      );
-      attempts += 1;
+    pickupSpawnQueue.reconcile(pickups.length, desiredPickupCount);
+    if (!populationQueued && pickupSpawnQueue.pending > 0) {
+      initialQueuedPickups = pickupSpawnQueue.pending;
+      populationQueued = true;
     }
+    initialQueuedPickups = Math.min(
+      initialQueuedPickups,
+      pickupSpawnQueue.pending,
+    );
+  };
+
+  const drainPickupQueue = (now: number) => {
+    spawnedLastFrame = 0;
+    if (pickupSpawnQueue.pending === 0) return;
+    const startedAt = phaseStart();
+    const { maxChunkWorkMs } = worldPerformanceBudget(qualityTier);
+    pickupSpawnQueue.drain(
+      ({ seed }) => {
+        const outerRing = initialQueuedPickups === 0;
+        if (initialQueuedPickups > 0) initialQueuedPickups -= 1;
+        const result = spawnPickup(seed, now, outerRing);
+        if (result.spawned) {
+          spawnedLastFrame += 1;
+          totalSpawned += 1;
+        }
+        return !result.builtTemplate;
+      },
+      {
+        maxPerFrame: MAX_PICKUP_PROMOTIONS_PER_FRAME,
+        budgetMs: maxChunkWorkMs,
+        now: readPerformanceClock,
+      },
+    );
+    maxSpawnedPerFrame = Math.max(
+      maxSpawnedPerFrame,
+      spawnedLastFrame,
+    );
     phaseEnd("spawning", startedAt);
   };
 
@@ -4195,7 +4299,7 @@ export function mountGame(
   };
 
   resize();
-  populate();
+  reconcilePickupQueue();
   window.addEventListener("resize", resize);
 
   const performanceDebug = phaseRecorder
@@ -4205,13 +4309,35 @@ export function mountGame(
           runtime: {
             era: activeIndex,
             quality: qualityTier,
-            pickups: pickups.length,
-            targetPickups: activePickupBudget(),
+            pickups: {
+              active: pickups.length,
+              queued: pickupSpawnQueue.pending,
+              target: activePickupBudget(),
+              totalSpawned,
+              spawnedLastFrame,
+              maxSpawnedPerFrame,
+              maxPerFrame: MAX_PICKUP_PROMOTIONS_PER_FRAME,
+              workBudgetMs:
+                worldPerformanceBudget(qualityTier).maxChunkWorkMs,
+            },
             drawCalls: renderer.info.render.calls,
             triangles: renderer.info.render.triangles,
             budget: worldPerformanceBudget(qualityTier),
           },
         }),
+        removePickups: (count: number) => {
+          const removalCount = Math.min(
+            pickups.length,
+            Math.max(0, Math.floor(count)),
+          );
+          const removed = pickups.splice(
+            pickups.length - removalCount,
+            removalCount,
+          );
+          removed.forEach((pickup) => removePickup(pickup));
+          reconcilePickupQueue();
+          return removed.length;
+        },
       }
     : null;
   if (performanceDebug) {
@@ -4396,6 +4522,7 @@ export function mountGame(
       rollGroup.rotation.z -= (game.vx * dt) / Math.max(0.5, game.radius);
 
       for (const pickup of pickups) {
+        if (now < pickup.collisionReadyAt) continue;
         const dx = pickup.root.position.x - game.x;
         const dz = pickup.root.position.z - game.z;
         const distance = Math.hypot(dx, dz);
@@ -4467,13 +4594,14 @@ export function mountGame(
         pickups.forEach((pickup) => removePickup(pickup));
         pickups = [];
         applyEraTheme(nextIndex, true);
+        resetPickupQueue();
+        reconcilePickupQueue();
         if (unlockedDeepLens) {
           setToast(
             "Known-universe journey complete! The free lens now opens from 1/256× to 256×.",
           );
         }
         scaleTransitionStarted = -1;
-        populate();
       }
     }
 
@@ -4496,6 +4624,8 @@ export function mountGame(
           if (child instanceof THREE.Sprite) child.visible = sourceEra >= activeIndex;
         });
       });
+      resetPickupQueue();
+      reconcilePickupQueue();
     }
 
     const continuousViewScale = semanticViewScale(
@@ -4511,9 +4641,17 @@ export function mountGame(
 
     spawnClock += dt;
     const lowPickupThreshold = Math.floor(activePickupBudget() * 0.84);
-    if (spawnClock > 0.5 || pickups.length < lowPickupThreshold) {
-      populate();
-      spawnClock = 0;
+    if (scaleTransitionStarted < 0) {
+      if (
+        spawnClock > 0.5 ||
+        pickups.length + pickupSpawnQueue.pending < lowPickupThreshold
+      ) {
+        reconcilePickupQueue();
+        spawnClock = 0;
+      }
+      drainPickupQueue(now);
+    } else {
+      spawnedLastFrame = 0;
     }
     phaseEnd("simulation", simulationStartedAt);
 
@@ -4603,6 +4741,15 @@ export function mountGame(
     let richPickupCount = 0;
     const richPickupBudget = richPickupLimit;
     pickups.forEach((pickup, index) => {
+      const entranceProgress = Math.min(
+        1,
+        Math.max(0, (now - pickup.bornAt) / PICKUP_ENTRANCE_MS),
+      );
+      const entranceOffset = entranceProgress - 1;
+      const entranceScale =
+        1 +
+        2.70158 * entranceOffset ** 3 +
+        1.70158 * entranceOffset ** 2;
       const distance = Math.hypot(
         pickup.root.position.x - game.x,
         pickup.root.position.z - game.z,
@@ -4654,7 +4801,10 @@ export function mountGame(
           Math.sin(motionTime) * 0.12,
         );
         farPickupDummy.scale.setScalar(
-          pickup.visualRadius * motionScale * transitionWorldScale,
+          pickup.visualRadius *
+            motionScale *
+            transitionWorldScale *
+            entranceScale,
         );
         farPickupDummy.updateMatrix();
         farPickupMesh.setMatrixAt(farPickupCount, farPickupDummy.matrix);
@@ -4672,7 +4822,9 @@ export function mountGame(
       }
 
       richPickupCount += 1;
-      pickup.root.scale.setScalar(motionScale * transitionWorldScale);
+      pickup.root.scale.setScalar(
+        motionScale * transitionWorldScale * entranceScale,
+      );
 
       switch (identity.motion) {
         case "bob":
@@ -4847,7 +4999,7 @@ export function mountGame(
       }
     });
     markerTextures.forEach((texture) => texture.dispose());
-    visualTemplates.forEach((template) => disposeVisual(template));
+    visualTemplates.forEach((template) => disposeVisual(template.root));
     visualTemplates.clear();
     happyFaceTexture.dispose();
     chompFaceTexture.dispose();
