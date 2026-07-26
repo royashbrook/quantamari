@@ -454,7 +454,15 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
 
   await expect
     .poll(
-      () => readPerformanceDiagnostics(page),
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot &&
+          snapshot.runtime.pickups.active ===
+            snapshot.runtime.pickups.target &&
+          snapshot.runtime.pickups.queued === 0
+          ? snapshot
+          : null;
+      },
       { timeout: 30_000 },
     )
     .toMatchObject({
