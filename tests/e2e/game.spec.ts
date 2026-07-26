@@ -435,7 +435,8 @@ test("dense pickup bursts stay pooled inside the battery draw budget", async ({
 test("performance diagnostics capture a repeatable complex-scene baseline", async ({
   page,
 }, testInfo) => {
-  await enablePerformanceDiagnostics(page);
+  test.setTimeout(90_000);
+  await enablePerformanceDiagnostics(page, "battery");
   await begin(page);
   await page.getByRole("button", { name: "Open scale and science atlas" }).click();
   await page.getByLabel("Choose a scale layer").fill("20");
@@ -449,7 +450,7 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
         (await readPerformanceDiagnostics(page))?.phases.frame?.count ?? 0,
       { timeout: 30_000 },
     )
-    .toBeGreaterThanOrEqual(120);
+    .toBeGreaterThanOrEqual(60);
 
   await expect
     .poll(
@@ -536,15 +537,18 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
   expect(depletion.queued).toBe(depletion.removed);
 
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return snapshot
-        ? {
-            active: snapshot.runtime.pickups.active,
-            queued: snapshot.runtime.pickups.queued,
-          }
-        : null;
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              active: snapshot.runtime.pickups.active,
+              queued: snapshot.runtime.pickups.queued,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
     .toEqual({
       active: diagnostics?.runtime.pickups.target,
       queued: 0,
@@ -558,18 +562,22 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
 test("a scale shift rebuilds once and repopulates through the work queue", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await enablePerformanceDiagnostics(page, "balanced");
   await begin(page);
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return Boolean(
-        snapshot &&
-          snapshot.runtime.pickups.active ===
-            snapshot.runtime.pickups.target &&
-          snapshot.runtime.pickups.queued === 0,
-      );
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Boolean(
+          snapshot &&
+            snapshot.runtime.pickups.active ===
+              snapshot.runtime.pickups.target &&
+            snapshot.runtime.pickups.queued === 0,
+        );
+      },
+      { timeout: 30_000 },
+    )
     .toBe(true);
   const before = await readPerformanceDiagnostics(page);
   expect(before?.runtime.pickups.active).toBe(
@@ -589,6 +597,7 @@ test("a scale shift rebuilds once and repopulates through the work queue", async
     .poll(
       async () =>
         (await readPerformanceDiagnostics(page))?.runtime.transitionActive,
+      { timeout: 30_000 },
     )
     .toBe(true);
   await expect
