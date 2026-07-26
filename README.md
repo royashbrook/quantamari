@@ -57,28 +57,39 @@ known game metaphors.
 
 ## Development
 
-Requirements: Node.js `>=22.13.0`, Bash, GNU `timeout`, and `flock`.
+Requirements: Node.js `>=22.13.0`. Install Playwright's browser once before
+running the end-to-end suite.
 
 ```bash
 npm ci
+npx playwright install chromium
 npm run dev
+npm run check
 npm test
-npm run lint
+npm run test:e2e
+npm run test:all
 ```
 
-`npm test` performs the production build, verifies the rendered application,
-and runs the pure gameplay/science regression suite.
+`npm test` runs the fast Node gameplay/science/save suite. `npm run test:e2e`
+builds the production PWA, verifies the static artifact, and exercises it with
+Playwright. `npm run test:all` is the release and CI contract.
 
 Important code:
 
-- `app/page.tsx` — Three.js world, rolling, pickup, sound, HUD, and Scale Lab
-- `app/scale-data.ts` — 34-era progression, 220 facts, stable IDs, and sources
-- `app/game-rules.ts` — deterministic identities and testable gameplay budgets
-- `app/world-system.ts` — grounded world kinds, three-layer LOD, and budgets
-- `app/save-data.ts` — reorder-safe v4 saves and v2/v3 migrations
-- `app/field-guide.tsx` — animated, searchable collection history
-- `tests/` — render, science, progression, collision, audio-identity, and
-  adaptive-quality checks
+- `src/routes/+page.svelte` — browser game shell, sound, HUD, and Scale Lab
+- `src/lib/game/runtime.ts` — mounted Three.js world and simulation lifecycle
+- `src/lib/scale-data.ts` — 34-era progression, 220 facts, stable IDs, and sources
+- `src/lib/game-rules.ts` — deterministic identities and gameplay budgets
+- `src/lib/world-system.ts` — grounded world kinds, three-layer LOD, and budgets
+- `src/lib/save-data.ts` — reorder-safe v4 saves and v2/v3 migrations
+- `src/lib/components/FieldGuide.svelte` — animated collection history
+- `src/service-worker.ts` — generated, subpath-safe offline runtime
+- `tests/unit`, `tests/artifact`, and `tests/e2e` — Node, build, and browser
+  contracts
+
+The app is SvelteKit with `adapter-static`: `npm run build` emits only
+`dist/client`, and all gameplay and persistence remain in the browser. Three.js
+is lazy-loaded after the welcome screen. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Releases and mirrors
 
@@ -90,4 +101,5 @@ Never force-push.
 See [docs/GITHUB-SITES-WORKFLOW.md](docs/GITHUB-SITES-WORKFLOW.md).
 
 The release record is in [BACKLOG.md](BACKLOG.md). The `v1.0.0` tag is the
-rollback point immediately before the nested-world/Field Guide release.
+rollback point before the v2 SvelteKit rewrite; `v2.0.0` will be tagged only
+after the branch is reviewed, merged, and deployed.

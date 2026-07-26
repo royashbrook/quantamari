@@ -3,7 +3,9 @@
 Quarkatamari is a browser-only static PWA. GitHub is the normal release path:
 
 - **GitHub** (`royashbrook/quarkatamari`) is the source of truth.
-- Every push to GitHub `main` automatically deploys production.
+- Every verified push to GitHub `main` automatically deploys production.
+- Branch pushes and pull requests run the same static, unit, and browser
+  contracts without deploying.
 - **Sites** remains configured only for optional isolated testing. Do not save
   or deploy a Sites version during a normal release.
 
@@ -20,11 +22,19 @@ Do not replace a working GitHub remote merely to match the example name.
 
 ## Normal release
 
-1. Work on a branch and run `npm test` plus `npm run lint`.
+1. Work on a branch and run `npm run test:all`.
 2. Commit the exact reviewed source state.
 3. Fast-forward `main` to that commit and push `main` to GitHub.
-4. Wait for the automatic deployment, then verify the public URL, manifest,
-   service worker, and current release marker.
+4. GitHub runs the Node, static artifact, desktop/mobile, and offline tests.
+5. After they pass, the workflow asks `royashbrook.com` to build the exact
+   verified Quarkatamari commit and rejects a mismatched or missing artifact.
+6. Verify the public URL, manifest, service worker, and current release marker.
+
+For the v2 cutover, merge the backward-compatible
+`royashbrook.com` branch `codex/quarkatamari-v2-integration` first. It preserves
+the v1 path rewrite, copies v2 content-hashed chunks byte-for-byte, verifies
+independent scheduled builds, and gives immutable chunks long-lived browser
+caching. Then merge `codex/v2-sveltekit`.
 
 Never force-push. Tags are pushed only when deliberately created as a release
 checkpoint.
@@ -32,6 +42,6 @@ checkpoint.
 ## Recovery
 
 - Roll back by reverting the release commit on GitHub `main`; `v1.0.0` is the
-  checkpoint immediately before the nested-world release.
+  checkpoint immediately before the v2 framework rewrite.
 - If local and GitHub history diverge, fetch and reconcile on a temporary
   branch. Do not use `--force`, `reset --hard`, or delete `main`.

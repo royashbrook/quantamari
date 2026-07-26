@@ -4,6 +4,27 @@ V15 is preserved at the annotated `v15.0.0` tag. V16 replaces the time/band
 model with cumulative, collection-driven scale layers and a static PWA runtime.
 The `v1.0.0` tag preserves the deployable PWA immediately before V17.
 
+## V2 rewrite in progress
+
+- [x] Preserve `v1.0.0` as the pre-rewrite rollback point
+- [x] Replace React/Vinext with SvelteKit, Svelte 5, Vite, and `adapter-static`
+- [x] Emit one client-only `dist/client` artifact with no application server
+- [x] Preserve Three.js rendering, gameplay rules, physics, v4 saves, and v2/v3
+      migrations behind an explicit mount/destroy lifecycle
+- [x] Replace handwritten PWA build machinery with SvelteKit's generated,
+      subpath-safe service worker and complete cold-install precache
+- [x] Keep fast Node tests and add Playwright desktop, mobile, Scale Lab,
+      persistence, and offline contracts
+- [x] Require the browser contract before the automatic `main` deployment
+- [x] Prepare the backward-compatible `royashbrook.com` pull/caching bridge
+- [ ] Merge the site bridge, then merge v2 to `main`, verify production, and
+      tag `v2.0.0`
+
+Physics redesign is intentionally outside the mechanical framework rewrite.
+Rapier.js remains a benchmark candidate only if measured scenes beat the current
+collision system without changing pickup-fit, corridor, sliding, save, or scale
+contracts.
+
 ## V17 complete
 
 - [x] Long Game default pace plus a switchable Learning Tour
@@ -44,9 +65,9 @@ The `v1.0.0` tag preserves the deployable PWA immediately before V17.
 
 ## Definition of done
 
-The release is complete when `npm test` and `npm run lint` pass, phone and
-desktop previews remain playable, a clean release commit reaches GitHub
-`main`, and the automatic production deployment is verified.
+The release is complete when `npm run test:all` passes, phone and desktop
+previews remain playable, a clean release commit reaches GitHub `main`, and the
+automatic production deployment is verified.
 
-New ideas belong in a future release rather than reopening the tagged V15
-baseline or this V16 architecture pass.
+New physics work starts from a measured v2 baseline rather than being mixed into
+the framework migration.

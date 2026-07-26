@@ -12,10 +12,11 @@
 
 # testing
 /coverage
+/playwright-report/
+/test-results/
 
-# next.js
-/.next/
-/out/
+# sveltekit
+/.svelte-kit/
 
 # misc
 .DS_Store
@@ -34,11 +35,8 @@ yarn-error.log*
 .vercel
 
 # typescript
-next-env.d.ts
 *.tsbuildinfo
 /dist/
-/.wrangler/
 /.sites-runtime/
-/outputs/
-/work/
+/.wrangler/
 /graphify-out/
