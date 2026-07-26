@@ -282,6 +282,7 @@ export function mountGame(
     __QUARKATAMARI_PERFORMANCE__?: {
       snapshot: () => unknown;
       removePickups: (count: number) => number;
+      completeLayer: () => boolean;
     };
   };
   const phaseRecorder = debugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__
@@ -403,6 +404,9 @@ export function mountGame(
   farPickupMesh.frustumCulled = false;
   scene.add(farPickupMesh);
   const pickupColorCache = new Map<string, THREE.Color>();
+  let baseSceneDrawCalls = 0;
+  let richPickupDrawCallBudget = 0;
+  let richPickupDrawCalls = 0;
 
   const environmentGroup = new THREE.Group();
   scene.add(environmentGroup);
@@ -899,6 +903,8 @@ export function mountGame(
     clearcoat: 0.65,
     clearcoatRoughness: 0.2,
   });
+  coreMaterial.userData.authoredTransmission =
+    activeEra.realm === "prephysical" ? 0.42 : 0;
   const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 6), coreMaterial);
   core.castShadow = !early;
   core.receiveShadow = !early;
@@ -952,6 +958,7 @@ export function mountGame(
   let environmentMode = environmentModeFor(activeIndex);
   let activeWorldKind = worldSpecForEra(activeEra.name).kind;
   let eraTransitionAge = 99;
+  let worldGeneration = 0;
 
   const disposeEnvironment = () => {
     environmentGroup.traverse((object) => {
@@ -1046,6 +1053,8 @@ export function mountGame(
 
   let groundTexture: THREE.CanvasTexture | null = null;
   let coreSurfaceTexture: THREE.CanvasTexture | null = null;
+  let groundTextureKey = -1;
+  let coreSurfaceTextureKey = -1;
 
   const makeScalePatternTexture = (index: number, forCore = false) => {
     const visualIndex = legacyVisualIndexForEra(index);
@@ -1232,10 +1241,12 @@ export function mountGame(
   };
 
   const applyGroundScaleTexture = (viewScale: number) => {
+    const visibleFoundation = Math.max(0, Math.ceil(viewScale) - 1);
+    if (visibleFoundation === groundTextureKey) return;
     const startedAt = phaseStart();
     groundTexture?.dispose();
-    const visibleFoundation = Math.max(0, Math.ceil(viewScale) - 1);
     groundTexture = makeScalePatternTexture(visibleFoundation);
+    groundTextureKey = visibleFoundation;
     groundMaterial.map = groundTexture;
     groundMaterial.needsUpdate = true;
     phaseEnd("ground-texture", startedAt);
@@ -1243,8 +1254,10 @@ export function mountGame(
 
   const applyScaleTextures = (index: number) => {
     applyGroundScaleTexture(index);
+    if (coreSurfaceTextureKey === index) return;
     coreSurfaceTexture?.dispose();
     coreSurfaceTexture = makeScalePatternTexture(index, true);
+    coreSurfaceTextureKey = index;
     coreMaterial.map = coreSurfaceTexture;
     coreMaterial.needsUpdate = true;
   };
@@ -2064,6 +2077,7 @@ export function mountGame(
       );
     }
     centralSceneryCompact = null;
+    worldGeneration += 1;
     phaseEnd("world-rebuild", startedAt);
   };
 
@@ -2096,13 +2110,20 @@ export function mountGame(
     coreMaterial.emissiveIntensity = early ? 1.35 : 0.18;
     coreMaterial.roughness = early ? 0.18 : 0.62;
     coreMaterial.metalness = early ? 0.05 : 0;
-    coreMaterial.transmission = activeEra.realm === "prephysical" ? 0.42 : 0;
+    const authoredCoreTransmission =
+      activeEra.realm === "prephysical" ? 0.42 : 0;
+    coreMaterial.userData.authoredTransmission = authoredCoreTransmission;
+    coreMaterial.transmission =
+      qualityTier === "battery" ? 0 : authoredCoreTransmission;
     coreMaterial.transparent = true;
     coreMaterial.needsUpdate = true;
     innerGlowMaterial.color.set(activeEra.palette[2]);
     foamMaterials.forEach((material) => {
       material.color.set(activeEra.palette[2]);
       material.emissive.set(activeEra.palette[2]);
+      material.userData.authoredTransmission = authoredCoreTransmission;
+      material.transmission =
+        qualityTier === "battery" ? 0 : authoredCoreTransmission;
       material.needsUpdate = true;
     });
     core.castShadow = !early;
@@ -2134,6 +2155,28 @@ export function mountGame(
       emissive: emissive ? color : 0x000000,
       emissiveIntensity: emissive ? 0.68 : 0,
       transparent: false,
+    });
+  };
+
+  const applyPhysicalMaterialQuality = (root: THREE.Object3D) => {
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      materials.forEach((material) => {
+        if (!(material instanceof THREE.MeshPhysicalMaterial)) return;
+        if (
+          typeof material.userData.authoredTransmission !== "number"
+        ) {
+          material.userData.authoredTransmission = material.transmission;
+        }
+        material.transmission =
+          qualityTier === "battery"
+            ? 0
+            : Number(material.userData.authoredTransmission);
+        material.needsUpdate = true;
+      });
     });
   };
 
@@ -3555,6 +3598,7 @@ export function mountGame(
     let builtTemplate = false;
     if (!template) {
       const root = buildVisual(curio, rich);
+      applyPhysicalMaterialQuality(root);
       root.updateMatrixWorld(true);
       const dimensions = new THREE.Vector3();
       new THREE.Box3().setFromObject(root).getSize(dimensions);
@@ -4309,6 +4353,8 @@ export function mountGame(
           runtime: {
             era: activeIndex,
             quality: qualityTier,
+            worldGeneration,
+            transitionActive: scaleTransitionStarted >= 0,
             pickups: {
               active: pickups.length,
               queued: pickupSpawnQueue.pending,
@@ -4319,6 +4365,11 @@ export function mountGame(
               maxPerFrame: MAX_PICKUP_PROMOTIONS_PER_FRAME,
               workBudgetMs:
                 worldPerformanceBudget(qualityTier).maxChunkWorkMs,
+            },
+            drawBudget: {
+              base: baseSceneDrawCalls,
+              richBudget: richPickupDrawCallBudget,
+              richUsed: richPickupDrawCalls,
             },
             drawCalls: renderer.info.render.calls,
             triangles: renderer.info.render.triangles,
@@ -4337,6 +4388,20 @@ export function mountGame(
           removed.forEach((pickup) => removePickup(pickup));
           reconcilePickupQueue();
           return removed.length;
+        },
+        completeLayer: () => {
+          if (
+            labEra !== null ||
+            scaleTransitionStarted >= 0 ||
+            game.era >= ERAS.length - 1
+          ) {
+            return false;
+          }
+          game.progress = 1;
+          game.radius = CORE_RADIUS_MAX;
+          scaleTransitionStarted = readPerformanceClock();
+          eraTransitionAge = 0;
+          return true;
         },
       }
     : null;
@@ -4379,18 +4444,6 @@ export function mountGame(
       const overRenderBudget =
         renderer.info.render.calls > performanceBudget.maxDrawCalls ||
         renderer.info.render.triangles > performanceBudget.maxTriangles;
-      if (
-        qualityTier === "battery" &&
-        renderer.info.render.calls > performanceBudget.maxDrawCalls
-      ) {
-        richPickupLimit = Math.max(
-          8,
-          Math.floor(
-            richPickupLimit *
-              (performanceBudget.maxDrawCalls / renderer.info.render.calls),
-          ),
-        );
-      }
       const budgetAdjustedFps = overRenderBudget
         ? Math.min(measuredFps, qualityTier === "high" ? 40 : 28)
         : measuredFps;
@@ -4410,6 +4463,10 @@ export function mountGame(
         renderer.setSize(width, height, false);
         renderer.shadowMap.enabled = qualityTier !== "battery";
         keyLight.castShadow = qualityTier !== "battery";
+        applyPhysicalMaterialQuality(scene);
+        visualTemplates.forEach((template) => {
+          applyPhysicalMaterialQuality(template.root);
+        });
         const nextBudget = activePickupBudget();
         while (pickups.length > nextBudget) {
           const pickup = pickups.pop();
@@ -4737,6 +4794,42 @@ export function mountGame(
     glowLight.position.set(game.x + 4, floatHeight + 4, game.z - 3);
 
     const pickupLodStartedAt = phaseStart();
+    pickups.forEach((pickup) => {
+      pickup.root.visible = false;
+    });
+    farPickupMesh.visible = false;
+    const renderBudget = worldPerformanceBudget(qualityTier);
+    baseSceneDrawCalls = 0;
+    richPickupDrawCalls = 0;
+    richPickupDrawCallBudget = renderBudget.maxDrawCalls;
+    if (qualityTier === "battery") {
+      scene.traverseVisible((object) => {
+        if (
+          !(
+            object instanceof THREE.Mesh ||
+            object instanceof THREE.Points ||
+            object instanceof THREE.Line ||
+            object instanceof THREE.Sprite
+          ) ||
+          (object instanceof THREE.InstancedMesh && object.count === 0)
+        ) {
+          return;
+        }
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        baseSceneDrawCalls += materials.filter(
+          (material) => material.visible,
+        ).length;
+      });
+      const farPickupReserve = pickups.length > 0 ? 1 : 0;
+      richPickupDrawCallBudget = Math.max(
+        0,
+        renderBudget.maxDrawCalls -
+          baseSceneDrawCalls -
+          farPickupReserve,
+      );
+    }
     let farPickupCount = 0;
     let richPickupCount = 0;
     const richPickupBudget = richPickupLimit;
@@ -4762,10 +4855,15 @@ export function mountGame(
         height,
       );
       const projectedLod = lodForProjectedDiameter(projectedSize);
+      const wantsRichVisual =
+        projectedLod === "rich" ||
+        (pickup.big && projectedLod === "simple" && distance < 30);
       const useRichVisual =
         richPickupCount < richPickupBudget &&
-        (projectedLod === "rich" ||
-          (pickup.big && projectedLod === "simple" && distance < 30));
+        wantsRichVisual &&
+        (qualityTier !== "battery" ||
+          richPickupDrawCalls + pickup.drawCalls <=
+            richPickupDrawCallBudget);
       pickup.root.visible = useRichVisual;
       if (pickup.marker) {
         pickup.marker.visible =
@@ -4822,6 +4920,7 @@ export function mountGame(
       }
 
       richPickupCount += 1;
+      richPickupDrawCalls += pickup.drawCalls;
       pickup.root.scale.setScalar(
         motionScale * transitionWorldScale * entranceScale,
       );

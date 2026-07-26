@@ -14,6 +14,9 @@ type PerformanceSnapshot = {
     }
   >;
   runtime: {
+    era: number;
+    worldGeneration: number;
+    transitionActive: boolean;
     pickups: {
       active: number;
       queued: number;
@@ -30,6 +33,11 @@ type PerformanceSnapshot = {
     budget: {
       maxDrawCalls: number;
       maxTriangles: number;
+    };
+    drawBudget: {
+      base: number;
+      richBudget: number;
+      richUsed: number;
     };
   };
 };
@@ -48,9 +56,44 @@ async function readPerformanceDiagnostics(page: Page) {
       __QUARKATAMARI_PERFORMANCE__?: {
         snapshot: () => PerformanceSnapshot;
         removePickups: (count: number) => number;
+        completeLayer: () => boolean;
       };
     };
     return debugWindow.__QUARKATAMARI_PERFORMANCE__?.snapshot() ?? null;
+  });
+}
+
+async function inspectInstanceColors(page: Page) {
+  return page.evaluate(() => {
+    const scenes = (
+      window as typeof window & {
+        __QUARKATAMARI_SCENES__?: Array<{
+          traverse: (visit: (object: Record<string, any>) => void) => void;
+        }>;
+      }
+    ).__QUARKATAMARI_SCENES__ ?? [];
+    let checked = 0;
+    const offenders: string[] = [];
+    for (const scene of scenes) {
+      scene.traverse((object) => {
+        if (
+          !object.isInstancedMesh ||
+          !object.instanceColor ||
+          object.count === 0 ||
+          object.geometry.getAttribute("color")
+        ) {
+          return;
+        }
+        checked += 1;
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        if (materials.some((material) => material.vertexColors === true)) {
+          offenders.push(object.name || object.uuid);
+        }
+      });
+    }
+    return { checked, offenders };
   });
 }
 
@@ -108,38 +151,13 @@ test("boots the static game at its production subpath", async ({ page }) => {
       .filter((url) => !url.pathname.startsWith(basePath))
       .map((url) => url.pathname), appPath);
   expect(wrongPathResources).toEqual([]);
-  const instanceColorDiagnostics = await page.evaluate(() => {
-    const scenes = (
-      window as typeof window & {
-        __QUARKATAMARI_SCENES__?: Array<{
-          traverse: (visit: (object: Record<string, any>) => void) => void;
-        }>;
-      }
-    ).__QUARKATAMARI_SCENES__ ?? [];
-    let checked = 0;
-    const offenders: string[] = [];
-    for (const scene of scenes) {
-      scene.traverse((object) => {
-        if (
-          !object.isInstancedMesh ||
-          !object.instanceColor ||
-          object.count === 0 ||
-          object.geometry.getAttribute("color")
-        ) {
-          return;
-        }
-        checked += 1;
-        const materials = Array.isArray(object.material)
-          ? object.material
-          : [object.material];
-        if (materials.some((material) => material.vertexColors === true)) {
-          offenders.push(object.name || object.uuid);
-        }
-      });
-    }
-    return { checked, offenders };
-  });
-  expect(instanceColorDiagnostics.checked).toBeGreaterThan(0);
+  await expect
+    .poll(
+      async () => (await inspectInstanceColors(page)).checked,
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
+  const instanceColorDiagnostics = await inspectInstanceColors(page);
   expect(instanceColorDiagnostics.offenders).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
@@ -281,6 +299,13 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
       { timeout: 30_000 },
     )
     .toBe(true);
+  const battery = await readPerformanceDiagnostics(page);
+  expect(battery?.runtime.quality).toBe("battery");
+  expect(
+    (battery?.runtime.drawBudget.base ?? 0) +
+      (battery?.runtime.drawBudget.richUsed ?? 0) +
+      ((battery?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
+  ).toBeLessThanOrEqual(battery?.runtime.budget.maxDrawCalls ?? 0);
 });
 
 test("performance diagnostics capture a repeatable complex-scene baseline", async ({
@@ -381,6 +406,76 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
     body: Buffer.from(JSON.stringify(replenished, null, 2)),
     contentType: "application/json",
   });
+});
+
+test("a scale shift rebuilds once and repopulates through the work queue", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page);
+  await begin(page);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return Boolean(
+        snapshot &&
+          snapshot.runtime.pickups.active ===
+            snapshot.runtime.pickups.target &&
+          snapshot.runtime.pickups.queued === 0,
+      );
+    })
+    .toBe(true);
+  const before = await readPerformanceDiagnostics(page);
+  expect(before?.runtime.pickups.active).toBe(
+    before?.runtime.pickups.target,
+  );
+
+  const triggered = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        completeLayer: () => boolean;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.completeLayer() ?? false;
+  });
+  expect(triggered).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.transitionActive,
+    )
+    .toBe(true);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              era: snapshot.runtime.era,
+              generation: snapshot.runtime.worldGeneration,
+              transition: snapshot.runtime.transitionActive,
+              settled:
+                snapshot.runtime.pickups.active ===
+                  snapshot.runtime.pickups.target &&
+                snapshot.runtime.pickups.queued === 0,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({
+      era: (before?.runtime.era ?? 0) + 1,
+      generation: expect.any(Number),
+      transition: false,
+      settled: true,
+    });
+  const after = await readPerformanceDiagnostics(page);
+  expect(after?.runtime.worldGeneration).toBeGreaterThan(
+    before?.runtime.worldGeneration ?? 0,
+  );
+  expect(after?.runtime.pickups.active).toBe(after?.runtime.pickups.target);
+  expect(after?.runtime.pickups.maxSpawnedPerFrame).toBeLessThanOrEqual(
+    after?.runtime.pickups.maxPerFrame ?? 0,
+  );
 });
 
 test("a cold install can boot the lazy Three.js world offline", async ({
