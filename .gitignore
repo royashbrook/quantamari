@@ -12,15 +12,18 @@
 
 # testing
 /coverage
-/playwright-report/
-/test-results/
+/tests/results/
 
 # sveltekit
 /.svelte-kit/
+/dist/
 
 # misc
 .DS_Store
 *.pem
+/.openai/
+/.wrangler/
+/graphify-out/
 
 # debug
 npm-debug.log*
@@ -36,7 +39,3 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-/dist/
-/.sites-runtime/
-/.wrangler/
-/graphify-out/

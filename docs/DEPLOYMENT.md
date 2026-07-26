@@ -3,11 +3,10 @@
 Quarkatamari is a browser-only static PWA. GitHub is the normal release path:
 
 - **GitHub** (`royashbrook/quarkatamari`) is the source of truth.
-- Every verified push to GitHub `main` automatically deploys production.
+- Every verified production-affecting push to GitHub `main` automatically
+  deploys production; Markdown-only pushes do not run the workflow.
 - Branch pushes and pull requests run the same static, unit, and browser
   contracts without deploying.
-- **Sites** remains configured only for optional isolated testing. Do not save
-  or deploy a Sites version during a normal release.
 
 ## One-time setup
 
@@ -38,6 +37,10 @@ caching. Then merge `codex/v2-sveltekit`.
 
 Never force-push. Tags are pushed only when deliberately created as a release
 checkpoint.
+
+Release-cutover state belongs in GitHub issues rather than a repository backlog.
+The v2 cutover is tracked in
+[quarkatamari#6](https://github.com/royashbrook/quarkatamari/issues/6).
 
 ## Recovery
 

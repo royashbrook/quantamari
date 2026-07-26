@@ -4,6 +4,7 @@ const appUrl = "http://127.0.0.1:4174/quarkatamari/";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  outputDir: "./tests/results/e2e",
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 2 : 0,

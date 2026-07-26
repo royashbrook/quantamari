@@ -26,6 +26,18 @@ dialog pauses input, Scale Lab remounts a preview without mutating journey
 progress, and leaving the route destroys every renderer listener and animation
 frame.
 
+## Repository layout
+
+- `src/routes` contains the single prerendered game page and its layout.
+- `src/lib/components` contains Svelte UI; `src/lib/game` contains the Three.js
+  runtime; the remaining `src/lib` modules are browser-independent domain code.
+- `static` contains files shipped byte-for-byte with the PWA.
+- `tests/unit`, `tests/artifact`, and `tests/e2e` contain Node, built-artifact,
+  and Playwright contracts. Generated browser artifacts go in the ignored
+  `tests/results` directory.
+- `scripts` contains build utilities, `docs` contains supporting architecture
+  notes, and `.github` contains verification and deployment automation.
+
 ## Physics follow-up
 
 Three.js remains the renderer. The current collision system remains the v2
