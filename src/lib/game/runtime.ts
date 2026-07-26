@@ -47,6 +47,10 @@ import {
   type GameMode,
   type MashRecordV4,
 } from "../save-data";
+import {
+  createPhaseRecorder,
+  type RuntimePhase,
+} from "./runtime-performance";
 
 type Pickup = {
   root: THREE.Group;
@@ -266,6 +270,21 @@ export function mountGame(
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  const debugWindow = window as typeof window & {
+    __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
+    __QUARKATAMARI_PERFORMANCE__?: {
+      snapshot: () => unknown;
+    };
+  };
+  const phaseRecorder = debugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__
+    ? createPhaseRecorder()
+    : null;
+  const phaseStart = () => (phaseRecorder ? performance.now() : 0);
+  const phaseEnd = (phase: RuntimePhase, startedAt: number) => {
+    if (phaseRecorder) {
+      phaseRecorder.record(phase, performance.now() - startedAt);
+    }
+  };
   const compactGpu = window.innerWidth <= 860;
   let qualityTier: QualityTier = compactGpu ? "balanced" : "high";
   let richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
@@ -656,6 +675,7 @@ export function mountGame(
       .join(":");
 
   const buildSubstrate = (viewScale: number) => {
+    const startedAt = phaseStart();
     substrateGroup.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
         object.geometry.dispose();
@@ -787,6 +807,7 @@ export function mountGame(
       worldChunkSize(activeWorldKind),
     );
     semanticResidencyKey = substrateKeyFor(viewScale);
+    phaseEnd("substrate-rebuild", startedAt);
   };
 
   const playerRoot = new THREE.Group();
@@ -1202,11 +1223,13 @@ export function mountGame(
   };
 
   const applyGroundScaleTexture = (viewScale: number) => {
+    const startedAt = phaseStart();
     groundTexture?.dispose();
     const visibleFoundation = Math.max(0, Math.ceil(viewScale) - 1);
     groundTexture = makeScalePatternTexture(visibleFoundation);
     groundMaterial.map = groundTexture;
     groundMaterial.needsUpdate = true;
+    phaseEnd("ground-texture", startedAt);
   };
 
   const applyScaleTextures = (index: number) => {
@@ -2023,6 +2046,7 @@ export function mountGame(
   };
 
   const rebuildEnvironment = (index: number) => {
+    const startedAt = phaseStart();
     buildEnvironment(index);
     if (PERIODIC_WORLD_KINDS.has(activeWorldKind)) {
       addPeriodicEnvironmentLod(
@@ -2031,6 +2055,7 @@ export function mountGame(
       );
     }
     centralSceneryCompact = null;
+    phaseEnd("world-rebuild", startedAt);
   };
 
   const applyEraTheme = (index: number, announce = false) => {
@@ -3985,6 +4010,7 @@ export function mountGame(
   };
 
   const populate = () => {
+    const startedAt = phaseStart();
     const desiredPickupCount = activePickupBudget();
     pickups = pickups.filter((pickup) => {
       const distance = Math.hypot(
@@ -4002,6 +4028,7 @@ export function mountGame(
       );
       attempts += 1;
     }
+    phaseEnd("spawning", startedAt);
   };
 
   let scaleTransitionStarted = -1;
@@ -4171,6 +4198,26 @@ export function mountGame(
   populate();
   window.addEventListener("resize", resize);
 
+  const performanceDebug = phaseRecorder
+    ? {
+        snapshot: () => ({
+          phases: phaseRecorder.snapshot(),
+          runtime: {
+            era: activeIndex,
+            quality: qualityTier,
+            pickups: pickups.length,
+            targetPickups: activePickupBudget(),
+            drawCalls: renderer.info.render.calls,
+            triangles: renderer.info.render.triangles,
+            budget: worldPerformanceBudget(qualityTier),
+          },
+        }),
+      }
+    : null;
+  if (performanceDebug) {
+    debugWindow.__QUARKATAMARI_PERFORMANCE__ = performanceDebug;
+  }
+
   let last = performance.now();
   let frame = 0;
   let hudClock = 0;
@@ -4186,7 +4233,9 @@ export function mountGame(
   const farPickupDummy = new THREE.Object3D();
   let transitionWorldScale = 1;
   const animate = (now: number) => {
-    const dt = Math.min(0.033, (now - last) / 1000);
+    const frameStartedAt = phaseStart();
+    const frameInterval = now - last;
+    const dt = Math.min(0.033, frameInterval / 1000);
     last = now;
     if (document.hidden || modalOpenRef.current) {
       performanceWindowStarted = now;
@@ -4194,6 +4243,8 @@ export function mountGame(
       frame = requestAnimationFrame(animate);
       return;
     }
+    phaseRecorder?.record("frame-interval", frameInterval);
+    const simulationStartedAt = phaseStart();
     performanceFrames += 1;
     const performanceWindow = now - performanceWindowStarted;
     if (performanceWindow >= 5000) {
@@ -4464,6 +4515,7 @@ export function mountGame(
       populate();
       spawnClock = 0;
     }
+    phaseEnd("simulation", simulationStartedAt);
 
     const floatHeight =
       game.radius * 0.94 + (early ? Math.sin(now * 0.0017) * 0.035 : 0);
@@ -4546,6 +4598,7 @@ export function mountGame(
     dustField.rotation.y += dt * (early ? 0.014 : 0.003);
     glowLight.position.set(game.x + 4, floatHeight + 4, game.z - 3);
 
+    const pickupLodStartedAt = phaseStart();
     let farPickupCount = 0;
     let richPickupCount = 0;
     const richPickupBudget = richPickupLimit;
@@ -4673,6 +4726,7 @@ export function mountGame(
     if (farPickupMesh.instanceColor) {
       farPickupMesh.instanceColor.needsUpdate = true;
     }
+    phaseEnd("pickup-lod", pickupLodStartedAt);
 
     for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
       const piece = stickingPieces[index];
@@ -4761,7 +4815,10 @@ export function mountGame(
       game.lastSave = now;
     }
 
+    const renderStartedAt = phaseStart();
     renderer.render(scene, camera);
+    phaseEnd("render-submit", renderStartedAt);
+    phaseEnd("frame", frameStartedAt);
     frame = requestAnimationFrame(animate);
   };
   frame = requestAnimationFrame(animate);
@@ -4769,6 +4826,9 @@ export function mountGame(
   return () => {
     cancelAnimationFrame(frame);
     window.removeEventListener("resize", resize);
+    if (debugWindow.__QUARKATAMARI_PERFORMANCE__ === performanceDebug) {
+      delete debugWindow.__QUARKATAMARI_PERFORMANCE__;
+    }
     pickups.forEach((pickup) => removePickup(pickup));
     disposeEnvironment();
     substrateGroup.traverse((object) => {

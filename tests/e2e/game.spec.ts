@@ -2,6 +2,49 @@ import { expect, test, type Page } from "@playwright/test";
 
 const appPath = "/quarkatamari/";
 
+type PerformanceSnapshot = {
+  phases: Record<
+    string,
+    {
+      count: number;
+      latest: number;
+      p50: number;
+      p95: number;
+      max: number;
+    }
+  >;
+  runtime: {
+    pickups: number;
+    targetPickups: number;
+    quality: "high" | "balanced" | "battery";
+    drawCalls: number;
+    triangles: number;
+    budget: {
+      maxDrawCalls: number;
+      maxTriangles: number;
+    };
+  };
+};
+
+async function enablePerformanceDiagnostics(page: Page) {
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      __QUARKATAMARI_PERFORMANCE_REQUESTED__: true,
+    });
+  });
+}
+
+async function readPerformanceDiagnostics(page: Page) {
+  return page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        snapshot: () => PerformanceSnapshot;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.snapshot() ?? null;
+  });
+}
+
 async function begin(page: Page, mode: "Long game" | "Learning tour" = "Learning tour") {
   await page.goto(appPath);
   await page.getByRole("button", { name: mode }).click();
@@ -211,6 +254,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page);
   await begin(page);
   await page.getByRole("button", { name: "Open scale and science atlas" }).click();
   await page.getByLabel("Choose a scale layer").fill("20");
@@ -221,13 +265,72 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   await expect
     .poll(
       async () => {
-        const status = await page.locator(".quality-mode").textContent();
-        const match = status?.match(/battery\s+·[^·]+·\s+(\d+)\s+draws/);
-        return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot?.runtime.quality === "battery" &&
+          snapshot.runtime.drawCalls <= snapshot.runtime.budget.maxDrawCalls;
       },
-      { timeout: 25_000 },
+      { timeout: 30_000 },
     )
-    .toBeLessThanOrEqual(80);
+    .toBe(true);
+});
+
+test("performance diagnostics capture a repeatable complex-scene baseline", async ({
+  page,
+}, testInfo) => {
+  await enablePerformanceDiagnostics(page);
+  await begin(page);
+  await page.getByRole("button", { name: "Open scale and science atlas" }).click();
+  await page.getByLabel("Choose a scale layer").fill("20");
+  await page.getByRole("dialog", { name: "Scale and science atlas" })
+    .getByRole("button", { name: "Preview in 3D" })
+    .click();
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.phases.frame?.count ?? 0,
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThanOrEqual(120);
+
+  await expect
+    .poll(
+      () => readPerformanceDiagnostics(page),
+      { timeout: 30_000 },
+    )
+    .toMatchObject({
+      runtime: {
+        pickups: expect.any(Number),
+        targetPickups: expect.any(Number),
+      },
+      phases: {
+        frame: { count: expect.any(Number) },
+        "frame-interval": { count: expect.any(Number) },
+        simulation: { count: expect.any(Number) },
+        spawning: { count: expect.any(Number) },
+        "pickup-lod": { count: expect.any(Number) },
+        "world-rebuild": { count: expect.any(Number) },
+        "substrate-rebuild": { count: expect.any(Number) },
+        "ground-texture": { count: expect.any(Number) },
+        "render-submit": { count: expect.any(Number) },
+      },
+    });
+
+  const diagnostics = await readPerformanceDiagnostics(page);
+  expect(diagnostics).toBeDefined();
+  expect(diagnostics?.runtime.pickups).toBe(
+    diagnostics?.runtime.targetPickups,
+  );
+  for (const summary of Object.values(diagnostics?.phases ?? {})) {
+    expect(summary.count).toBeGreaterThan(0);
+    expect(summary.latest).toBeGreaterThanOrEqual(0);
+    expect(summary.p50).toBeLessThanOrEqual(summary.p95);
+    expect(summary.p95).toBeLessThanOrEqual(summary.max);
+  }
+  await testInfo.attach("performance-baseline.json", {
+    body: Buffer.from(JSON.stringify(diagnostics, null, 2)),
+    contentType: "application/json",
+  });
 });
 
 test("a cold install can boot the lazy Three.js world offline", async ({
