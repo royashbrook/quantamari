@@ -70,6 +70,9 @@ npm run test:e2e
 npm run test:all
 ```
 
+`npm ci` also activates the tracked commit-message hook. Every commit must
+reference its GitHub issue using `#<number>`.
+
 `npm test` runs the fast Node gameplay/science/save suite. `npm run test:e2e`
 builds the production PWA, verifies the static artifact, and exercises it with
 Playwright. `npm run test:all` is the release and CI contract.

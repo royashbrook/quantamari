@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if git stripspace --strip-comments < "$1" | grep -Eq '#[1-9][0-9]*'; then
+  exit 0
+fi
+
+echo "Commit blocked: reference a GitHub issue, for example: fix: restore colors (#3)" >&2
+exit 1

@@ -7,6 +7,7 @@
   },
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "dev": "vite dev",
     "prebuild": "node scripts/clean.mjs",
     "build": "vite build",
