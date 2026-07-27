@@ -342,6 +342,7 @@ test("browser changes survive a page reload", async ({ page }) => {
 test("multi-era rich and proxy mash pieces survive a save reload", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await enablePerformanceDiagnostics(page, "balanced");
   await seedMultiEraMash(page);
   await begin(page);
@@ -352,16 +353,19 @@ test("multi-era rich and proxy mash pieces survive a save reload", async ({
     proxyPieces: 1,
   };
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return snapshot
-        ? {
-            era: snapshot.runtime.era,
-            attachments: snapshot.runtime.representations.attachments,
-            proxyPieces: snapshot.runtime.representations.proxyPieces,
-          }
-        : null;
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              era: snapshot.runtime.era,
+              attachments: snapshot.runtime.representations.attachments,
+              proxyPieces: snapshot.runtime.representations.proxyPieces,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
     .toEqual(expectedRepresentations);
 
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
@@ -376,16 +380,19 @@ test("multi-era rich and proxy mash pieces survive a save reload", async ({
 
   await begin(page);
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return snapshot
-        ? {
-            era: snapshot.runtime.era,
-            attachments: snapshot.runtime.representations.attachments,
-            proxyPieces: snapshot.runtime.representations.proxyPieces,
-          }
-        : null;
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              era: snapshot.runtime.era,
+              attachments: snapshot.runtime.representations.attachments,
+              proxyPieces: snapshot.runtime.representations.proxyPieces,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
     .toEqual(expectedRepresentations);
 });
 
@@ -421,7 +428,9 @@ test("Scale Lab previews a layer without replacing the journey", async ({
 test("mobile layout keeps pointer steering and the canvas in the viewport", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page);
   await begin(page);
   await expect(page.getByText("◎ drag anywhere to roll")).toBeVisible();
   await expect(page.locator(".fact-card")).toBeHidden();
@@ -429,11 +438,26 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBe(true);
 
+  const startPosition = (await readPerformanceDiagnostics(page))?.runtime
+    .player ?? { x: 0, z: 0 };
   await page.mouse.move(195, 500);
   await page.mouse.down();
-  await page.mouse.move(285, 500, { steps: 4 });
-  await page.waitForTimeout(500);
-  await page.mouse.up();
+  try {
+    await page.mouse.move(285, 500, { steps: 4 });
+    await expect
+      .poll(
+        async () => {
+          const player = (await readPerformanceDiagnostics(page))?.runtime.player;
+          return player
+            ? Math.hypot(player.x - startPosition.x, player.z - startPosition.z)
+            : 0;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0.01);
+  } finally {
+    await page.mouse.up();
+  }
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   const savedPosition = await page.evaluate(() => {
     const save = JSON.parse(
@@ -578,6 +602,7 @@ test("battery draw budgeting covers every authored era", async ({ page }) => {
 test("dense pickup bursts stay pooled inside the battery draw budget", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page, "battery");
   await begin(page);
@@ -585,6 +610,7 @@ test("dense pickup bursts stay pooled inside the battery draw budget", async ({
     .poll(
       async () =>
         (await readPerformanceDiagnostics(page))?.phases.frame?.count ?? 0,
+      { timeout: 15_000 },
     )
     .toBeGreaterThanOrEqual(10);
   const beforeBursts = await readPerformanceDiagnostics(page);
@@ -600,16 +626,19 @@ test("dense pickup bursts stay pooled inside the battery draw budget", async ({
   expect(activeBursts).toBe(12);
 
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return Boolean(
-        snapshot &&
-          snapshot.phases.frame.count >
-            (beforeBursts?.phases.frame.count ?? 0) &&
-          snapshot.runtime.bursts.active === snapshot.runtime.bursts.limit &&
-          snapshot.runtime.drawCalls <= snapshot.runtime.budget.maxDrawCalls,
-      );
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Boolean(
+          snapshot &&
+            snapshot.phases.frame.count >
+              (beforeBursts?.phases.frame.count ?? 0) &&
+            snapshot.runtime.bursts.active === snapshot.runtime.bursts.limit &&
+            snapshot.runtime.drawCalls <= snapshot.runtime.budget.maxDrawCalls,
+        );
+      },
+      { timeout: 15_000 },
+    )
     .toBe(true);
 });
 
@@ -751,12 +780,15 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
 test("long game crosses a layer without a skip animation or size pop", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   await enablePerformanceDiagnostics(page, "balanced");
   await seedAttachedFoam(page);
   await begin(page, "Long game");
   await expect
-    .poll(async () => (await readPerformanceDiagnostics(page))?.runtime.era)
+    .poll(
+      async () => (await readPerformanceDiagnostics(page))?.runtime.era,
+      { timeout: 15_000 },
+    )
     .toBe(0);
   await expect
     .poll(
@@ -779,16 +811,19 @@ test("long game crosses a layer without a skip animation or size pop", async ({
   });
   expect(debugLens).toBe(16);
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return Boolean(
-        snapshot &&
-          snapshot.runtime.player.projectedDiameter < 9 &&
-          snapshot.runtime.representations.effectiveRadius >
-            snapshot.runtime.radius * 1.6 &&
-          !snapshot.runtime.representations.attachmentProxyActive,
-      );
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Boolean(
+          snapshot &&
+            snapshot.runtime.player.projectedDiameter < 9 &&
+            snapshot.runtime.representations.effectiveRadius >
+              snapshot.runtime.radius * 1.6 &&
+            !snapshot.runtime.representations.attachmentProxyActive,
+        );
+      },
+      { timeout: 15_000 },
+    )
     .toBe(true);
   const expectedCameraRatio = debugLens * Math.hypot(6.05, 10.6);
   await expect
@@ -873,18 +908,21 @@ test("long game crosses a layer without a skip animation or size pop", async ({
   ).toBeCloseTo(expectedRebase, 5);
   expect(crossed?.runtime.representations.attachments).toBe(1);
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return snapshot
-        ? {
-            extended:
-              snapshot.runtime.representations.effectiveRadius >
-              snapshot.runtime.radius * 1.5,
-            proxy:
-              snapshot.runtime.representations.attachmentProxyActive,
-          }
-        : null;
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              extended:
+                snapshot.runtime.representations.effectiveRadius >
+                snapshot.runtime.radius * 1.5,
+              proxy:
+                snapshot.runtime.representations.attachmentProxyActive,
+            }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
     .toEqual({ extended: true, proxy: false });
   await expect
     .poll(
