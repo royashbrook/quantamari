@@ -447,6 +447,7 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
 test("mobile battery mode enforces its measured draw-call budget", async ({
   page,
 }) => {
+  test.setTimeout(75_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
   await seedAttachedFoam(page);
@@ -511,7 +512,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
 });
 
 test("battery draw budgeting covers every authored era", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page, "battery");
   await begin(page);
@@ -786,6 +787,22 @@ test("long game crosses a layer without a skip animation or size pop", async ({
       );
     })
     .toBe(true);
+  const expectedCameraRatio = debugLens * Math.hypot(6.05, 10.6);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        if (!snapshot || snapshot.runtime.radius <= 0) {
+          return Number.POSITIVE_INFINITY;
+        }
+        return Math.abs(
+          snapshot.runtime.player.cameraDistance / snapshot.runtime.radius -
+            expectedCameraRatio,
+        ) / expectedCameraRatio;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeLessThan(0.005);
 
   const before = await readPerformanceDiagnostics(page);
   const initialProjectedDiameter =

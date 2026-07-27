@@ -5178,7 +5178,7 @@ export function mountGame(
       applyGroundScaleTexture(continuousViewScale);
     }
 
-    spawnClock += dt;
+    spawnClock += frameInterval / 1000;
     const lowPickupThreshold = Math.floor(activePickupBudget() * 0.84);
     if (scaleTransitionStarted < 0) {
       if (
