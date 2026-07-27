@@ -367,19 +367,52 @@
 
 .credit {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
   padding: 11px 20px 13px;
   border-top: 1px solid #eadfcc;
   color: #67536f;
   font: 750 10px var(--font-geist-mono), ui-monospace, monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.credit b {
-  color: #e74e91;
-  font-size: 11px;
+.credit > span:first-child {
+  display: inline;
+}
+
+.heart {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  fill: #e0746a;
+  vertical-align: -0.12em;
+}
+
+.credit a {
+  color: #493252;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.credit a:hover {
+  color: #a74774;
+}
+
+.credit a.sponsor {
+  color: #9a6216;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (max-width: 560px) {
