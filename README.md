@@ -191,4 +191,6 @@ rollback point before the breaking SvelteKit rewrite, and `v2.0.0` marks that
 rewrite in production. The v2.1 performance work is tracked in
 [issue #8](https://github.com/royashbrook/quarkatamari/issues/8); v2.2 adds the
 pause, reset, and About menu tracked in
-[issue #20](https://github.com/royashbrook/quarkatamari/issues/20).
+[issue #20](https://github.com/royashbrook/quarkatamari/issues/20), and v2.2.1
+adopts Roy's shared maker mark under
+[issue #22](https://github.com/royashbrook/quarkatamari/issues/22).
