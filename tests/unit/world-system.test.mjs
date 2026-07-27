@@ -6,6 +6,7 @@ import {
   LEGACY_VISUAL_STAGE_ANCHORS,
   MAX_RESIDENT_LAYERS,
   PROJECTED_LOD_THRESHOLDS,
+  PROJECTED_RICH_HYSTERESIS,
   RESIDENT_PRIOR_LAYER_DEPTH,
   WORLD_PERFORMANCE_BUDGETS,
   WORLD_SPECS,
@@ -17,6 +18,7 @@ import {
   residentLayerIndices,
   semanticViewScale,
   stableWorldSeed,
+  wantsRichProjectedDetail,
   worldAnchorSeed,
   worldChunkSeed,
   worldSpecForEra,
@@ -37,6 +39,11 @@ test("every authored era maps to a grounded world kind and legacy visual stage",
     kind: "dust-surface",
     surface: "floor",
     legacyStage: "room",
+  });
+  assert.deepEqual(worldSpecForEra("Theory Playground"), {
+    kind: "void",
+    surface: "none",
+    legacyStage: "quantum",
   });
   assert.equal(worldSpecForEra("Everyday Kingdom").kind, "interior");
   assert.equal(worldSpecForEra("Built Environment").kind, "city");
@@ -92,11 +99,37 @@ test("projected-size LOD thresholds keep detail until it becomes fabric", () => 
     projectedDiameterPixels(1, 0, 90, 1_000),
     Number.POSITIVE_INFINITY,
   );
+
+  assert.equal(
+    wantsRichProjectedDetail(PROJECTED_RICH_HYSTERESIS.enter, false),
+    true,
+  );
+  assert.equal(
+    wantsRichProjectedDetail(PROJECTED_LOD_THRESHOLDS.rich, false),
+    false,
+  );
+  assert.equal(
+    wantsRichProjectedDetail(PROJECTED_LOD_THRESHOLDS.rich, true),
+    true,
+  );
+  assert.equal(
+    wantsRichProjectedDetail(PROJECTED_RICH_HYSTERESIS.exit - 0.001, true),
+    false,
+  );
+  assert.equal(wantsRichProjectedDetail(Number.NaN, true), false);
 });
 
 test("resident layers retain the current view and at most two prior layers", () => {
   assert.equal(RESIDENT_PRIOR_LAYER_DEPTH, 2);
   assert.deepEqual(residentLayerIndices(0, ERAS.length), [0]);
+  assert.deepEqual(
+    residentLayerIndices(0, ERAS.length).filter((layer) => layer < 0),
+    [],
+  );
+  assert.deepEqual(
+    residentLayerIndices(1, ERAS.length).filter((layer) => layer < 1),
+    [0],
+  );
   assert.deepEqual(residentLayerIndices(2, ERAS.length), [2, 1, 0]);
   assert.deepEqual(residentLayerIndices(2.25, ERAS.length), [3, 2, 1]);
   assert.deepEqual(residentLayerIndices(20, ERAS.length), [20, 19, 18]);

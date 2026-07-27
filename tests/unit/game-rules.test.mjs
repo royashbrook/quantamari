@@ -17,6 +17,7 @@ import {
   collectibleIdentityFor,
   deepLensUnlocked,
   lowPickupBudget,
+  mashProxyScale,
   nextLayerObstacleRadius,
   obstacleCenterGap,
   pickupBudget,
@@ -26,6 +27,7 @@ import {
   radiusForLayerProgress,
   resolveCircleAabbCollision,
   resolveCircularCollision,
+  scaleTransitionDuration,
   scaleTransitionFrame,
 } from "../../src/lib/game-rules.ts";
 
@@ -144,15 +146,32 @@ test("grounded scenery depenetrates without killing tangent motion", () => {
   assert.ok(circleAabbClearance(3, 0, 0.5, 0, 0, 1, 1) > 1);
 });
 
-test("scale shift grows the player while shrinking the outgoing world", () => {
+test("learning scale shift lands continuously on the rebased player radius", () => {
   const start = scaleTransitionFrame(0);
   const middle = scaleTransitionFrame(0.5);
   const finish = scaleTransitionFrame(1);
   assert.deepEqual(start, { playerScale: 1, worldScale: 1 });
-  assert.ok(middle.playerScale > 1.5);
+  assert.ok(middle.playerScale > 1.3);
   assert.ok(middle.worldScale < 0.7);
   assert.ok(finish.worldScale < 0.25);
   assert.ok(middle.playerScale / middle.worldScale > 2);
+  assert.ok(
+    Math.abs(CORE_RADIUS_MAX * finish.playerScale - CORE_RADIUS_MIN) <
+      Number.EPSILON * 10,
+  );
+  assert.equal(scaleTransitionDuration("journey"), 0);
+  assert.equal(scaleTransitionDuration("learning"), 1_800);
+});
+
+test("old mash proxies keep shrinking instead of popping at the fabric handoff", () => {
+  const rebasedScale =
+    0.36 * (CORE_RADIUS_MIN / CORE_RADIUS_MAX) ** 3;
+  assert.ok(rebasedScale < 0.07);
+  assert.equal(mashProxyScale(rebasedScale), rebasedScale);
+  assert.ok(
+    mashProxyScale(rebasedScale * (CORE_RADIUS_MIN / CORE_RADIUS_MAX)) <
+      mashProxyScale(rebasedScale),
+  );
 });
 
 test("the authored scale increases and infinite play has no scale cap", () => {
@@ -172,6 +191,9 @@ test("adaptive quality uses hysteresis and meaningful mobile budgets", () => {
   assert.equal(qualityTierForFps(40, "high"), "balanced");
   assert.equal(qualityTierForFps(29, "balanced"), "battery");
   assert.equal(qualityTierForFps(45, "battery"), "balanced");
+  assert.equal(qualityTierForFps(60, "balanced", false), "balanced");
+  assert.equal(qualityTierForFps(60, "battery", false), "battery");
+  assert.equal(qualityTierForFps(20, "balanced", false), "battery");
 
   assert.ok(pickupBudget(1200, "high") > pickupBudget(390, "high"));
   assert.ok(pickupBudget(390, "high") > pickupBudget(390, "battery"));

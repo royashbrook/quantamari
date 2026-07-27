@@ -16,10 +16,18 @@ type PerformanceSnapshot = {
   >;
   runtime: {
     era: number;
+    mode: "journey" | "learning";
+    radius: number;
+    playerScale: number;
+    worldScale: number;
+    qualityUpgradeLocked: boolean;
     worldGeneration: number;
     transitionActive: boolean;
     pickups: {
       active: number;
+      current: number;
+      resident: number;
+      retiring: number;
       queued: number;
       target: number;
       totalSpawned: number;
@@ -27,6 +35,29 @@ type PerformanceSnapshot = {
       maxSpawnedPerFrame: number;
       maxPerFrame: number;
       workBudgetMs: number;
+    };
+    representations: {
+      richPickups: number;
+      simplePickups: number;
+      attachments: number;
+      proxyPieces: number;
+      visibleAttachments: number;
+      attachmentProxyActive: boolean;
+      attachmentScale: number;
+      attachmentDistance: number;
+      effectiveRadius: number;
+    };
+    world: {
+      groundVisible: boolean;
+      dustVisible: boolean;
+      environmentChildren: number;
+      substrateChildren: number;
+    };
+    player: {
+      x: number;
+      z: number;
+      cameraDistance: number;
+      projectedDiameter: number;
     };
     quality: "high" | "balanced" | "battery";
     drawCalls: number;
@@ -122,6 +153,73 @@ async function begin(page: Page, mode: "Long game" | "Learning tour" = "Learning
   await page.getByRole("button", { name: "Begin becoming" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
+  });
+}
+
+async function seedAttachedFoam(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: "theory-playground",
+        progress: 0,
+        picked: 1,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 0,
+        sound: false,
+        mash: [
+          {
+            eraId: "theory-playground",
+            curioId: "theory-playground/foam-bubble",
+            position: [3, 0.2, 0.1],
+            rotation: [0.1, 0.2, 0.3],
+            scale: [1.5, 1.5, 1.5],
+            mergedInside: false,
+          },
+        ],
+        collection: [],
+      }),
+    );
+  });
+}
+
+async function seedMultiEraMash(page: Page) {
+  await page.addInitScript(() => {
+    if (localStorage.getItem("everything-roll-save-v4")) return;
+    const mash = [
+      ["theory-playground", "foam-bubble"],
+      ["particle-probe-frontier", "field-ripple"],
+      ["quarks-gluons", "up-quark-trace"],
+      ["hadron-forge", "proton"],
+    ].map(([eraId, curioId], index) => ({
+      eraId,
+      curioId: `${eraId}/${curioId}`,
+      position: [0.58 + index * 0.12, 0.08 * index, 0.1 * index],
+      rotation: [0.1 * index, 0.2, 0.3],
+      scale: [0.2, 0.2, 0.2],
+      mergedInside: false,
+    }));
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: "hadron-forge",
+        progress: 0.15,
+        picked: mash.length,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 3,
+        sound: false,
+        mash,
+        collection: [],
+      }),
+    );
   });
 }
 
@@ -241,6 +339,56 @@ test("browser changes survive a page reload", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("multi-era rich and proxy mash pieces survive a save reload", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedMultiEraMash(page);
+  await begin(page);
+
+  const expectedRepresentations = {
+    era: 3,
+    attachments: 3,
+    proxyPieces: 1,
+  };
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            attachments: snapshot.runtime.representations.attachments,
+            proxyPieces: snapshot.runtime.representations.proxyPieces,
+          }
+        : null;
+    })
+    .toEqual(expectedRepresentations);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  expect(
+    await page.evaluate(() => {
+      const save = JSON.parse(
+        localStorage.getItem("everything-roll-save-v4") ?? "{}",
+      );
+      return Array.isArray(save.mash) ? save.mash.length : 0;
+    }),
+  ).toBe(4);
+
+  await begin(page);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            attachments: snapshot.runtime.representations.attachments,
+            proxyPieces: snapshot.runtime.representations.proxyPieces,
+          }
+        : null;
+    })
+    .toEqual(expectedRepresentations);
+});
+
 test("Scale Lab previews a layer without replacing the journey", async ({
   page,
 }) => {
@@ -299,8 +447,10 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
 test("mobile battery mode enforces its measured draw-call budget", async ({
   page,
 }) => {
+  test.setTimeout(75_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
+  await seedAttachedFoam(page);
   await begin(page);
   await page.getByRole("button", { name: "Open scale and science atlas" }).click();
   await page.getByLabel("Choose a scale layer").fill("20");
@@ -313,6 +463,9 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
       async () => {
         const snapshot = await readPerformanceDiagnostics(page);
         return snapshot?.runtime.quality === "battery" &&
+          snapshot.runtime.pickups.active ===
+            snapshot.runtime.pickups.target &&
+          snapshot.runtime.pickups.retiring === 0 &&
           snapshot.runtime.drawCalls <= snapshot.runtime.budget.maxDrawCalls;
       },
       { timeout: 30_000 },
@@ -320,18 +473,46 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
     .toBe(true);
   const battery = await readPerformanceDiagnostics(page);
   expect(battery?.runtime.quality).toBe("battery");
-  expect(battery?.runtime.pickups.active).toBeLessThanOrEqual(
-    battery?.runtime.pickups.target ?? 0,
+  expect(battery?.runtime.pickups.active).toBe(
+    battery?.runtime.pickups.target,
   );
+  expect(battery?.runtime.qualityUpgradeLocked).toBe(true);
+  expect(battery?.runtime.representations.attachmentProxyActive).toBe(true);
   expect(
     (battery?.runtime.drawBudget.base ?? 0) +
-      (battery?.runtime.drawBudget.richUsed ?? 0) +
+    (battery?.runtime.drawBudget.richUsed ?? 0) +
       ((battery?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
   ).toBeLessThanOrEqual(battery?.runtime.budget.maxDrawCalls ?? 0);
+
+  const stableRepresentations = {
+    richPickups: battery?.runtime.representations.richPickups,
+    simplePickups: battery?.runtime.representations.simplePickups,
+    attachments: battery?.runtime.representations.attachments,
+    visibleAttachments:
+      battery?.runtime.representations.visibleAttachments,
+    attachmentProxyActive:
+      battery?.runtime.representations.attachmentProxyActive,
+  };
+  await page.waitForTimeout(5_500);
+  const afterAnotherQualityWindow = await readPerformanceDiagnostics(page);
+  expect(afterAnotherQualityWindow?.runtime.quality).toBe("battery");
+  expect(afterAnotherQualityWindow?.runtime.qualityUpgradeLocked).toBe(true);
+  expect({
+    richPickups:
+      afterAnotherQualityWindow?.runtime.representations.richPickups,
+    simplePickups:
+      afterAnotherQualityWindow?.runtime.representations.simplePickups,
+    attachments: afterAnotherQualityWindow?.runtime.representations.attachments,
+    visibleAttachments:
+      afterAnotherQualityWindow?.runtime.representations.visibleAttachments,
+    attachmentProxyActive:
+      afterAnotherQualityWindow?.runtime.representations
+        .attachmentProxyActive,
+  }).toEqual(stableRepresentations);
 });
 
 test("battery draw budgeting covers every authored era", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page, "battery");
   await begin(page);
@@ -362,7 +543,7 @@ test("battery draw budgeting covers every authored era", async ({ page }) => {
           return Boolean(
             worldReady &&
               snapshot?.runtime.quality === "battery" &&
-              snapshot.runtime.pickups.active ===
+              snapshot.runtime.pickups.current ===
                 snapshot.runtime.pickups.target &&
               snapshot.runtime.pickups.queued === 0 &&
               snapshot.runtime.drawCalls <=
@@ -567,11 +748,163 @@ test("performance diagnostics capture a repeatable complex-scene baseline", asyn
   );
 });
 
-test("a scale shift rebuilds once and repopulates through the work queue", async ({
+test("long game crosses a layer without a skip animation or size pop", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedAttachedFoam(page);
+  await begin(page, "Long game");
+  await expect
+    .poll(async () => (await readPerformanceDiagnostics(page))?.runtime.era)
+    .toBe(0);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? snapshot.runtime.player.cameraDistance / snapshot.runtime.radius
+        : 0;
+    })
+    .toBeGreaterThan(12);
+  const debugLens = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        setLens: (value: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.setLens(16) ?? 0;
+  });
+  expect(debugLens).toBe(16);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return Boolean(
+        snapshot &&
+          snapshot.runtime.player.projectedDiameter < 9 &&
+          snapshot.runtime.representations.effectiveRadius >
+            snapshot.runtime.radius * 1.6 &&
+          !snapshot.runtime.representations.attachmentProxyActive,
+      );
+    })
+    .toBe(true);
+  const expectedCameraRatio = debugLens * Math.hypot(6.05, 10.6);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        if (!snapshot || snapshot.runtime.radius <= 0) {
+          return Number.POSITIVE_INFINITY;
+        }
+        return Math.abs(
+          snapshot.runtime.player.cameraDistance / snapshot.runtime.radius -
+            expectedCameraRatio,
+        ) / expectedCameraRatio;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeLessThan(0.005);
+
+  const before = await readPerformanceDiagnostics(page);
+  const initialProjectedDiameter =
+    before?.runtime.player.projectedDiameter ?? 0;
+  expect(initialProjectedDiameter).toBeGreaterThan(0);
+  const initialAttachmentScale =
+    before?.runtime.representations.attachmentScale ?? 0;
+  const initialAttachmentDistance =
+    before?.runtime.representations.attachmentDistance ?? 0;
+  expect(initialAttachmentScale).toBeGreaterThan(0);
+  expect(initialAttachmentDistance).toBeGreaterThan(0);
+
+  const boundary = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        completeLayer: () => boolean;
+        snapshot: () => PerformanceSnapshot;
+      };
+    };
+    const diagnostics = debugWindow.__QUARKATAMARI_PERFORMANCE__;
+    return {
+      triggered: diagnostics?.completeLayer() ?? false,
+      snapshot: diagnostics?.snapshot() ?? null,
+    };
+  });
+  expect(boundary.triggered).toBe(true);
+  expect(boundary.snapshot?.runtime.mode).toBe("journey");
+  expect(boundary.snapshot?.runtime.transitionActive).toBe(false);
+  const boundaryRadius = boundary.snapshot?.runtime.radius ?? 0;
+
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              era: snapshot.runtime.era,
+              transition: snapshot.runtime.transitionActive,
+              playerScale: snapshot.runtime.playerScale,
+              worldScale: snapshot.runtime.worldScale,
+            }
+          : null;
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({
+      era: 1,
+      transition: false,
+      playerScale: 1,
+      worldScale: 1,
+    });
+  const crossed = await readPerformanceDiagnostics(page);
+  expect(crossed?.runtime.radius).toBeLessThan(boundaryRadius);
+  expect(crossed?.runtime.worldGeneration).toBe(
+    (boundary.snapshot?.runtime.worldGeneration ?? 0) + 1,
+  );
+  const expectedRebase = (crossed?.runtime.radius ?? 0) / boundaryRadius;
+  expect(
+    (crossed?.runtime.representations.attachmentScale ?? 0) /
+      initialAttachmentScale,
+  ).toBeCloseTo(expectedRebase, 5);
+  expect(
+    (crossed?.runtime.representations.attachmentDistance ?? 0) /
+      initialAttachmentDistance,
+  ).toBeCloseTo(expectedRebase, 5);
+  expect(crossed?.runtime.representations.attachments).toBe(1);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            extended:
+              snapshot.runtime.representations.effectiveRadius >
+              snapshot.runtime.radius * 1.5,
+            proxy:
+              snapshot.runtime.representations.attachmentProxyActive,
+          }
+        : null;
+    })
+    .toEqual({ extended: true, proxy: false });
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? Math.abs(
+              snapshot.runtime.player.projectedDiameter -
+                initialProjectedDiameter,
+            ) / initialProjectedDiameter
+          : Number.POSITIVE_INFINITY;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeLessThan(0.03);
+});
+
+test("a learning scale shift rebuilds once and repopulates through the work queue", async ({
   page,
 }) => {
   test.setTimeout(90_000);
   await enablePerformanceDiagnostics(page, "balanced");
+  await seedAttachedFoam(page);
   await begin(page);
   await expect
     .poll(
@@ -591,16 +924,43 @@ test("a scale shift rebuilds once and repopulates through the work queue", async
   expect(before?.runtime.pickups.active).toBe(
     before?.runtime.pickups.target,
   );
+  expect(before?.runtime.mode).toBe("learning");
+  const initialAttachmentScale =
+    before?.runtime.representations.attachmentScale ?? 0;
+  expect(initialAttachmentScale).toBeGreaterThan(0);
+  expect(before?.runtime.world).toEqual({
+    groundVisible: false,
+    dustVisible: false,
+    environmentChildren: 0,
+    substrateChildren: 0,
+  });
+  const startPosition = before?.runtime.player ?? { x: 0, z: 0 };
+  await page.keyboard.down("w");
+  await page.waitForTimeout(250);
+  await page.keyboard.up("w");
+  await expect
+    .poll(async () => {
+      const player = (await readPerformanceDiagnostics(page))?.runtime.player;
+      return player
+        ? Math.hypot(player.x - startPosition.x, player.z - startPosition.z)
+        : 0;
+    })
+    .toBeGreaterThan(0.01);
 
-  const triggered = await page.evaluate(() => {
+  const transitionStart = await page.evaluate(() => {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
         completeLayer: () => boolean;
+        snapshot: () => PerformanceSnapshot;
       };
     };
-    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.completeLayer() ?? false;
+    const diagnostics = debugWindow.__QUARKATAMARI_PERFORMANCE__;
+    return {
+      triggered: diagnostics?.completeLayer() ?? false,
+      radius: diagnostics?.snapshot().runtime.radius ?? 0,
+    };
   });
-  expect(triggered).toBe(true);
+  expect(transitionStart.triggered).toBe(true);
   await expect
     .poll(
       async () =>
@@ -618,9 +978,10 @@ test("a scale shift rebuilds once and repopulates through the work queue", async
               generation: snapshot.runtime.worldGeneration,
               transition: snapshot.runtime.transitionActive,
               settled:
-                snapshot.runtime.pickups.active ===
+                snapshot.runtime.pickups.current ===
                   snapshot.runtime.pickups.target &&
-                snapshot.runtime.pickups.queued === 0,
+                snapshot.runtime.pickups.queued === 0 &&
+                snapshot.runtime.pickups.retiring === 0,
             }
           : null;
       },
@@ -636,9 +997,25 @@ test("a scale shift rebuilds once and repopulates through the work queue", async
   expect(after?.runtime.worldGeneration).toBe(
     (before?.runtime.worldGeneration ?? 0) + 1,
   );
-  expect(after?.runtime.pickups.active).toBe(after?.runtime.pickups.target);
+  expect(after?.runtime.pickups.current).toBe(after?.runtime.pickups.target);
+  expect(after?.runtime.pickups.resident).toBeGreaterThan(0);
+  expect(after?.runtime.pickups.active).toBeGreaterThan(
+    after?.runtime.pickups.target ?? 0,
+  );
   expect(after?.runtime.pickups.maxSpawnedPerFrame).toBeLessThanOrEqual(
     after?.runtime.pickups.maxPerFrame ?? 0,
+  );
+  expect(after?.runtime.world.environmentChildren).toBeGreaterThan(0);
+  expect(after?.runtime.world.substrateChildren).toBeGreaterThan(0);
+  expect(after?.runtime.world.dustVisible).toBe(true);
+  expect(after?.runtime.playerScale).toBeCloseTo(1, 5);
+  expect(after?.runtime.worldScale).toBeCloseTo(1, 5);
+  expect(
+    (after?.runtime.representations.attachmentScale ?? 0) /
+      initialAttachmentScale,
+  ).toBeCloseTo(
+    (after?.runtime.radius ?? 0) / transitionStart.radius,
+    5,
   );
 });
 

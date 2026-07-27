@@ -21,9 +21,15 @@ gameplay and persistence stay in the browser.
 - Collection fills one logarithmic layer. Long Game is the default 40× journey;
   Learning Tour keeps the former fast testing pace. Only current-layer pickups
   advance progress.
-- A scale-shift animation grows the player, shrinks the outgoing world, and
-  retains the immediate prior layer as recognizable low-poly objects. The next
-  lower layer becomes a dense, non-colliding fabric underfoot.
+- Long Game crosses scale boundaries continuously: camera distance grows with
+  the physical ball, then rebases with it without replaying a level animation
+  or braking momentum. Learning Tour keeps a deliberate scale-skip animation
+  whose endpoint matches the next layer. Attached toys and the immediate prior
+  pickup field rebase with the ball, while the next lower layer becomes dense,
+  non-colliding fabric.
+- Theory Playground begins in unsupported empty space: its playful foam,
+  strings, notes, and other ideas are pickups rather than a claimed floor.
+  Ambient density and the first prior-layer rug appear only after scaling up.
 - Dust and grains live on a floor, tabletop objects live on furniture, rooms
   open into yards, city blocks connect through streets, and cities remain
   visible as small texture inside regional terrain.

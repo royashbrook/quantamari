@@ -42,6 +42,23 @@ collectible template records its render-leaf cost, while the live scene is
 counted without pickup roots. Rich pickups are admitted only while their cost
 fits; the remainder share one instanced far-field draw. Transmission is disabled
 in battery mode so physical materials cannot add a hidden extra pass.
+Automatic quality can downgrade within a rendered world but cannot promote
+again until a semantic-world or viewport change. A downgrade rebuilds world
+instances once at the lower authored density; excess peripheral pickups shrink
+out individually until the lower population is reached. The promotion lock
+prevents either representation from being rebuilt in a five-second loop.
+Projected rich/simple LOD uses hysteresis, and attached identities stay rich
+until their whole mash is genuinely too small on screen. Battery mode uses the
+same mash records through one instanced proxy draw.
+
+Long Game and Learning Tour share one logical layer-advance path. Long Game
+keeps camera distance proportional to the physical radius and rebases both
+together; Learning Tour alone runs the explicit scale-skip animation. That
+animation ends at the exact next-layer player radius. Attached transforms and
+their save records rebase at the same handoff, and one prior pickup population
+remains as recognizable lower-scale context. The opening Theory Playground has
+no passive environment or substrate; its first rug appears only after the next
+layer is reached.
 
 Performance diagnostics are opt-in and never update Svelte state. Browser tests
 sample frame interval, CPU frame work, simulation, population, pickup LOD,

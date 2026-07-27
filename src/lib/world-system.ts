@@ -153,6 +153,11 @@ export const PROJECTED_LOD_THRESHOLDS = {
   point: 0.5,
 } as const;
 
+export const PROJECTED_RICH_HYSTERESIS = {
+  enter: 14,
+  exit: 9,
+} as const;
+
 export function lodForProjectedDiameter(projectedDiameterPixels: number): ProjectedLod {
   if (Number.isNaN(projectedDiameterPixels) || projectedDiameterPixels <= 0) {
     return "fabric";
@@ -161,6 +166,24 @@ export function lodForProjectedDiameter(projectedDiameterPixels: number): Projec
   if (projectedDiameterPixels >= PROJECTED_LOD_THRESHOLDS.simple) return "simple";
   if (projectedDiameterPixels >= PROJECTED_LOD_THRESHOLDS.point) return "point";
   return "fabric";
+}
+
+export function wantsRichProjectedDetail(
+  projectedDiameterPixels: number,
+  currentlyRich: boolean,
+) {
+  if (
+    !Number.isFinite(projectedDiameterPixels) ||
+    projectedDiameterPixels <= 0
+  ) {
+    return false;
+  }
+  return (
+    projectedDiameterPixels >=
+    (currentlyRich
+      ? PROJECTED_RICH_HYSTERESIS.exit
+      : PROJECTED_RICH_HYSTERESIS.enter)
+  );
 }
 
 export function projectedDiameterPixels(
