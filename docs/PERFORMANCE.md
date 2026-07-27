@@ -35,8 +35,8 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   Accumulated origin phase is preserved in saves and Scale Lab returns. Tiny
   central scenery swaps to one box-proxy draw while instanced families remain
   batched.
-- The Field Guide is CSS-only, uses `content-visibility`, and pauses the game
-  renderer while open.
+- Native menu, Field Guide, and Scale Lab dialogs pause the renderer while open.
+  The Field Guide remains CSS-only and uses `content-visibility`.
 
 ## Budgets
 

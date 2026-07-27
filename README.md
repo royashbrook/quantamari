@@ -9,7 +9,8 @@ The current release contains 34 scale layers and 220 collectible identities.
 The default Long Game pace is forty times the Learning Tour pace; switching
 pace never rewrites earned progress. Every find is saved by stable ID in an
 animated, searchable Field Guide. Scale Lab can preview any layer without
-changing the journey. The shipped game is a static, offline-capable PWA; all
+changing the journey. Escape opens a pause menu with sound, reset, About, and
+the exact running build. The shipped game is a static, offline-capable PWA; all
 gameplay and persistence stay in the browser.
 
 ## Gameplay contract
@@ -46,6 +47,8 @@ gameplay and persistence stay in the browser.
   instanced, distant pickups collapse into one instanced draw, rich models have
   a hard budget, and Three.js stays lazy-loaded. See
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- The native game menu pauses simulation without changing journey state. Reset
+  requires confirmation and removes only Quarkatamari's browser save keys.
 
 ## Science contract
 
@@ -166,6 +169,7 @@ Important code:
 - `src/lib/world-system.ts` — grounded world kinds, three-layer LOD, and budgets
 - `src/lib/save-data.ts` — reorder-safe v4 saves and v2/v3 migrations
 - `src/lib/components/FieldGuide.svelte` — animated collection history
+- `src/lib/components/GameMenu.svelte` — pause, About, sound, and safe reset
 - `src/service-worker.ts` — generated, subpath-safe offline runtime
 - `tests/unit`, `tests/artifact`, and `tests/e2e` — Node, build, and browser
   contracts
@@ -185,4 +189,6 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 The `v15.0.0` tag preserves the final time/band version, `v1.0.0` is the
 rollback point before the breaking SvelteKit rewrite, and `v2.0.0` marks that
 rewrite in production. The v2.1 performance work is tracked in
-[issue #8](https://github.com/royashbrook/quarkatamari/issues/8).
+[issue #8](https://github.com/royashbrook/quarkatamari/issues/8); v2.2 adds the
+pause, reset, and About menu tracked in
+[issue #20](https://github.com/royashbrook/quarkatamari/issues/20).

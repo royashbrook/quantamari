@@ -67,6 +67,8 @@ test("build is a standalone, subpath-safe static PWA", async () => {
   assert.ok(buildMetadata.version.length > 0);
   assert.match(html, /BEGIN WHERE THE MAP RUNS OUT/);
   assert.match(html, /Begin becoming/);
+  assert.match(html, /Made with <b>♥<\/b> by Roy \+ AI/);
+  assert.match(html, /Reset all progress/);
   assert.match(html, /href="\.\/manifest\.webmanifest"/);
   assert.doesNotMatch(html, /vinext|__next|react-server|rsc/i);
 

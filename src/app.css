@@ -122,8 +122,12 @@ input:focus-visible {
 }
 
 .awaiting-start .topbar .actions {
-  visibility: hidden;
-  pointer-events: none;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.awaiting-start .topbar .quick-action {
+  display: none;
 }
 
 .awaiting-start .three-canvas {
@@ -224,23 +228,16 @@ input:focus-visible {
   transform: translateY(-2px);
 }
 
-.actions button:not(.sound) {
+.actions button {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 15px;
 }
 
-.actions button:not(.sound) > span:first-child {
+.actions button > span:first-child {
   color: #f9d66c;
   font-size: 19px;
-}
-
-.actions .sound {
-  width: 42px;
-  border-radius: 50%;
-  background: #ffd1e5;
-  font-size: 18px;
 }
 
 .lab-banner {
@@ -1067,13 +1064,13 @@ kbd {
     margin-top: 2px;
   }
 
-  .actions button:not(.sound) {
+  .actions button {
     width: 42px;
     padding: 0;
     justify-content: center;
   }
 
-  .actions button:not(.sound) > span:last-child {
+  .actions button > span:last-child {
     display: none;
   }
 
