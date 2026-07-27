@@ -4,13 +4,16 @@ import test from "node:test";
 import { ERAS } from "../../src/lib/scale-data.ts";
 import {
   LEGACY_VISUAL_STAGE_ANCHORS,
+  MAX_HORIZONTAL_PLAY_FOV,
   MAX_RESIDENT_LAYERS,
   PROJECTED_LOD_THRESHOLDS,
   PROJECTED_RICH_HYSTERESIS,
   RESIDENT_PRIOR_LAYER_DEPTH,
   WORLD_PERFORMANCE_BUDGETS,
   WORLD_SPECS,
+  boundedVerticalFov,
   floatingOriginShift,
+  horizontalFovDegrees,
   legacyVisualStageAnchor,
   localChunkCoordinate,
   lodForProjectedDiameter,
@@ -117,6 +120,28 @@ test("projected-size LOD thresholds keep detail until it becomes fabric", () => 
     false,
   );
   assert.equal(wantsRichProjectedDetail(Number.NaN, true), false);
+});
+
+test("camera framing caps horizontal world coverage without letterboxing", () => {
+  const desktopFov = boundedVerticalFov(46, 16 / 10);
+  const ultrawideFov = boundedVerticalFov(46, 32 / 9);
+  const portraitFov = boundedVerticalFov(56, 390 / 844);
+
+  assert.ok(desktopFov < 46);
+  assert.ok(ultrawideFov < desktopFov);
+  assert.equal(portraitFov, 56);
+  assert.ok(
+    Math.abs(
+      horizontalFovDegrees(desktopFov, 16 / 10) -
+        MAX_HORIZONTAL_PLAY_FOV,
+    ) < 0.000_001,
+  );
+  assert.ok(
+    Math.abs(
+      horizontalFovDegrees(ultrawideFov, 32 / 9) -
+        MAX_HORIZONTAL_PLAY_FOV,
+    ) < 0.000_001,
+  );
 });
 
 test("resident layers retain the current view and at most two prior layers", () => {

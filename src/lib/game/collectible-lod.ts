@@ -106,13 +106,17 @@ function traceSilhouetteGeometry(curio: Curio) {
 }
 
 /**
- * Converts the authored low-detail collectible into one merged silhouette,
- * then instances that silhouette for every distant copy of the same specimen.
+ * Converts an authored collectible into one merged, colored model, then
+ * instances that model for every distant copy of the same specimen.
  * A chair stays chair-shaped and a bacteriophage stays phage-shaped without
  * paying one draw call per object.
  */
-function createSilhouetteGeometry(curio: Curio, buildVisual: BuildVisual) {
-  const visual = buildVisual(curio, false);
+export function createCollectibleInstanceGeometry(
+  curio: Curio,
+  buildVisual: BuildVisual,
+  rich: boolean,
+) {
+  const visual = buildVisual(curio, rich);
   visual.updateMatrixWorld(true);
   const parts: THREE.BufferGeometry[] = [];
   visual.traverse((object) => {
@@ -210,7 +214,7 @@ export function createCollectibleLodPool(
     const cached = families.get(curio.id);
     if (cached) return cached;
     const mesh = new THREE.InstancedMesh(
-      createSilhouetteGeometry(curio, buildVisual),
+      createCollectibleInstanceGeometry(curio, buildVisual, false),
       new THREE.MeshToonMaterial({
         color: "#ffffff",
         vertexColors: true,

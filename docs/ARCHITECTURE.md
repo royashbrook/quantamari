@@ -63,14 +63,16 @@ released.
 Battery quality treats `maxDrawCalls` as a hard weighted budget. Each cached
 collectible template records its render-leaf cost, while the live scene is
 counted without pickup roots. Rich pickups are admitted only while their cost
-fits; the remainder use one instanced family per visible specimen so their
-authored silhouettes remain recognizable. Screen-stable character badges keep
-active-layer simplified specimens identifiable; the immediate prior layer keeps
-its silhouettes, and deeper residents are represented by the substrate rather
-than duplicate pickup draws. The generic mesh remains overflow protection only
-and is asserted to stay unused for normal catalogued populations. Transmission
-is disabled in battery mode so physical materials cannot add a hidden extra
-pass.
+fits. Admission is spatially stable: nearby and current-layer specimens receive
+the rich slots before distant work, rather than whichever objects happened to
+spawn first. The remainder use one instanced family per visible specimen so
+their authored silhouettes remain recognizable. Screen-stable character badges
+keep active-layer simplified specimens identifiable. The immediate prior layer
+is a sparse rug of exact authored low-detail models; deeper residents collapse
+into points and substrate texture rather than duplicate pickup draws. Generic
+meshes remain overflow protection only and are asserted to stay unused for
+normal catalogued populations. Transmission is disabled in battery mode so
+physical materials cannot add a hidden extra pass.
 Automatic quality is downgrade-only for the lifetime of a renderer. Semantic
 world and viewport changes do not unlock promotion. A downgrade rebuilds world
 instances once at the lower authored density; excess peripheral pickups shrink
@@ -88,6 +90,13 @@ their save records rebase at the same handoff, and one prior pickup population
 remains as recognizable lower-scale context. The opening Theory Playground has
 no passive environment or substrate; its first rug appears only after the next
 layer is reached.
+
+Camera framing is mobile-first without letterboxing. Portrait devices keep a
+56-degree vertical field of view; wider canvases derive their vertical field of
+view from a 58-degree horizontal play aperture. Desktop and ultrawide windows
+therefore reveal a bounded amount of world instead of increasing the population
+pressure with every extra pixel. Quality-tier population budgets provide a
+second hard ceiling.
 
 Performance diagnostics are opt-in and never update Svelte state. Browser tests
 sample frame interval, CPU frame work, simulation, population, pickup LOD,

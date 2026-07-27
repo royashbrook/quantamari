@@ -158,6 +158,45 @@ export const PROJECTED_RICH_HYSTERESIS = {
   exit: 6,
 } as const;
 
+export const MAX_HORIZONTAL_PLAY_FOV = 58;
+
+export function horizontalFovDegrees(
+  verticalFovDegrees: number,
+  viewportAspect: number,
+) {
+  const vertical = Math.max(
+    1,
+    Math.min(179, Number.isFinite(verticalFovDegrees) ? verticalFovDegrees : 1),
+  );
+  const aspect = Math.max(
+    0.2,
+    Number.isFinite(viewportAspect) ? viewportAspect : 1,
+  );
+  return (
+    (360 / Math.PI) *
+    Math.atan(Math.tan((vertical * Math.PI) / 360) * aspect)
+  );
+}
+
+export function boundedVerticalFov(
+  preferredVerticalFov: number,
+  viewportAspect: number,
+  maxHorizontalFov = MAX_HORIZONTAL_PLAY_FOV,
+) {
+  const aspect = Math.max(
+    0.2,
+    Number.isFinite(viewportAspect) ? viewportAspect : 1,
+  );
+  const horizontal = Math.max(
+    1,
+    Math.min(179, Number.isFinite(maxHorizontalFov) ? maxHorizontalFov : 1),
+  );
+  const horizontalBound =
+    (360 / Math.PI) *
+    Math.atan(Math.tan((horizontal * Math.PI) / 360) / aspect);
+  return Math.min(preferredVerticalFov, horizontalBound);
+}
+
 export function lodForProjectedDiameter(projectedDiameterPixels: number): ProjectedLod {
   if (Number.isNaN(projectedDiameterPixels) || projectedDiameterPixels <= 0) {
     return "fabric";
