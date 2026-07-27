@@ -32,6 +32,18 @@ const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
 const percentile = (sorted: number[], fraction: number) =>
   sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)] ?? 0;
 
+export function advanceFrameDeadline(
+  now: number,
+  deadline: number,
+  targetFps: number,
+) {
+  const interval = 1_000 / targetFps;
+  const tolerance = Math.min(4, interval * 0.25);
+  if (now + tolerance < deadline) return null;
+  const elapsed = Math.max(0, now - deadline);
+  return deadline + (Math.floor((elapsed + tolerance) / interval) + 1) * interval;
+}
+
 export function createPhaseRecorder(sampleLimit = 180) {
   const limit = Math.max(1, Math.floor(sampleLimit));
   const phases = new Map<RuntimePhase, PhaseSamples>();

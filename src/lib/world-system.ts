@@ -294,7 +294,7 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
   Record<WorldQualityTier, WorldPerformanceBudget>
 > = {
   high: {
-    targetFps: 55,
+    targetFps: 60,
     maxDrawCalls: 180,
     maxTriangles: 600_000,
     maxRichObjects: 64,
@@ -303,7 +303,7 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
   balanced: {
-    targetFps: 40,
+    targetFps: 30,
     maxDrawCalls: 120,
     maxTriangles: 300_000,
     maxRichObjects: 48,

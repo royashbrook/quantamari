@@ -189,7 +189,8 @@ test("the authored scale increases and infinite play has no scale cap", () => {
 test("adaptive quality uses hysteresis and meaningful mobile budgets", () => {
   assert.equal(qualityTierForFps(60, "high"), "high");
   assert.equal(qualityTierForFps(40, "high"), "balanced");
-  assert.equal(qualityTierForFps(29, "balanced"), "battery");
+  assert.equal(qualityTierForFps(29, "balanced"), "balanced");
+  assert.equal(qualityTierForFps(20, "balanced"), "battery");
   assert.equal(qualityTierForFps(45, "battery"), "balanced");
   assert.equal(qualityTierForFps(60, "balanced", false), "balanced");
   assert.equal(qualityTierForFps(60, "battery", false), "battery");

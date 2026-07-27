@@ -8,16 +8,20 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
 
 - Three.js is a deferred browser chunk and loads only when play or Scale Lab
   begins.
+- The animation loop uses refresh-aligned 60/30 fps tier targets instead of
+  submitting at the display's full refresh rate. A stationary world settles to
+  30 fps, and long pauses drop missed frames instead of replaying them.
 - At most three semantic scale layers are resident: current, recognizable prior,
   and fabric prior.
 - Prior-layer objects and city buildings use `InstancedMesh`.
 - Far pickups hide their multi-part models and share one colored instanced mesh.
 - Rich pickup models have a quality-tier cap; battery mode tightens that cap
   from measured draw calls until it meets budget. Pickup population, pixel ratio,
-  and shadows adapt through frame-rate hysteresis. Once a rendered world
-  downgrades, quality promotion is locked until the world or viewport changes,
-  preventing a five-second balanced/battery feedback loop. Excess pickups retire
-  one at a time with a 600 ms shrink-out instead of disappearing as a batch.
+  and shadows adapt through frame-rate hysteresis. Automatic quality is
+  downgrade-only for a running game; reload is the explicit reset. This prevents
+  viewport and layer changes from restarting a five-second promotion/downgrade
+  feedback loop. Excess and distant pickups use a 600 ms shrink-out instead of
+  disappearing abruptly.
 - The mash keeps only 12–24 recent rich toys; older pieces collapse into one
   colored instanced proxy draw. When the mash itself projects below rich-detail
   size—or battery quality is required—its remaining toys use that same proxy
@@ -38,13 +42,13 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
 
 | Tier | Target | Draw calls | Triangles | Rich objects | Instances |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| High | 55 fps | 180 | 600k | 64 | 4,000 |
-| Balanced | 40 fps | 120 | 300k | 48 | 2,500 |
+| High | 60 fps | 180 | 600k | 64 | 4,000 |
+| Balanced | 30 fps | 120 | 300k | 48 | 2,500 |
 | Battery | 30 fps | 80 | 180k | 32 | 1,500 |
 
 The desktop controls HUD reports measured FPS, draw calls, and triangle count.
-Quality falls quickly when a device misses its target and rises only after a
-sustained recovery.
+Quality falls when a device misses its target and remains at the cooler tier for
+the rest of that running game.
 
 ## WASM threshold
 

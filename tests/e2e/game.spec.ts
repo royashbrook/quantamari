@@ -243,6 +243,8 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
+  await expect(page.getByTestId("build-stamp")).toContainText(/^v2\.1\.2 · /);
+  await expect(page.getByTestId("build-stamp")).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -471,7 +473,7 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
 test("mobile battery mode enforces its measured draw-call budget", async ({
   page,
 }) => {
-  test.setTimeout(75_000);
+  test.setTimeout(110_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
   await seedAttachedFoam(page);
@@ -508,19 +510,64 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
       ((battery?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
   ).toBeLessThanOrEqual(battery?.runtime.budget.maxDrawCalls ?? 0);
 
+  const pacingStart =
+    (await readPerformanceDiagnostics(page))?.phases.frame?.count ?? 0;
+  await page.waitForTimeout(1_500);
+  const pacingEnd =
+    (await readPerformanceDiagnostics(page))?.phases.frame?.count ?? 0;
+  expect(pacingEnd - pacingStart).toBeGreaterThan(0);
+  expect(pacingEnd - pacingStart).toBeLessThanOrEqual(50);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+  const afterResize = await readPerformanceDiagnostics(page);
+  expect(afterResize?.runtime.quality).toBe("battery");
+  expect(afterResize?.runtime.qualityUpgradeLocked).toBe(true);
+
+  const selected = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (eraIndex: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(21);
+  });
+  expect(selected).toBe(21);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Boolean(
+          snapshot &&
+            snapshot.runtime.era === 21 &&
+            snapshot.runtime.quality === "battery" &&
+            snapshot.runtime.qualityUpgradeLocked &&
+            snapshot.runtime.pickups.current ===
+              snapshot.runtime.pickups.target &&
+            snapshot.runtime.pickups.queued === 0 &&
+            snapshot.runtime.pickups.retiring === 0,
+        );
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  const settled = await readPerformanceDiagnostics(page);
   const stableRepresentations = {
-    richPickups: battery?.runtime.representations.richPickups,
-    simplePickups: battery?.runtime.representations.simplePickups,
-    attachments: battery?.runtime.representations.attachments,
+    richPickups: settled?.runtime.representations.richPickups,
+    simplePickups: settled?.runtime.representations.simplePickups,
+    attachments: settled?.runtime.representations.attachments,
     visibleAttachments:
-      battery?.runtime.representations.visibleAttachments,
+      settled?.runtime.representations.visibleAttachments,
     attachmentProxyActive:
-      battery?.runtime.representations.attachmentProxyActive,
+      settled?.runtime.representations.attachmentProxyActive,
   };
+  const stableWorldGeneration = settled?.runtime.worldGeneration;
   await page.waitForTimeout(5_500);
   const afterAnotherQualityWindow = await readPerformanceDiagnostics(page);
   expect(afterAnotherQualityWindow?.runtime.quality).toBe("battery");
   expect(afterAnotherQualityWindow?.runtime.qualityUpgradeLocked).toBe(true);
+  expect(afterAnotherQualityWindow?.runtime.worldGeneration).toBe(
+    stableWorldGeneration,
+  );
   expect({
     richPickups:
       afterAnotherQualityWindow?.runtime.representations.richPickups,
