@@ -17,6 +17,7 @@ export const CORE_RADIUS_MIN = 1.12;
 export const CORE_RADIUS_MAX = 2.28;
 export const MAX_ROLL_ENVELOPE_FACTOR = 1.72;
 export const NEXT_LAYER_OBSTACLE_FACTOR = 1.9;
+export const LEARNING_SCALE_TRANSITION_MS = 1_800;
 
 export type CollectibleIdentity = {
   id: string;
@@ -306,27 +307,42 @@ export function circleAabbClearance(
 export function scaleTransitionFrame(progress: number) {
   const t = Math.max(0, Math.min(1, progress));
   const eased = t * t * (3 - 2 * t);
+  const rebaseScale = CORE_RADIUS_MIN / CORE_RADIUS_MAX;
   return {
-    playerScale: 1 + Math.sin(t * Math.PI) * 0.58,
+    playerScale:
+      1 -
+      (1 - rebaseScale) * eased +
+      Math.sin(t * Math.PI) * 0.64,
     worldScale: 1 - eased * 0.78,
   };
 }
 
+export function scaleTransitionDuration(mode: GameMode) {
+  return mode === "learning" ? LEARNING_SCALE_TRANSITION_MS : 0;
+}
+
+export function mashProxyScale(authoredScale: number) {
+  return Math.max(0.001, Math.min(0.42, Math.abs(authoredScale)));
+}
+
 /**
  * Uses hysteresis so a device does not flap between quality tiers when its
- * frame rate sits on a boundary.
+ * frame rate sits on a boundary. A rendered world can lock upgrades after it
+ * has had to downgrade, preventing its own detail reduction from immediately
+ * triggering a promotion on the next measurement window.
  */
 export function qualityTierForFps(
   framesPerSecond: number,
   current: QualityTier,
+  allowUpgrade = true,
 ): QualityTier {
   if (current === "high") return framesPerSecond < 44 ? "balanced" : "high";
   if (current === "balanced") {
     if (framesPerSecond < 31) return "battery";
-    if (framesPerSecond > 56) return "high";
+    if (allowUpgrade && framesPerSecond > 56) return "high";
     return "balanced";
   }
-  return framesPerSecond > 43 ? "balanced" : "battery";
+  return allowUpgrade && framesPerSecond > 43 ? "balanced" : "battery";
 }
 
 export function pickupBudget(viewportWidth: number, tier: QualityTier) {

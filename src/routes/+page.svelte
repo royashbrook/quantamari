@@ -683,6 +683,7 @@
     bind:this={mount}
     class:started
     class:awaiting-start={!started}
+    class:empty-origin={started && hud.era === 0}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
