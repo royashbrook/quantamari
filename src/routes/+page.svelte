@@ -122,6 +122,7 @@
   let collection = $state<CollectionEntry[]>([]);
   let legacyUnitemizedCount = $state(0);
   let updateReady = $state(false);
+  let updateApplying = $state(false);
   let toast = $state(
     "Current-scale things stick. Older specks dissolve quietly into mass.",
   );
@@ -420,9 +421,10 @@
 
   function applyUpdate() {
     const worker = waitingWorker;
-    if (!worker) return;
+    if (!worker || updateApplying) return;
     persistSnapshot();
     updateReady = false;
+    updateApplying = true;
     toast = "Saving this universe and opening the new build…";
     const reloadWhenActive = () => {
       if (worker.state !== "activated") return;
@@ -451,6 +453,13 @@
     let disposed = false;
     let registration: ServiceWorkerRegistration | null = null;
     let trackedWorker: ServiceWorker | null = null;
+    let updateCheckInterval = 0;
+    const revealUpdate = (worker: ServiceWorker) => {
+      if (disposed) return;
+      waitingWorker = worker;
+      updateApplying = false;
+      updateReady = true;
+    };
     const markReady = (worker: ServiceWorker) => {
       if (
         disposed ||
@@ -459,9 +468,7 @@
       ) {
         return;
       }
-      waitingWorker = registration?.waiting ?? worker;
-      updateReady = true;
-      toast = "A new build is ready. Open the menu when you want to update.";
+      revealUpdate(registration?.waiting ?? worker);
     };
     const onWorkerState = () => {
       if (trackedWorker) markReady(trackedWorker);
@@ -472,6 +479,30 @@
       trackedWorker?.addEventListener("statechange", onWorkerState);
     };
     const onUpdateFound = () => trackInstallingWorker();
+    const checkForUpdate = () => {
+      if (disposed || !registration) return;
+      void registration.update().catch((error) => {
+        console.warn("Quarkatamari update check failed", error);
+      });
+    };
+    const checkWhenVisible = () => {
+      if (document.visibilityState === "visible") checkForUpdate();
+    };
+    const updateDebugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
+      __QUARKATAMARI_UPDATE_DEBUG__?: {
+        showUpdateReady: (worker: ServiceWorker) => void;
+      };
+    };
+    if (updateDebugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__) {
+      updateDebugWindow.__QUARKATAMARI_UPDATE_DEBUG__ = {
+        showUpdateReady: revealUpdate,
+      };
+    }
+    window.addEventListener("focus", checkForUpdate);
+    window.addEventListener("online", checkForUpdate);
+    document.addEventListener("visibilitychange", checkWhenVisible);
+    updateCheckInterval = window.setInterval(checkForUpdate, 10 * 60 * 1000);
 
     void navigator.serviceWorker
       .register(`${base}/service-worker.js`, { type: "module" })
@@ -480,10 +511,10 @@
         registration = nextRegistration;
         registration.addEventListener("updatefound", onUpdateFound);
         if (registration.waiting && navigator.serviceWorker.controller) {
-          waitingWorker = registration.waiting;
-          updateReady = true;
+          revealUpdate(registration.waiting);
         }
         trackInstallingWorker();
+        checkForUpdate();
       })
       .catch((error) => {
         console.warn("Quarkatamari service worker registration failed", error);
@@ -491,8 +522,18 @@
 
     return () => {
       disposed = true;
+      window.clearInterval(updateCheckInterval);
+      window.removeEventListener("focus", checkForUpdate);
+      window.removeEventListener("online", checkForUpdate);
+      document.removeEventListener("visibilitychange", checkWhenVisible);
       registration?.removeEventListener("updatefound", onUpdateFound);
       trackedWorker?.removeEventListener("statechange", onWorkerState);
+      if (
+        updateDebugWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady ===
+        revealUpdate
+      ) {
+        delete updateDebugWindow.__QUARKATAMARI_UPDATE_DEBUG__;
+      }
     };
   });
 
@@ -829,6 +870,29 @@
         </button>
       </div>
     </header>
+
+    {#if updateReady || updateApplying}
+      <aside
+        class="update-banner"
+        role="status"
+        aria-label="Update ready"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span class="update-banner-mark" aria-hidden="true">↻</span>
+        <span class="update-banner-copy">
+          <b>{updateApplying ? "Updating Quarkatamari…" : "Update ready"}</b>
+          <small>
+            {updateApplying
+              ? "Your universe is saved. Loading the new build now."
+              : "A new build is waiting. Save and load it whenever you’re ready."}
+          </small>
+        </span>
+        <button type="button" onclick={applyUpdate} disabled={updateApplying}>
+          {updateApplying ? "Loading…" : "Update now"}
+        </button>
+      </aside>
+    {/if}
 
     {#if labEra !== null}
       <div class="lab-banner hud">

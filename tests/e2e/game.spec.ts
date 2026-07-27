@@ -247,7 +247,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v2\.3\.0 · /);
+  await expect(buildStamp).toContainText(/^v2\.3\.1 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -1426,4 +1426,70 @@ test("a cold install can boot the lazy Three.js world offline", async ({
   } finally {
     await context.setOffline(false);
   }
+});
+
+test("a waiting update stays visible outside the menu until activated", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page);
+  await page.goto(appPath);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "__QUARKATAMARI_UPDATE_DEBUG__" in
+          (window as typeof window & {
+            __QUARKATAMARI_UPDATE_DEBUG__?: unknown;
+          }),
+      ),
+    )
+    .toBe(true);
+
+  await page.evaluate(() => {
+    const updateWindow = window as typeof window & {
+      __QUARKATAMARI_UPDATE_DEBUG__?: {
+        showUpdateReady: (worker: ServiceWorker) => void;
+      };
+      __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
+    };
+    const fakeWorker = {
+      state: "installed",
+      addEventListener: () => undefined,
+      postMessage: (message: unknown) => {
+        updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__ ??= [];
+        updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__.push(message);
+      },
+    } as unknown as ServiceWorker;
+    updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady(fakeWorker);
+  });
+
+  const banner = page.getByRole("status", { name: "Update ready" });
+  const updateButton = banner.getByRole("button", { name: "Update now" });
+  await expect(banner).toBeVisible();
+  await expect(updateButton).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Game menu" })).toBeHidden();
+  await page.waitForTimeout(750);
+  await expect(banner).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const bounds = await banner.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(390);
+
+  await updateButton.click();
+  await expect(banner).toContainText("Updating Quarkatamari");
+  await expect(banner.getByRole("button", { name: "Loading…" })).toBeDisabled();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
+            }
+          ).__QUARKATAMARI_UPDATE_MESSAGES__,
+      ),
+    )
+    .toEqual([{ type: "ACTIVATE_UPDATE" }]);
 });
