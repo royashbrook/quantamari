@@ -44,8 +44,10 @@ offline-capable PWA; all gameplay and persistence stay in the browser.
   note, fact, confidence label, and authoritative scale/topic reference.
 - Rendering adapts pickup density, pixel ratio, and shadows from measured frame
   rate. Only three semantic layers remain resident; the immediate prior layer is
-  instanced, distant pickups collapse into one instanced draw, rich models have
-  a hard budget, and Three.js stays lazy-loaded. See
+  instanced, distant pickups retain authored silhouettes in per-specimen
+  instanced families, nearby simplified specimens retain screen-stable
+  character badges, rich models have a hard budget, and Three.js stays
+  lazy-loaded. See
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - The native game menu pauses simulation without changing journey state. Reset
   requires confirmation and removes only Quarkatamari's browser save keys.
@@ -104,8 +106,10 @@ Authoritative reference families:
 - NASA: planets, stars, planetary systems, galaxies, cosmic structure, and the
   observable universe
 
-The source registry lives beside the era facts in `src/lib/scale-data.ts`, so a
-missing source is a test failure.
+The facts, stable IDs, visual forms, relative sizes, and source registry live in
+`src/lib/data/scale-catalog.json`. `src/lib/scale-data.ts` validates that catalog
+before exposing it to the game, so malformed or unsourced content is a test
+failure.
 
 Deliberate simplifications:
 
@@ -127,13 +131,15 @@ Deliberate simplifications:
 
 Before adding or changing a collectible:
 
-1. Assign a characteristic scale and confidence class.
-2. Write one plain-language fact without implying more certainty than its era.
-3. Add or reuse an authoritative government, laboratory, or primary scientific
+1. Add the specimen to `src/lib/data/scale-catalog.json` with a stable ID,
+   relative size, and authored visual form.
+2. Assign a characteristic scale and confidence class.
+3. Write one plain-language fact without implying more certainty than its era.
+4. Add or reuse an authoritative government, laboratory, or primary scientific
    reference.
-4. Verify the item has a stable visual/audio identity and does not collide with
+5. Verify the item has a stable visual/audio identity and does not collide with
    another collectible ID.
-5. Run `npm test`.
+6. Run `npm test`.
 
 ## Development
 
@@ -160,11 +166,16 @@ Playwright. Browser artifacts are written under `tests/results/e2e` and ignored.
 
 Important code:
 
-- `src/routes/+page.svelte` — browser game shell, sound, HUD, and Scale Lab
+- `src/routes/+page.svelte` — browser game shell, HUD, and Scale Lab
 - `src/lib/game/runtime.ts` — mounted Three.js world and simulation lifecycle
+- `src/lib/game/audio.ts` — synthesized pickup and transition audio
+- `src/lib/game/collectible-visuals.ts` — authored rich collectible geometry
+- `src/lib/game/collectible-lod.ts` — recognizable instanced LOD silhouettes
+- `src/lib/game/collectible-markers.ts` — generated character marker sprites
 - `src/lib/game/runtime-performance.ts` — opt-in named phase measurements
 - `src/lib/game/spawn-queue.ts` — deterministic, time-budgeted world population
-- `src/lib/scale-data.ts` — 34-era progression, 220 facts, stable IDs, and sources
+- `src/lib/data/scale-catalog.json` — editable era and collectible catalog
+- `src/lib/scale-data.ts` — catalog validation and scale helpers
 - `src/lib/game-rules.ts` — deterministic identities and gameplay budgets
 - `src/lib/world-system.ts` — grounded world kinds, three-layer LOD, and budgets
 - `src/lib/save-data.ts` — reorder-safe v4 saves and v2/v3 migrations
@@ -197,4 +208,8 @@ adopts Roy's shared maker mark under
 [issue #22](https://github.com/royashbrook/quarkatamari/issues/22). v2.2.2 adds
 the standalone rescue hatch, legacy-worker cleanup, safe update handoff,
 production sourcemaps, and WebKit recovery coverage under
-[issue #24](https://github.com/royashbrook/quarkatamari/issues/24).
+[issue #24](https://github.com/royashbrook/quarkatamari/issues/24). v2.3 splits
+runtime assets and audio into owned modules, moves collectible content to
+validated JSON, and replaces generic non-rich pickups with authored instanced
+silhouettes under [issues #25](https://github.com/royashbrook/quarkatamari/issues/25)
+and [#28](https://github.com/royashbrook/quarkatamari/issues/28).

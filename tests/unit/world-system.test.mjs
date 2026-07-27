@@ -83,7 +83,7 @@ test("world, chunk, and nested anchor seeds are deterministic and domain-separat
 
 test("projected-size LOD thresholds keep detail until it becomes fabric", () => {
   assert.equal(lodForProjectedDiameter(PROJECTED_LOD_THRESHOLDS.rich), "rich");
-  assert.equal(lodForProjectedDiameter(11.999), "simple");
+  assert.equal(lodForProjectedDiameter(7.999), "simple");
   assert.equal(lodForProjectedDiameter(PROJECTED_LOD_THRESHOLDS.simple), "simple");
   assert.equal(lodForProjectedDiameter(1.999), "point");
   assert.equal(lodForProjectedDiameter(PROJECTED_LOD_THRESHOLDS.point), "point");

@@ -148,14 +148,14 @@ export function worldAnchorSeed(
 export type ProjectedLod = "rich" | "simple" | "point" | "fabric";
 
 export const PROJECTED_LOD_THRESHOLDS = {
-  rich: 12,
+  rich: 8,
   simple: 2,
   point: 0.5,
 } as const;
 
 export const PROJECTED_RICH_HYSTERESIS = {
-  enter: 14,
-  exit: 9,
+  enter: 9,
+  exit: 6,
 } as const;
 
 export function lodForProjectedDiameter(projectedDiameterPixels: number): ProjectedLod {

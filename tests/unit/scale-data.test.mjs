@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -11,6 +12,13 @@ import {
   eraIndexForId,
   withAuthoredCatalogIds,
 } from "../../src/lib/scale-data.ts";
+
+const catalog = JSON.parse(
+  await readFile(
+    new URL("../../src/lib/data/scale-catalog.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const AUTHORITATIVE_ORGANIZATIONS =
   /^(NIST|CERN|NHGRI|NIGMS|CDC|US EPA|USGS|NASA)$/;
@@ -162,6 +170,22 @@ test("every collectible has an explicit plush-ready visual form", () => {
       form,
       `${id} should keep its recognizable form`,
     );
+  }
+});
+
+test("the JSON catalog owns editable collectible properties", () => {
+  assert.equal(catalog.length, ERAS.length);
+  assert.equal(
+    catalog.reduce((count, era) => count + era.curios.length, 0),
+    220,
+  );
+  for (const era of catalog) {
+    for (const curio of era.curios) {
+      assert.equal(typeof curio.name, "string");
+      assert.equal(typeof curio.fact, "string");
+      assert.equal(typeof curio.visualForm, "string");
+      assert.ok(curio.relativeSize >= 0.25 && curio.relativeSize <= 4);
+    }
   }
 });
 
