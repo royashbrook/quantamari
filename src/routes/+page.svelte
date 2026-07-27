@@ -3,6 +3,7 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { version as appVersion } from "../../package.json";
   import FieldGuide from "$lib/components/FieldGuide.svelte";
+  import GameMenu from "$lib/components/GameMenu.svelte";
   import {
     type Curio,
     ERAS,
@@ -76,9 +77,11 @@
   const buildLabel = `${buildHash?.slice(0, 7) ?? buildVersion}${
     buildVersion.endsWith("-dirty") ? "+dirty" : ""
   }`;
+  const RESET_GENERATION_KEY = "everything-roll-reset-generation";
 
   const showAtlasRef: MutableRef<boolean> = { current: false };
   const showGuideRef: MutableRef<boolean> = { current: false };
+  const showMenuRef: MutableRef<boolean> = { current: false };
   const modalOpenRef: MutableRef<boolean> = { current: false };
   const labReturnRef: MutableRef<{
     x: number;
@@ -123,10 +126,14 @@
 
   let mount = $state<HTMLDivElement | null>(null);
   let atlasDialog = $state<HTMLDialogElement | null>(null);
+  let menuButton = $state<HTMLButtonElement | null>(null);
   let atlasOpener: HTMLElement | null = null;
+  let menuOpener: HTMLElement | null = null;
+  let childOpenedFromMenu: "atlas" | "guide" | null = null;
   let started = $state(false);
   let showAtlas = $state(false);
   let showGuide = $state(false);
+  let showMenu = $state(false);
   let atlasEra = $state(0);
   let labEra = $state<number | null>(null);
   let sound = $state(true);
@@ -156,6 +163,8 @@
     triangles: 0,
   });
   const saveStatus = { errorReported: false };
+  let resetInProgress = false;
+  let resetGeneration: string | null = null;
 
   function updateToast(message: string) {
     toast = message;
@@ -183,8 +192,9 @@
   $effect(() => {
     showAtlasRef.current = showAtlas;
     showGuideRef.current = showGuide;
-    modalOpenRef.current = showAtlas || showGuide;
-    if (showAtlas || showGuide) {
+    showMenuRef.current = showMenu;
+    modalOpenRef.current = showAtlas || showGuide || showMenu;
+    if (showAtlas || showGuide || showMenu) {
       joystickRef.current.active = false;
       keysRef.current = {};
     }
@@ -194,7 +204,8 @@
     const dialog = atlasDialog;
     if (!showAtlas || !dialog) return;
 
-    atlasOpener = document.activeElement as HTMLElement | null;
+    const returnToMenu = childOpenedFromMenu === "atlas";
+    atlasOpener = returnToMenu ? null : activeElement();
     let cancelled = false;
     void tick().then(() => {
       if (cancelled || !dialog.isConnected) return;
@@ -206,7 +217,9 @@
       cancelled = true;
       if (dialog.open) dialog.close();
       const opener = atlasOpener;
-      window.requestAnimationFrame(() => opener?.focus());
+      if (!returnToMenu) {
+        window.requestAnimationFrame(() => opener?.focus());
+      }
     };
   });
 
@@ -370,6 +383,93 @@
     if (next) ping(520);
   }
 
+  function activeElement() {
+    return document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  }
+
+  function openMenu() {
+    menuOpener = activeElement();
+    childOpenedFromMenu = null;
+    showAtlas = false;
+    showGuide = false;
+    showMenu = true;
+    if (started) persistSnapshot();
+  }
+
+  function closeMenu() {
+    const opener = menuOpener;
+    menuOpener = null;
+    showMenu = false;
+    window.requestAnimationFrame(() => {
+      if (opener?.isConnected) opener.focus();
+      else menuButton?.focus();
+    });
+  }
+
+  function openGuide() {
+    childOpenedFromMenu = null;
+    showAtlas = false;
+    showGuide = true;
+  }
+
+  function closeGuide() {
+    const returnToMenu = childOpenedFromMenu === "guide";
+    showGuide = false;
+    if (returnToMenu) {
+      childOpenedFromMenu = null;
+      showMenu = true;
+    }
+  }
+
+  function openAtlas() {
+    childOpenedFromMenu = null;
+    showGuide = false;
+    atlasEra = journeyIndex;
+    showAtlas = true;
+  }
+
+  function closeAtlas() {
+    const returnToMenu = childOpenedFromMenu === "atlas";
+    showAtlas = false;
+    if (returnToMenu) {
+      childOpenedFromMenu = null;
+      showMenu = true;
+    }
+  }
+
+  function openGuideFromMenu() {
+    childOpenedFromMenu = "guide";
+    showMenu = false;
+    showAtlas = false;
+    showGuide = true;
+  }
+
+  function openAtlasFromMenu() {
+    childOpenedFromMenu = "atlas";
+    showMenu = false;
+    showGuide = false;
+    atlasEra = journeyIndex;
+    showAtlas = true;
+  }
+
+  function resetProgress() {
+    resetInProgress = true;
+    try {
+      resetGeneration = crypto.randomUUID();
+      localStorage.setItem(RESET_GENERATION_KEY, resetGeneration);
+      for (const key of Object.values(SAVE_KEYS)) {
+        localStorage.removeItem(key);
+      }
+    } catch {
+      resetInProgress = false;
+      return false;
+    }
+    window.location.reload();
+    return true;
+  }
+
   function previewEra(index: number) {
     const game = gameRef.current;
     labReturnRef.current ??= {
@@ -385,6 +485,8 @@
     game.running = true;
     started = true;
     labEra = index;
+    childOpenedFromMenu = null;
+    menuOpener = null;
     showAtlas = false;
     toast = `Scale Lab: ${ERAS[index].name}. Journey progress is paused.`;
     lastFact = {
@@ -408,6 +510,16 @@
   }
 
   function persistSnapshot() {
+    if (resetInProgress) return;
+    try {
+      if (localStorage.getItem(RESET_GENERATION_KEY) !== resetGeneration) {
+        resetInProgress = true;
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // storeSave reports blocked storage without interrupting the current run.
+    }
     const game = gameRef.current;
     const labSnapshot = labReturnRef.current;
     const save: SaveDataV4 = createSaveData({
@@ -440,6 +552,34 @@
       }
     }
   }
+
+  onMount(() => {
+    try {
+      resetGeneration = localStorage.getItem(RESET_GENERATION_KEY);
+    } catch {
+      // The save hydration below owns the user-facing blocked-storage message.
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (
+        event.key !== RESET_GENERATION_KEY ||
+        event.newValue === null ||
+        event.newValue === resetGeneration
+      ) {
+        return;
+      }
+      resetGeneration = event.newValue;
+      resetInProgress = true;
+      try {
+        for (const key of Object.values(SAVE_KEYS)) {
+          localStorage.removeItem(key);
+        }
+      } finally {
+        window.location.reload();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  });
 
   onMount(() => {
     let loaded: ReturnType<typeof loadSaveCandidates>;
@@ -519,15 +659,21 @@
       const interactive = target?.closest(
         "button, a, input, select, textarea, [contenteditable='true']",
       );
-      if (key === "escape" && showAtlasRef.current) {
-        showAtlas = false;
+      if (key === "escape") {
+        if (showMenuRef.current) return;
+        event.preventDefault();
+        if (showAtlasRef.current) {
+          closeAtlas();
+          return;
+        }
+        if (showGuideRef.current) {
+          closeGuide();
+          return;
+        }
+        openMenu();
         return;
       }
-      if (key === "escape" && showGuideRef.current) {
-        showGuide = false;
-        return;
-      }
-      if (interactive) return;
+      if (modalOpenRef.current || interactive) return;
       keysRef.current[key] = true;
       if (
         ["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(
@@ -537,8 +683,8 @@
         event.preventDefault();
       }
       if (key === "m") toggleSound();
-      if (key === "i") showAtlas = !showAtlas;
-      if (key === "g") showGuide = !showGuide;
+      if (key === "i") openAtlas();
+      if (key === "g") openGuide();
       if (!gameRef.current.running && [" ", "enter"].includes(key)) begin();
     };
     const onUp = (event: KeyboardEvent) => {
@@ -719,30 +865,28 @@
       </div>
       <div class="actions">
         <button
+          class="quick-action"
           aria-label="Open rolled-up field guide"
-          onclick={() => {
-            showAtlas = false;
-            showGuide = true;
-          }}
+          onclick={openGuide}
         >
           <span aria-hidden="true">✦</span> <span>Field guide</span>
         </button>
         <button
-          onclick={() => {
-            showGuide = false;
-            atlasEra = journeyIndex;
-            showAtlas = true;
-          }}
+          class="quick-action"
+          onclick={openAtlas}
           aria-label="Open scale and science atlas"
         >
           <span aria-hidden="true">⌁</span> <span>Scale & science</span>
         </button>
         <button
-          class="sound"
-          onclick={toggleSound}
-          aria-label={sound ? "Mute sound" : "Turn on sound"}
+          bind:this={menuButton}
+          class="menu-trigger"
+          onclick={openMenu}
+          aria-label="Open game menu"
+          aria-haspopup="dialog"
+          aria-expanded={showMenu}
         >
-          {sound ? "♪" : "×"}
+          <span aria-hidden="true">☰</span> <span>Menu</span>
         </button>
       </div>
     </header>
@@ -828,10 +972,7 @@
         </a>
         <button
           type="button"
-          onclick={() => {
-            showAtlas = false;
-            showGuide = true;
-          }}
+          onclick={openGuide}
         >
           See every find
         </button>
@@ -848,6 +989,7 @@
       <span><kbd>SPACE</kbd> to surge</span>
       <span><kbd>I</kbd> science</span>
       <span><kbd>G</kbd> field guide</span>
+      <span><kbd>ESC</kbd> menu</span>
       <span class="quality-mode">
         {hud.quality} · {Math.round(hud.fps)} fps · {hud.drawCalls} draws ·
         {Math.round(hud.triangles / 1000)}k tris
@@ -910,6 +1052,19 @@
       </section>
     {/if}
 
+    <GameMenu
+      open={showMenu}
+      {started}
+      {sound}
+      {appVersion}
+      {buildLabel}
+      onClose={closeMenu}
+      onOpenGuide={openGuideFromMenu}
+      onOpenAtlas={openAtlasFromMenu}
+      onToggleSound={toggleSound}
+      onReset={resetProgress}
+    />
+
     {#if showAtlas}
       <dialog
         bind:this={atlasDialog}
@@ -917,7 +1072,7 @@
         aria-label="Scale and science atlas"
         oncancel={(event) => {
           event.preventDefault();
-          showAtlas = false;
+          closeAtlas();
         }}
       >
         <div class="atlas">
@@ -949,7 +1104,7 @@
             </div>
             <button
               class="atlas-close"
-              onclick={() => (showAtlas = false)}
+              onclick={closeAtlas}
               aria-label="Close atlas"
             >
               ×
@@ -1050,7 +1205,7 @@
       open={showGuide}
       entries={collection}
       {legacyUnitemizedCount}
-      onClose={() => (showGuide = false)}
+      onClose={closeGuide}
     />
   </div>
 </main>

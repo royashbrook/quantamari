@@ -9,7 +9,7 @@ function sourceVersion() {
   try {
     return execFileSync(
       "git",
-      ["describe", "--tags", "--always", "--dirty"],
+      ["describe", "--tags", "--always", "--long", "--dirty"],
       { encoding: "utf8" },
     ).trim();
   } catch {

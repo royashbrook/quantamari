@@ -243,12 +243,42 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
-  await expect(page.getByTestId("build-stamp")).toContainText(/^v2\.1\.2 · /);
-  await expect(page.getByTestId("build-stamp")).toBeVisible();
+  const buildStamp = page.getByTestId("build-stamp");
+  await expect(buildStamp).toContainText(/^v2\.2\.0 · /);
+  await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+
+  const menuTrigger = page.getByRole("button", { name: "Open game menu" });
+  await expect(menuTrigger).toBeVisible();
+  await menuTrigger.click();
+  const menu = page.getByRole("dialog", { name: "Game menu" });
+  await expect(menu).toBeVisible();
+  await menu.getByRole("button", { name: "About Quarkatamari" }).click();
+  await expect(
+    menu.getByRole("heading", { name: "About Quarkatamari" }),
+  ).toBeVisible();
+  await expect(menu.getByTestId("about-build")).toHaveText(
+    (await buildStamp.textContent())?.trim() ?? "",
+  );
+  await expect(menu.getByText("Made with ♥ by Roy + AI")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    menu.getByRole("heading", { name: "About Quarkatamari" }),
+  ).toBeHidden();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(menuTrigger).toBeFocused();
+  const startButton = page.getByRole("button", { name: "Begin becoming" });
+  await startButton.focus();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(startButton).toBeFocused();
 
   await page.getByRole("button", { name: "Learning tour" }).click();
   await expect(
@@ -326,19 +356,232 @@ test("field guide hydrates a stable-ID v4 collection", async ({ page }) => {
 
 test("browser changes survive a page reload", async ({ page }) => {
   await begin(page);
+  await page.getByRole("button", { name: "Open game menu" }).click();
   await page.getByRole("button", { name: "Mute sound" }).click();
   await page.reload();
 
   await expect(
     page.getByRole("button", { name: "Learning tour" }),
   ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await expect(
+    page.getByRole("button", { name: "Turn on sound" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Begin becoming" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
+});
+
+test("game menu freezes the world and Escape resumes it", async ({ page }) => {
+  await enablePerformanceDiagnostics(page);
+  await begin(page);
+
+  const startingPlayer = (await readPerformanceDiagnostics(page))?.runtime.player;
+  expect(startingPlayer).toBeDefined();
+  await page.keyboard.down("d");
+  await expect
+    .poll(
+      async () => {
+        const player = (await readPerformanceDiagnostics(page))?.runtime.player;
+        return player
+          ? Math.hypot(
+              player.x - (startingPlayer?.x ?? 0),
+              player.z - (startingPlayer?.z ?? 0),
+            )
+          : 0;
+      },
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(0.01);
+
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  const menu = page.getByRole("dialog", { name: "Game menu" });
+  await expect(menu).toBeVisible();
+  await page.keyboard.up("d");
+  const pausedPlayer = (await readPerformanceDiagnostics(page))?.runtime.player;
+  await page.waitForTimeout(750);
+  expect((await readPerformanceDiagnostics(page))?.runtime.player).toMatchObject({
+    x: pausedPlayer?.x,
+    z: pausedPlayer?.z,
+  });
+
+  await menu.getByRole("button", { name: "Resume rolling" }).click();
+  await page.keyboard.down("d");
+  try {
+    await expect
+      .poll(
+        async () => {
+          const player = (await readPerformanceDiagnostics(page))?.runtime.player;
+          return player
+            ? Math.hypot(
+                player.x - (pausedPlayer?.x ?? 0),
+                player.z - (pausedPlayer?.z ?? 0),
+              )
+            : 0;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0.01);
+  } finally {
+    await page.keyboard.up("d");
+  }
+
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  const escapedPlayer = (await readPerformanceDiagnostics(page))?.runtime.player;
+  await page.keyboard.down("d");
+  try {
+    await expect
+      .poll(
+        async () => {
+          const player = (await readPerformanceDiagnostics(page))?.runtime.player;
+          return player
+            ? Math.hypot(
+                player.x - (escapedPlayer?.x ?? 0),
+                player.z - (escapedPlayer?.z ?? 0),
+              )
+            : 0;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0.01);
+  } finally {
+    await page.keyboard.up("d");
+  }
+
+  await page
+    .getByRole("button", { name: "Open scale and science atlas" })
+    .click();
+  const atlas = page.getByRole("dialog", { name: "Scale and science atlas" });
+  await expect(atlas).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(atlas).toBeHidden();
+  await expect(menu).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeVisible();
+
+  await menu.getByRole("button", { name: "Field guide" }).click();
+  const guide = page.getByRole("dialog", {
+    name: "Your rolled-up field guide",
+  });
+  await expect(guide).toBeVisible();
+  await expect(menu).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(guide).toBeHidden();
+  await expect(menu).toBeVisible();
+
+  await menu.getByRole("button", { name: "Scale & science" }).click();
+  await expect(atlas).toBeVisible();
+  await expect(menu).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(atlas).toBeHidden();
+  await expect(menu).toBeVisible();
+  await menu.getByRole("button", { name: "Resume rolling" }).click();
+  await expect(menu).toBeHidden();
+});
+
+test("reset clears Quarkatamari progress in every open tab", async ({
+  page,
+  context,
+}) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("quarkatamari-reset-test-seeded")) return;
+    sessionStorage.setItem("quarkatamari-reset-test-seeded", "true");
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: "theory-playground",
+        progress: 0.75,
+        picked: 9,
+        unitemizedPicked: 0,
+        x: 2,
+        z: 3,
+        zooms: 0,
+        sound: false,
+        mash: [],
+        collection: [],
+      }),
+    );
+    localStorage.setItem("everything-roll-save-v3", "legacy-v3");
+    localStorage.setItem("everything-roll-save-v2", "legacy-v2");
+    localStorage.setItem("unrelated-origin-data", "keep-me");
+  });
+  await page.goto(appPath);
+  const otherPage = await context.newPage();
+  await otherPage.goto(appPath);
+  await otherPage.getByRole("button", { name: "Begin becoming" }).click();
+  await expect(otherPage.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  const menu = page.getByRole("dialog", { name: "Game menu" });
+  await menu.getByRole("button", { name: "Reset all progress" }).click();
   await expect(
-    page.getByRole("button", { name: "Turn on sound" }),
+    menu.getByRole("heading", { name: "Reset all progress?" }),
   ).toBeVisible();
+  expect(
+    await page.evaluate(() => ({
+      v4: localStorage.getItem("everything-roll-save-v4"),
+      v3: localStorage.getItem("everything-roll-save-v3"),
+      v2: localStorage.getItem("everything-roll-save-v2"),
+      unrelated: localStorage.getItem("unrelated-origin-data"),
+    })),
+  ).toMatchObject({
+    v4: expect.any(String),
+    v3: "legacy-v3",
+    v2: "legacy-v2",
+    unrelated: "keep-me",
+  });
+
+  await menu.getByRole("button", { name: "Cancel" }).click();
+  await menu.getByRole("button", { name: "Reset all progress" }).click();
+  const reloads = Promise.all([
+    page.waitForEvent("framenavigated"),
+    otherPage.waitForEvent("framenavigated"),
+  ]);
+  await menu.getByRole("button", { name: "Reset everything" }).click();
+  await reloads;
+  await expect(
+    page.getByRole("heading", { name: /You are not a ball/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    otherPage.getByRole("heading", { name: /You are not a ball/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  expect(
+    await page.evaluate(() => ({
+      v4: localStorage.getItem("everything-roll-save-v4"),
+      v3: localStorage.getItem("everything-roll-save-v3"),
+      v2: localStorage.getItem("everything-roll-save-v2"),
+      unrelated: localStorage.getItem("unrelated-origin-data"),
+    })),
+  ).toEqual({
+    v4: null,
+    v3: null,
+    v2: null,
+    unrelated: "keep-me",
+  });
+  expect(
+    await otherPage.evaluate(() => ({
+      v4: localStorage.getItem("everything-roll-save-v4"),
+      v3: localStorage.getItem("everything-roll-save-v3"),
+      v2: localStorage.getItem("everything-roll-save-v2"),
+      unrelated: localStorage.getItem("unrelated-origin-data"),
+    })),
+  ).toEqual({
+    v4: null,
+    v3: null,
+    v2: null,
+    unrelated: "keep-me",
+  });
+  await otherPage.close();
 });
 
 test("multi-era rich and proxy mash pieces survive a save reload", async ({
@@ -436,9 +679,12 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   await begin(page);
   await expect(page.getByText("◎ drag anywhere to roll")).toBeVisible();
   await expect(page.locator(".fact-card")).toBeHidden();
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await expect(page.getByRole("dialog", { name: "Game menu" })).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBe(true);
+  await page.getByRole("button", { name: "Resume rolling" }).click();
 
   const startPosition = (await readPerformanceDiagnostics(page))?.runtime
     .player ?? { x: 0, z: 0 };

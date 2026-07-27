@@ -21,10 +21,13 @@ server, API, database, authentication layer, or server-side game state.
   `clients.claim`, so an update cannot replace code beneath an open game.
 
 The UI/runtime boundary is deliberately small. A framework render can update
-HUD and collection state, but it does not rebuild the scene. Opening a native
-dialog pauses input, Scale Lab remounts a preview without mutating journey
-progress, and leaving the route destroys every renderer listener and animation
-frame.
+HUD and collection state, but it does not rebuild the scene. Opening the native
+menu, Field Guide, or Scale Lab dialog pauses input and rendering. Scale Lab
+remounts a preview without mutating journey progress, and leaving the route
+destroys every renderer listener and animation frame. Confirmed reset suppresses
+autosave/pagehide writes, removes only the three Quarkatamari save generations,
+broadcasts a reset generation to every open same-origin game instance, and
+reloads the same static route.
 
 ## V2.1 performance contract
 
