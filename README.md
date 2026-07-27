@@ -213,3 +213,6 @@ runtime assets and audio into owned modules, moves collectible content to
 validated JSON, and replaces generic non-rich pickups with authored instanced
 silhouettes under [issues #25](https://github.com/royashbrook/quarkatamari/issues/25)
 and [#28](https://github.com/royashbrook/quarkatamari/issues/28).
+v2.3.1 surfaces waiting PWA builds in a persistent update banner and checks for
+fresh builds while the game remains open under
+[issue #30](https://github.com/royashbrook/quarkatamari/issues/30).

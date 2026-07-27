@@ -27,9 +27,12 @@ server, API, database, authentication layer, or server-side game state.
 - `src/service-worker.ts` uses SvelteKit's generated build manifest to precache
   every shipped chunk. It deliberately avoids `skipWaiting` and
   `clients.claim`, so an update cannot replace code beneath an open game.
-  Registration is explicit: an installed update waits until the menu can save
-  the current universe and activate it on request. `static/sw.js` permanently
-  retires the former worker path without deleting another project's caches.
+  Registration is explicit: an installed update waits while a persistent
+  top-of-game notice offers to save the current universe and activate it on
+  request; the menu keeps the same action as a fallback. The page also checks
+  for a fresh worker on focus, reconnection, visibility, and a quiet interval.
+  `static/sw.js` permanently retires the former worker path without deleting
+  another project's caches.
 - `static/rescue.html` is generated as one inline IIFE with no runtime imports.
   The inline watchdog in `src/app.html` links to it even when the app module
   graph fails. Rescue validates and migrates saves with the normal domain code,
