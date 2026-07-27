@@ -55,12 +55,15 @@ type PerformanceSnapshot = {
       dustVisible: boolean;
       environmentChildren: number;
       substrateChildren: number;
+      substrateAuthoredInstances: number;
+      substrateGenericInstances: number;
     };
     player: {
       x: number;
       z: number;
       cameraDistance: number;
       projectedDiameter: number;
+      horizontalFov: number;
     };
     quality: "high" | "balanced" | "battery";
     drawCalls: number;
@@ -247,7 +250,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v2\.3\.1 · /);
+  await expect(buildStamp).toContainText(/^v2\.4\.0 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -733,6 +736,64 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   expect(Math.hypot(savedPosition.x, savedPosition.z)).toBeGreaterThan(0);
 });
 
+test("desktop framing stays bounded and the nearest rug keeps authored identities", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await enablePerformanceDiagnostics(page, "high");
+  await begin(page);
+  const selected = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (eraIndex: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(20);
+  });
+  expect(selected).toBe(20);
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              era: snapshot.runtime.era,
+              target: snapshot.runtime.pickups.target,
+              current: snapshot.runtime.pickups.current,
+              queued: snapshot.runtime.pickups.queued,
+              authored:
+                snapshot.runtime.world.substrateAuthoredInstances,
+              generic:
+                snapshot.runtime.world.substrateGenericInstances,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({
+      era: 20,
+      target: 160,
+      current: 160,
+      queued: 0,
+      authored: 28,
+      generic: 0,
+    });
+  const desktop = await readPerformanceDiagnostics(page);
+  expect(desktop?.runtime.player.horizontalFov).toBeLessThanOrEqual(58.001);
+
+  await page.setViewportSize({ width: 2560, height: 720 });
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.player.horizontalFov,
+    )
+    .toBeLessThanOrEqual(58.001);
+  const ultrawide = await readPerformanceDiagnostics(page);
+  expect(ultrawide?.runtime.pickups.target).toBe(160);
+  expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(0);
+});
+
 test("mobile battery mode enforces its measured draw-call budget", async ({
   page,
 }) => {
@@ -1133,24 +1194,32 @@ test("long game crosses a layer without a skip animation or size pop", async ({
         setLens: (value: number) => number;
       };
     };
-    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.setLens(16) ?? 0;
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.setLens(32) ?? 0;
   });
-  expect(debugLens).toBe(16);
+  expect(debugLens).toBe(32);
   await expect
     .poll(
       async () => {
         const snapshot = await readPerformanceDiagnostics(page);
-        return Boolean(
-          snapshot &&
-            snapshot.runtime.player.projectedDiameter < 9 &&
-            snapshot.runtime.representations.effectiveRadius >
-              snapshot.runtime.radius * 1.6 &&
-            !snapshot.runtime.representations.attachmentProxyActive,
-        );
+        return snapshot
+          ? {
+              playerIsDistant:
+                snapshot.runtime.player.projectedDiameter < 9,
+              mashStillReadsLarge:
+                snapshot.runtime.representations.effectiveRadius >
+                snapshot.runtime.radius * 1.6,
+              attachmentsStayAuthored:
+                !snapshot.runtime.representations.attachmentProxyActive,
+            }
+          : null;
       },
       { timeout: 15_000 },
     )
-    .toBe(true);
+    .toEqual({
+      playerIsDistant: true,
+      mashStillReadsLarge: true,
+      attachmentsStayAuthored: true,
+    });
   const expectedCameraRatio = debugLens * Math.hypot(6.05, 10.6);
   await expect
     .poll(
@@ -1300,6 +1369,8 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     dustVisible: false,
     environmentChildren: 0,
     substrateChildren: 0,
+    substrateAuthoredInstances: 0,
+    substrateGenericInstances: 0,
   });
   const startPosition = before?.runtime.player ?? { x: 0, z: 0 };
   await page.keyboard.down("w");

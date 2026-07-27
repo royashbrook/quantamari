@@ -216,3 +216,7 @@ and [#28](https://github.com/royashbrook/quarkatamari/issues/28).
 v2.3.1 surfaces waiting PWA builds in a persistent update banner and checks for
 fresh builds while the game remains open under
 [issue #30](https://github.com/royashbrook/quarkatamari/issues/30).
+v2.4 bounds desktop and ultrawide world framing, prioritizes nearby authored
+pickup detail, and rebuilds the nearest prior-layer rug from recognizable
+low-detail catalog models under
+[issue #32](https://github.com/royashbrook/quarkatamari/issues/32).

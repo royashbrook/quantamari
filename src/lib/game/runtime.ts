@@ -33,7 +33,9 @@ import {
 import {
   type LegacyVisualStage,
   type WorldKind,
+  boundedVerticalFov,
   floatingOriginShift,
+  horizontalFovDegrees,
   legacyVisualStageAnchor,
   localChunkCoordinate,
   lodForProjectedDiameter,
@@ -55,7 +57,10 @@ import {
   createPhaseRecorder,
   type RuntimePhase,
 } from "./runtime-performance";
-import { createCollectibleLodPool } from "./collectible-lod";
+import {
+  createCollectibleInstanceGeometry,
+  createCollectibleLodPool,
+} from "./collectible-lod";
 import { createCollectibleMarkerFactory } from "./collectible-markers";
 import { createCollectibleVisualFactory } from "./collectible-visuals";
 import { createSpawnQueue } from "./spawn-queue";
@@ -184,6 +189,7 @@ const PICKUP_ENTRANCE_MS = 800;
 const PICKUP_RETIRE_MS = 600;
 const PICKUP_COLLISION_SCALE = 0.55;
 const PICKUP_RETIRE_DISTANCE = 54;
+const PICKUP_RICH_NEAR_DISTANCE = 18;
 const MAX_POP_BURSTS = 12;
 
 const pickupEntranceScale = (bornAt: number, now: number) => {
@@ -728,6 +734,8 @@ export function mountGame(
   };
   let sceneryColliders: SceneryCollider[] = [];
   let semanticResidencyKey = "";
+  let substrateAuthoredInstances = 0;
+  let substrateGenericInstances = 0;
 
   const substrateKeyFor = (viewScale: number) =>
     residentLayerIndices(viewScale, ERAS.length)
@@ -748,6 +756,8 @@ export function mountGame(
       }
     });
     substrateGroup.clear();
+    substrateAuthoredInstances = 0;
+    substrateGenericInstances = 0;
 
     const priorLayers = residentLayerIndices(viewScale, ERAS.length).filter(
       (layer) => layer < viewScale,
@@ -756,73 +766,51 @@ export function mountGame(
       const depth = Math.max(1, Math.ceil(viewScale) - layer);
       const era = ERAS[layer];
       if (residentPosition === 0) {
-        const geometries = [
-          new THREE.IcosahedronGeometry(0.34, 1),
-          new THREE.CapsuleGeometry(0.15, 0.42, 3, 6),
-          new THREE.TorusGeometry(0.3, 0.055, 5, 12),
-          new THREE.BoxGeometry(0.46, 0.3, 0.4),
-          new THREE.ConeGeometry(0.3, 0.5, 6),
-        ];
-        const familyFor = (shape: Curio["shape"]) => {
-          if (["fiber", "object", "chair", "car"].includes(shape)) return 1;
-          if (["atom", "molecule", "system", "galaxy"].includes(shape)) return 2;
-          if (shape === "house") return 3;
-          if (["mountain", "planet", "star", "universe"].includes(shape)) return 4;
-          return 0;
-        };
-        const count = reducedWorldDetail() ? 52 : 84;
-        const families = geometries.map(() => [] as number[]);
+        const count = reducedWorldDetail() ? 18 : 28;
+        const families = new Map<string, { curio: Curio; items: number[] }>();
         for (let item = 0; item < count; item += 1) {
           const curio = era.curios[item % era.curios.length];
-          families[familyFor(curio.shape)].push(item);
+          const family = families.get(curio.id) ?? { curio, items: [] };
+          family.items.push(item);
+          families.set(curio.id, family);
         }
         const dummy = new THREE.Object3D();
-        families.forEach((items, family) => {
-          if (items.length === 0) {
-            geometries[family].dispose();
-            return;
-          }
+        families.forEach(({ curio, items }) => {
           const material = new THREE.MeshToonMaterial({
             color: "#ffffff",
+            vertexColors: true,
             transparent: true,
-            opacity: 0.76,
+            opacity: 0.82,
           });
           const instances = new THREE.InstancedMesh(
-            geometries[family],
+            createCollectibleInstanceGeometry(curio, buildVisual, false),
             material,
             items.length,
           );
+          instances.name = `substrate:${era.id}:${curio.id}`;
           items.forEach((item, instance) => {
-            const curio = era.curios[item % era.curios.length];
             const angle = pseudo(layer * 379 + item * 17.3) * Math.PI * 2;
             const radius = 2.4 + pseudo(layer * 113 + item * 5.7) * 66;
             dummy.position.set(
               Math.cos(angle) * radius,
-              0.07 + pseudo(item * 2.1) * 0.035,
+              0.035 + pseudo(item * 2.1) * 0.02,
               Math.sin(angle) * radius,
             );
             dummy.rotation.set(
-              pseudo(item + 31) * 0.45,
+              pseudo(item + 31) * 0.18,
               pseudo(item + 47) * Math.PI * 2,
-              pseudo(item + 71) * 0.45,
+              pseudo(item + 71) * 0.18,
             );
-            const scale = 0.62 + pseudo(item + layer * 23) * 0.8;
+            const scale = 0.18 + pseudo(item + layer * 23) * 0.2;
             dummy.scale.setScalar(scale);
             dummy.updateMatrix();
             instances.setMatrixAt(instance, dummy.matrix);
-            instances.setColorAt(
-              instance,
-              new THREE.Color(curio.color).lerp(
-                new THREE.Color(era.palette[2]),
-                0.22,
-              ),
-            );
           });
           instances.instanceMatrix.needsUpdate = true;
-          if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
           instances.receiveShadow = false;
           instances.castShadow = false;
           substrateGroup.add(instances);
+          substrateAuthoredInstances += items.length;
         });
         return;
       }
@@ -2206,15 +2194,15 @@ export function mountGame(
     }
   };
 
-  rebuildEnvironment(activeIndex);
-  buildSubstrate(activeIndex);
-
   const { buildVisual, applyPhysicalMaterialQuality } =
     createCollectibleVisualFactory({
       isEarly: () => early,
       getQualityTier: () => qualityTier,
       sceneryGlow,
     });
+  rebuildEnvironment(activeIndex);
+  buildSubstrate(activeIndex);
+
   const collectibleLodPool = createCollectibleLodPool(
     scene,
     camera,
@@ -3169,7 +3157,10 @@ export function mountGame(
     );
     renderer.setSize(width, height, false);
     camera.aspect = Math.max(0.2, width / height);
-    camera.fov = width <= 860 ? 56 : 46;
+    camera.fov = boundedVerticalFov(
+      width <= 860 ? 56 : 46,
+      camera.aspect,
+    );
     camera.updateProjectionMatrix();
   };
 
@@ -3240,6 +3231,8 @@ export function mountGame(
               dustVisible: dustField.visible,
               environmentChildren: environmentGroup.children.length,
               substrateChildren: substrateGroup.children.length,
+              substrateAuthoredInstances,
+              substrateGenericInstances,
             },
             player: {
               x: game.x,
@@ -3250,6 +3243,10 @@ export function mountGame(
                 camera.position.distanceTo(playerRoot.position),
                 camera.fov,
                 height,
+              ),
+              horizontalFov: horizontalFovDegrees(
+                camera.fov,
+                camera.aspect,
               ),
             },
             drawBudget: {
@@ -3917,9 +3914,8 @@ export function mountGame(
       baseSceneDrawCalls = 0;
     }
     let farPickupCount = 0;
-    let richPickupCount = 0;
     const richPickupBudget = richPickupLimit;
-    pickups.forEach((pickup, index) => {
+    const pickupDetail = pickups.map((pickup, index) => {
       const entranceScale = pickupLifecycleScale(pickup, now);
       const distance = Math.hypot(
         pickup.root.position.x - game.x,
@@ -3942,20 +3938,60 @@ export function mountGame(
           projectedSize,
           pickup.wantsRichDetail,
         ) || nearLargePickup;
-      const wantsRichVisual = pickup.wantsRichDetail;
-      const useRichVisual =
-        pickup.sourceEra >= activeIndex &&
-        richPickupCount < richPickupBudget &&
-        wantsRichVisual &&
-        (qualityTier !== "battery" ||
-          richPickupDrawCalls + pickup.drawCalls <=
-            richPickupDrawCallBudget);
+      return {
+        pickup,
+        index,
+        entranceScale,
+        distance,
+        projectedSize,
+        projectedLod,
+        nearField: distance <= PICKUP_RICH_NEAR_DISTANCE,
+      };
+    });
+    const richPickupSet = new Set<Pickup>();
+    const richCandidates = pickupDetail
+      .filter(
+        ({ pickup }) =>
+          pickup.sourceEra >= activeIndex && pickup.wantsRichDetail,
+      )
+      .sort((first, second) => {
+        const nearPriority =
+          Number(second.nearField) - Number(first.nearField);
+        if (nearPriority !== 0) return nearPriority;
+        const currentPriority =
+          Number(second.pickup.sourceEra === activeIndex) -
+          Number(first.pickup.sourceEra === activeIndex);
+        if (currentPriority !== 0) return currentPriority;
+        const distancePriority = first.distance - second.distance;
+        if (Math.abs(distancePriority) > 0.001) return distancePriority;
+        return first.index - second.index;
+      });
+    for (const { pickup } of richCandidates) {
+      if (richPickupSet.size >= richPickupBudget) break;
+      if (
+        qualityTier === "battery" &&
+        richPickupDrawCalls + pickup.drawCalls > richPickupDrawCallBudget
+      ) {
+        continue;
+      }
+      richPickupSet.add(pickup);
+      richPickupDrawCalls += pickup.drawCalls;
+    }
+    pickupDetail.forEach(({
+      pickup,
+      index,
+      entranceScale,
+      distance,
+      projectedSize,
+      projectedLod,
+    }) => {
+      const useRichVisual = richPickupSet.has(pickup);
       pickup.root.visible = useRichVisual;
       if (pickup.marker) {
         pickup.marker.visible =
           useRichVisual &&
           pickup.sourceEra >= activeIndex &&
-          distance < 20;
+          projectedSize >= 12;
       }
       const identity = pickup.identity;
       const motionTime =
@@ -4027,8 +4063,6 @@ export function mountGame(
       if (pickup.sourceEra >= activeIndex && distance < 20) {
         collectibleLodPool.addBadge(pickup.curio, pickup.root.position);
       }
-      richPickupCount += 1;
-      richPickupDrawCalls += pickup.drawCalls;
       pickup.root.scale.setScalar(
         motionScale * transitionWorldScale * entranceScale,
       );

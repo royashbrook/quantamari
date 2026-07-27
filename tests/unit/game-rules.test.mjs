@@ -196,6 +196,10 @@ test("adaptive quality uses hysteresis and meaningful mobile budgets", () => {
   assert.equal(qualityTierForFps(60, "battery", false), "battery");
   assert.equal(qualityTierForFps(20, "balanced", false), "battery");
 
+  assert.equal(pickupBudget(1200, "high"), 160);
+  assert.equal(pickupBudget(1200, "balanced"), 130);
+  assert.equal(pickupBudget(1200, "battery"), 96);
+  assert.equal(pickupBudget(390, "balanced"), 120);
   assert.ok(pickupBudget(1200, "high") > pickupBudget(390, "high"));
   assert.ok(pickupBudget(390, "high") > pickupBudget(390, "battery"));
   assert.equal(

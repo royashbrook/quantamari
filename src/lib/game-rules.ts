@@ -347,9 +347,9 @@ export function qualityTierForFps(
 
 export function pickupBudget(viewportWidth: number, tier: QualityTier) {
   const mobile = viewportWidth <= 860;
-  if (tier === "high") return mobile ? 160 : 220;
-  if (tier === "balanced") return mobile ? 120 : 170;
-  return mobile ? 88 : 120;
+  if (tier === "high") return mobile ? 140 : 160;
+  if (tier === "balanced") return mobile ? 120 : 130;
+  return mobile ? 88 : 96;
 }
 
 export function lowPickupBudget(viewportWidth: number, tier: QualityTier) {
