@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07041d" />
+    <title>Quarkatamari · Save rescue</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px 16px 48px;
+        background:
+          radial-gradient(circle at 12% 4%, rgb(255 111 175 / 22%), transparent 28%),
+          radial-gradient(circle at 88% 8%, rgb(156 231 255 / 20%), transparent 25%),
+          #07041d;
+        color: #34204e;
+        font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+      }
+      main { width: min(720px, 100%); margin: 0 auto; }
+      header { margin-bottom: 22px; color: #fffaf0; }
+      header span {
+        color: #ffe170;
+        font: 800 11px ui-monospace, monospace;
+        letter-spacing: .12em;
+      }
+      h1 { margin: 5px 0 8px; font-size: clamp(36px, 9vw, 64px); line-height: .95; }
+      header p { max-width: 620px; margin: 0; color: #d9cfea; line-height: 1.5; }
+      .card {
+        margin: 14px 0;
+        padding: 20px;
+        border: 3px solid #4b2868;
+        border-radius: 22px 18px 24px 20px;
+        background: #fffaf0;
+        box-shadow: 0 7px 0 #4b2868;
+      }
+      h2 { margin: 0 0 8px; font-size: 20px; }
+      p { line-height: 1.45; }
+      .dim { color: #6d6075; font-size: 13px; }
+      textarea {
+        width: 100%;
+        min-height: 125px;
+        margin-top: 10px;
+        padding: 12px;
+        resize: vertical;
+        border: 2px solid #d7c8d8;
+        border-radius: 12px;
+        background: #f8eff8;
+        color: #34204e;
+        font: 11px/1.45 ui-monospace, monospace;
+      }
+      button, .button {
+        display: inline-block;
+        min-height: 44px;
+        margin: 10px 7px 0 0;
+        padding: 10px 15px;
+        border: 2px solid #4b2868;
+        border-radius: 13px;
+        background: #ffe170;
+        box-shadow: 0 3px 0 #4b2868;
+        color: #34204e;
+        cursor: pointer;
+        font: 800 13px inherit;
+        text-decoration: none;
+      }
+      button.secondary, .button.secondary { background: #e9f8ff; }
+      button.repair { background: #ffd8e9; }
+      .message { min-height: 20px; margin-top: 10px; font-weight: 750; }
+      .good { color: #26714d; }
+      .bad { color: #a22e52; }
+      footer { margin-top: 24px; color: #c9bddb; font-size: 12px; text-align: center; }
+      footer a { color: #fff3a6; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span>THE UNIVERSE IS STILL HERE</span>
+        <h1>Save rescue</h1>
+        <p>
+          This page works without the game’s module graph. It can get your
+          journey out, put a valid journey back, or replace only cached
+          Quarkatamari app files.
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>Where you are</h2>
+        <p id="where" class="dim"></p>
+      </section>
+
+      <section class="card">
+        <h2>Your journey</h2>
+        <div id="status" class="message"></div>
+        <div id="summary" class="dim"></div>
+        <textarea id="saveBox" readonly spellcheck="false"></textarea>
+        <button id="copy" type="button">Copy save</button>
+        <button id="download" class="secondary" type="button">Download file</button>
+        <div id="exportMessage" class="message"></div>
+      </section>
+
+      <section class="card">
+        <h2>Put a journey back</h2>
+        <p class="dim">
+          Paste a Quarkatamari save below. It is validated and migrated before
+          storage is changed, and the current save is kept as a rescue backup.
+        </p>
+        <textarea
+          id="restoreBox"
+          spellcheck="false"
+          placeholder="Paste a v2, v3, or v4 save"
+        ></textarea>
+        <button id="restore" type="button">Validate and restore</button>
+        <button id="loadBackup" class="secondary" type="button">
+          Load previous rescue backup
+        </button>
+        <div id="restoreMessage" class="message"></div>
+      </section>
+
+      <section class="card">
+        <h2>Repair the installed game</h2>
+        <p class="dim">
+          This removes only Quarkatamari caches and registrations. It does not
+          delete your save or touch another project on royashbrook.com.
+        </p>
+        <button id="repair" class="repair" type="button">
+          Clear cached app files only
+        </button>
+        <div id="repairMessage" class="message"></div>
+      </section>
+
+      <footer>
+        <a class="button secondary" href="./">Back to Quarkatamari</a>
+        <p>Single-file recovery hatch · no runtime imports</p>
+      </footer>
+    </main>
+
+    <script>/*__RESCUE_BUNDLE__*/</script>
+  </body>
+</html>

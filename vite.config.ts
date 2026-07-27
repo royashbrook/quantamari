@@ -14,5 +14,8 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 800,
+    // Production-only failures need real stack frames. The host copies these
+    // alongside the hashed chunks and CI verifies that they survive deployment.
+    sourcemap: true,
   },
 });

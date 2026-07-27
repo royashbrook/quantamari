@@ -244,7 +244,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v2\.2\.1 · /);
+  await expect(buildStamp).toContainText(/^v2\.2\.2 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -256,6 +256,14 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await menuTrigger.click();
   const menu = page.getByRole("dialog", { name: "Game menu" });
   await expect(menu).toBeVisible();
+  await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
+    "href",
+    "./rescue.html",
+  );
+  await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
+    "rel",
+    "external",
+  );
   await menu.getByRole("button", { name: "About Quarkatamari" }).click();
   await expect(
     menu.getByRole("heading", { name: "About Quarkatamari" }),

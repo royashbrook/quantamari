@@ -24,7 +24,8 @@ Do not replace a working GitHub remote merely to match the example name.
 1. Work on a branch and run `npm run test:all`.
 2. Commit the exact reviewed source state.
 3. Fast-forward `main` to that commit and push `main` to GitHub.
-4. GitHub runs the Node, static artifact, desktop/mobile, and offline tests.
+4. GitHub runs the Node, static artifact, Chromium renderer, WebKit/iPhone
+   recovery, and offline tests.
 5. After they pass, the workflow asks `royashbrook.com` to build the exact
    verified Quarkatamari commit and rejects a mismatched or missing artifact.
 6. Verify the public URL, manifest, service worker, and current release marker.
@@ -44,6 +45,8 @@ The v2 cutover is tracked in
 
 ## Recovery
 
+- Open `/quarkatamari/rescue.html` before clearing browser data. It can export
+  and validate the local save, then clear only Quarkatamari app files.
 - Roll back by reverting the release commit on GitHub `main`; `v1.0.0` is the
   checkpoint immediately before the v2 framework rewrite.
 - If local and GitHub history diverge, fetch and reconcile on a temporary

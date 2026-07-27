@@ -10,11 +10,13 @@
     sound: boolean;
     appVersion: string;
     buildLabel: string;
+    updateReady: boolean;
     onClose: () => void;
     onOpenGuide: () => void;
     onOpenAtlas: () => void;
     onToggleSound: () => void;
     onReset: () => boolean;
+    onApplyUpdate: () => void;
   };
 
   let {
@@ -23,11 +25,13 @@
     sound,
     appVersion,
     buildLabel,
+    updateReady,
     onClose,
     onOpenGuide,
     onOpenAtlas,
     onToggleSound,
     onReset,
+    onApplyUpdate,
   }: GameMenuProps = $props();
 
   const componentId = $props.id();
@@ -127,6 +131,19 @@
         </button>
 
         <div class={styles.choices}>
+          {#if updateReady}
+            <button
+              class={styles.updateChoice}
+              type="button"
+              onclick={onApplyUpdate}
+            >
+              <span class={styles.icon} aria-hidden="true">↻</span>
+              <span>
+                <b>Update ready</b>
+                <small>Save this universe and load the new build</small>
+              </span>
+            </button>
+          {/if}
           <button type="button" onclick={onToggleSound}>
             <span class={styles.icon} aria-hidden="true">{sound ? "♪" : "×"}</span>
             <span>
@@ -148,6 +165,13 @@
               <small>Visit every known and unknown layer</small>
             </span>
           </button>
+          <a href="./rescue.html" rel="external">
+            <span class={styles.icon} aria-hidden="true">+</span>
+            <span>
+              <b>Save rescue</b>
+              <small>Export a journey or repair installed files</small>
+            </span>
+          </a>
           <button type="button" onclick={() => (view = "about")}>
             <span class={styles.icon} aria-hidden="true">?</span>
             <span>

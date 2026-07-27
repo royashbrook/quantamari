@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:all
       - name: upload performance + e2e results
         if: always()
@@ -64,4 +64,5 @@ jobs:
           grep -q "name=\"app-commit\" content=\"$QUARKATAMARI_REF\"" dist/quarkatamari/index.html
           grep -q 'data-testid="build-stamp"' dist/quarkatamari/index.html
           grep -q "· ${QUARKATAMARI_REF:0:7}<" dist/quarkatamari/index.html
+          find dist/quarkatamari/_app -name '*.map' -print -quit | grep -q .
           npx wrangler deploy
