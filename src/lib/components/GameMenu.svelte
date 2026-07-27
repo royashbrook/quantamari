@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { base } from "$app/paths";
   import { tick } from "svelte";
   import styles from "./game-menu.module.css";
 
@@ -165,7 +166,7 @@
               <small>Visit every known and unknown layer</small>
             </span>
           </button>
-          <a href="./rescue.html" rel="external">
+          <a href={`${base}/rescue.html`} rel="external">
             <span class={styles.icon} aria-hidden="true">+</span>
             <span>
               <b>Save rescue</b>
@@ -303,8 +304,10 @@
           sponsor me
         </a>
       </span>
-      <span aria-hidden="true">·</span>
-      <span>v{appVersion}</span>
+      {#if view !== "about"}
+        <span aria-hidden="true">·</span>
+        <span>v{appVersion}</span>
+      {/if}
     </footer>
   </section>
 </dialog>

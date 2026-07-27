@@ -6,13 +6,21 @@ server, API, database, authentication layer, or server-side game state.
 
 ## Boundaries
 
-- `src/routes/+page.svelte` owns browser UI state, inputs, dialogs, audio, save
-  hydration, and the Three.js mount point.
+- `src/routes/+page.svelte` owns browser UI state, inputs, dialogs, save
+  hydration, and the Three.js mount point. `src/lib/game/audio.ts` owns its
+  Web Audio graph and shutdown.
 - `src/lib/game/runtime.ts` owns the renderer, scene, simulation loop, rolling,
   collisions, pickups, scale transitions, and world residency. `mountGame`
-  returns one synchronous cleanup function, including cancellation of a pending
-  lazy Three.js import. The runtime module itself is also imported only after
-  the welcome screen, keeping simulation parsing off the initial UI path.
+  returns one synchronous cleanup function. The runtime module, including
+  Three.js, is imported only after the welcome screen, keeping simulation
+  parsing off the initial UI path.
+- `src/lib/game/collectible-visuals.ts`, `collectible-markers.ts`, and
+  `collectible-lod.ts` own rich geometry, generated marker sprites, and
+  per-specimen instanced silhouettes. Runtime chooses representation but does
+  not define the assets.
+- `src/lib/data/scale-catalog.json` is the editable content boundary.
+  `scale-data.ts` validates stable IDs, science metadata, relative size, and
+  visual-form references before publishing the typed catalog.
 - `src/lib/game-rules.ts`, `save-data.ts`, `scale-data.ts`, and
   `world-system.ts` are browser-independent domain modules tested directly by
   Node.
@@ -52,8 +60,14 @@ released.
 Battery quality treats `maxDrawCalls` as a hard weighted budget. Each cached
 collectible template records its render-leaf cost, while the live scene is
 counted without pickup roots. Rich pickups are admitted only while their cost
-fits; the remainder share one instanced far-field draw. Transmission is disabled
-in battery mode so physical materials cannot add a hidden extra pass.
+fits; the remainder use one instanced family per visible specimen so their
+authored silhouettes remain recognizable. Screen-stable character badges keep
+active-layer simplified specimens identifiable; the immediate prior layer keeps
+its silhouettes, and deeper residents are represented by the substrate rather
+than duplicate pickup draws. The generic mesh remains overflow protection only
+and is asserted to stay unused for normal catalogued populations. Transmission
+is disabled in battery mode so physical materials cannot add a hidden extra
+pass.
 Automatic quality is downgrade-only for the lifetime of a renderer. Semantic
 world and viewport changes do not unlock promotion. A downgrade rebuilds world
 instances once at the lower authored density; excess peripheral pickups shrink

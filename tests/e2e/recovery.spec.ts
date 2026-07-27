@@ -31,6 +31,20 @@ test("the built shell hydrates in the target browser", async ({ page }) => {
   await expect(page.locator("#boot-rescue")).toBeHidden();
 });
 
+test("the in-game rescue link follows the deployed base path", async ({
+  page,
+}) => {
+  await page.goto(appPath);
+  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await page.getByRole("link", { name: "Save rescue" }).click();
+  await expect(page).toHaveURL(/\/quarkatamari\/rescue\.html$/);
+  await expect(page.getByRole("heading", { name: "Save rescue" })).toBeVisible();
+});
+
 test("a dead module graph still reaches the installed save", async ({
   context,
   page,

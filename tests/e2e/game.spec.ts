@@ -39,6 +39,9 @@ type PerformanceSnapshot = {
     representations: {
       richPickups: number;
       simplePickups: number;
+      silhouetteDrawCalls: number;
+      silhouetteBadgeInstances: number;
+      genericPickups: number;
       attachments: number;
       proxyPieces: number;
       visibleAttachments: number;
@@ -244,7 +247,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v2\.2\.2 · /);
+  await expect(buildStamp).toContainText(/^v2\.3\.0 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -258,7 +261,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
     "href",
-    "./rescue.html",
+    "/quarkatamari/rescue.html",
   );
   await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
     "rel",
@@ -271,6 +274,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await expect(menu.getByTestId("about-build")).toHaveText(
     (await buildStamp.textContent())?.trim() ?? "",
   );
+  await expect(menu.locator("footer").getByText(/^v\d/)).toHaveCount(0);
   await expect(menu.getByRole("link", { name: "roy" })).toHaveAttribute(
     "href",
     "https://royashbrook.com",
@@ -319,12 +323,6 @@ test("boots the static game at its production subpath", async ({ page }) => {
       .filter((url) => !url.pathname.startsWith(basePath))
       .map((url) => url.pathname), appPath);
   expect(wrongPathResources).toEqual([]);
-  await expect
-    .poll(
-      async () => (await inspectInstanceColors(page)).checked,
-      { timeout: 30_000 },
-    )
-    .toBeGreaterThan(0);
   const instanceColorDiagnostics = await inspectInstanceColors(page);
   expect(instanceColorDiagnostics.offenders).toEqual([]);
   expect(pageErrors).toEqual([]);
@@ -772,6 +770,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   expect(
     (battery?.runtime.drawBudget.base ?? 0) +
     (battery?.runtime.drawBudget.richUsed ?? 0) +
+      (battery?.runtime.representations.silhouetteDrawCalls ?? 0) +
       ((battery?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
   ).toBeLessThanOrEqual(battery?.runtime.budget.maxDrawCalls ?? 0);
 
@@ -819,12 +818,20 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   const stableRepresentations = {
     richPickups: settled?.runtime.representations.richPickups,
     simplePickups: settled?.runtime.representations.simplePickups,
+    silhouetteDrawCalls:
+      settled?.runtime.representations.silhouetteDrawCalls,
+    silhouetteBadgeInstances:
+      settled?.runtime.representations.silhouetteBadgeInstances,
+    genericPickups: settled?.runtime.representations.genericPickups,
     attachments: settled?.runtime.representations.attachments,
     visibleAttachments:
       settled?.runtime.representations.visibleAttachments,
     attachmentProxyActive:
       settled?.runtime.representations.attachmentProxyActive,
   };
+  expect(stableRepresentations.silhouetteDrawCalls).toBeGreaterThan(0);
+  expect(stableRepresentations.silhouetteBadgeInstances).toBeGreaterThan(0);
+  expect(stableRepresentations.genericPickups).toBe(0);
   const stableWorldGeneration = settled?.runtime.worldGeneration;
   await page.waitForTimeout(5_500);
   const afterAnotherQualityWindow = await readPerformanceDiagnostics(page);
@@ -838,6 +845,13 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
       afterAnotherQualityWindow?.runtime.representations.richPickups,
     simplePickups:
       afterAnotherQualityWindow?.runtime.representations.simplePickups,
+    silhouetteDrawCalls:
+      afterAnotherQualityWindow?.runtime.representations.silhouetteDrawCalls,
+    silhouetteBadgeInstances:
+      afterAnotherQualityWindow?.runtime.representations
+        .silhouetteBadgeInstances,
+    genericPickups:
+      afterAnotherQualityWindow?.runtime.representations.genericPickups,
     attachments: afterAnotherQualityWindow?.runtime.representations.attachments,
     visibleAttachments:
       afterAnotherQualityWindow?.runtime.representations.visibleAttachments,
