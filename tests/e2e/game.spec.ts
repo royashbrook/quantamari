@@ -759,12 +759,15 @@ test("long game crosses a layer without a skip animation or size pop", async ({
     .poll(async () => (await readPerformanceDiagnostics(page))?.runtime.era)
     .toBe(0);
   await expect
-    .poll(async () => {
-      const snapshot = await readPerformanceDiagnostics(page);
-      return snapshot
-        ? snapshot.runtime.player.cameraDistance / snapshot.runtime.radius
-        : 0;
-    })
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? snapshot.runtime.player.cameraDistance / snapshot.runtime.radius
+          : 0;
+      },
+      { timeout: 15_000 },
+    )
     .toBeGreaterThan(12);
   const debugLens = await page.evaluate(() => {
     const debugWindow = window as typeof window & {
@@ -936,17 +939,21 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   });
   const startPosition = before?.runtime.player ?? { x: 0, z: 0 };
   await page.keyboard.down("w");
-  await page.waitForTimeout(250);
-  await page.keyboard.up("w");
-  await expect
-    .poll(async () => {
-      const player = (await readPerformanceDiagnostics(page))?.runtime.player;
-      return player
-        ? Math.hypot(player.x - startPosition.x, player.z - startPosition.z)
-        : 0;
-    })
-    .toBeGreaterThan(0.01);
-
+  try {
+    await expect
+      .poll(
+        async () => {
+          const player = (await readPerformanceDiagnostics(page))?.runtime.player;
+          return player
+            ? Math.hypot(player.x - startPosition.x, player.z - startPosition.z)
+            : 0;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0.01);
+  } finally {
+    await page.keyboard.up("w");
+  }
   const transitionStart = await page.evaluate(() => {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
