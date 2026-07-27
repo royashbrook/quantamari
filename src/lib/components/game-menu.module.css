@@ -81,6 +81,7 @@
 .back,
 .resume,
 .choices button,
+.choices a,
 .resetActions button {
   min-height: 44px;
   border: 2px solid #4b2868;
@@ -99,6 +100,7 @@
 .back:hover,
 .resume:hover,
 .choices button:hover,
+.choices a:hover,
 .resetActions button:hover {
   background: #fff0b8;
   transform: translateY(-1px);
@@ -108,6 +110,7 @@
 .back:active,
 .resume:active,
 .choices button:active,
+.choices a:active,
 .resetActions button:active {
   transform: translateY(2px);
 }
@@ -151,7 +154,8 @@
   margin-top: 15px;
 }
 
-.choices button {
+.choices button,
+.choices a {
   display: grid;
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr);
@@ -163,18 +167,25 @@
   box-shadow: 0 3px 0 #d7c8d8;
   color: #3d2851;
   text-align: left;
+  text-decoration: none;
 }
 
-.choices button:nth-child(2) {
+.choices > :nth-child(2) {
   background: #fff1f8;
 }
 
-.choices button:nth-child(3) {
+.choices > :nth-child(3) {
   background: #eefaff;
 }
 
-.choices button:nth-child(4) {
+.choices > :nth-child(4) {
   background: #f6f0ff;
+}
+
+.choices .updateChoice {
+  grid-column: 1 / -1;
+  background: #e9f8ff;
+  color: #25577a;
 }
 
 .choices .resetChoice {
@@ -183,7 +194,7 @@
   color: #8a3556;
 }
 
-.choices button > span:last-child {
+.choices > :is(button, a) > span:last-child {
   min-width: 0;
 }
 

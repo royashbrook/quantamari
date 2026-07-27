@@ -16,6 +16,12 @@ worker.addEventListener("install", (event) => {
   );
 });
 
+worker.addEventListener("message", (event) => {
+  if (event.data?.type === "ACTIVATE_UPDATE") {
+    void worker.skipWaiting();
+  }
+});
+
 worker.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>

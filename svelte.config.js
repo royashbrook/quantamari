@@ -35,6 +35,11 @@ const config = {
     version: {
       name: sourceVersion(),
     },
+    serviceWorker: {
+      // Registration is explicit in +page.svelte so an installed update can
+      // wait for the player to choose a safe save-and-reload point.
+      register: false,
+    },
   },
 };
 

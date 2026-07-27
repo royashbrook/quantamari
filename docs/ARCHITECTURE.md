@@ -19,6 +19,13 @@ server, API, database, authentication layer, or server-side game state.
 - `src/service-worker.ts` uses SvelteKit's generated build manifest to precache
   every shipped chunk. It deliberately avoids `skipWaiting` and
   `clients.claim`, so an update cannot replace code beneath an open game.
+  Registration is explicit: an installed update waits until the menu can save
+  the current universe and activate it on request. `static/sw.js` permanently
+  retires the former worker path without deleting another project's caches.
+- `static/rescue.html` is generated as one inline IIFE with no runtime imports.
+  The inline watchdog in `src/app.html` links to it even when the app module
+  graph fails. Rescue validates and migrates saves with the normal domain code,
+  while cache repair is restricted to Quarkatamari's names and scope.
 
 The UI/runtime boundary is deliberately small. A framework render can update
 HUD and collection state, but it does not rebuild the scene. Opening the native
@@ -93,8 +100,9 @@ real-device profile showing rebuild work—not shader warm-up—as the bottlenec
   runtime; the remaining `src/lib` modules are browser-independent domain code.
 - `static` contains files shipped byte-for-byte with the PWA.
 - `tests/unit`, `tests/artifact`, and `tests/e2e` contain Node, built-artifact,
-  and Playwright contracts. Generated browser artifacts go in the ignored
-  `tests/results` directory.
+  and Playwright contracts. The full renderer suite stays on Chromium while a
+  focused production boot/recovery suite also runs on desktop WebKit and iPhone.
+  Generated browser artifacts go in the ignored `tests/results` directory.
 - `scripts` contains build utilities, `docs` contains supporting architecture
   notes, and `.github` contains verification and deployment automation.
 

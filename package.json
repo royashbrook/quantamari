@@ -1,6 +1,6 @@
 {
   "name": "quarkatamari",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
     "dev": "vite dev",
-    "prebuild": "node scripts/clean.mjs",
+    "prebuild": "node scripts/clean.mjs && node scripts/build-rescue.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

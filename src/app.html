@@ -9,8 +9,93 @@
     <link rel="apple-touch-icon" href="%sveltekit.assets%/icon-192.png" />
     <link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
     %sveltekit.head%
+    <style>
+      #boot-rescue {
+        position: fixed;
+        z-index: 10000;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: #07041d;
+        color: #fffaf0;
+        font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+      }
+      #boot-rescue[hidden] {
+        display: none;
+      }
+      #boot-rescue > div {
+        width: min(430px, 100%);
+        padding: 24px;
+        border: 3px solid #ffe170;
+        border-radius: 24px 19px 27px 21px;
+        background: #24123d;
+        box-shadow: 0 8px 0 #4b2868;
+      }
+      #boot-rescue h1 {
+        margin: 0 0 10px;
+        font-size: 31px;
+      }
+      #boot-rescue p {
+        color: #d9cfea;
+        line-height: 1.5;
+      }
+      #boot-rescue a,
+      #boot-rescue button {
+        display: inline-block;
+        min-height: 44px;
+        margin: 8px 8px 0 0;
+        padding: 11px 15px;
+        border: 2px solid #ffe170;
+        border-radius: 13px;
+        background: #ffe170;
+        color: #34204e;
+        cursor: pointer;
+        font: 800 13px inherit;
+        text-decoration: none;
+      }
+      #boot-rescue button {
+        background: transparent;
+        color: #fffaf0;
+      }
+    </style>
   </head>
   <body data-sveltekit-preload-data="hover">
     <div style="display: contents">%sveltekit.body%</div>
+    <aside id="boot-rescue" hidden aria-live="assertive">
+      <div>
+        <h1>The game did not wake up.</h1>
+        <p>
+          Your journey is stored separately from the app files and nothing here
+          has touched it. The rescue hatch can copy it out or repair only this
+          installed game.
+        </p>
+        <a href="./rescue.html" rel="external">Open save rescue</a>
+        <button id="boot-reload" type="button">Try again</button>
+      </div>
+    </aside>
+    <script>
+      (function () {
+        var ready = false;
+        var panel = document.getElementById("boot-rescue");
+        var show = function () {
+          if (!ready && panel) panel.hidden = false;
+        };
+        window.addEventListener("quarkatamari:ready", function () {
+          ready = true;
+          if (panel) panel.hidden = true;
+        });
+        window.addEventListener("error", function () {
+          window.setTimeout(show, 1500);
+        }, true);
+        window.addEventListener("unhandledrejection", function () {
+          window.setTimeout(show, 1500);
+        });
+        window.setTimeout(show, 9000);
+        document.getElementById("boot-reload")?.addEventListener("click", function () {
+          location.reload();
+        });
+      })();
+    </script>
   </body>
 </html>

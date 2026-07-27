@@ -23,12 +23,23 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testMatch: ["**/game.spec.ts", "**/recovery.spec.ts"],
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: {
           args: ["--use-gl=angle", "--use-angle=swiftshader"],
         },
       },
+    },
+    {
+      name: "webkit",
+      testMatch: "**/recovery.spec.ts",
+      use: devices["Desktop Safari"],
+    },
+    {
+      name: "iphone",
+      testMatch: "**/recovery.spec.ts",
+      use: devices["iPhone 13"],
     },
   ],
 });

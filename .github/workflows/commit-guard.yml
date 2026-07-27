@@ -1,0 +1,42 @@
+name: commit messages reference an issue
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: every new commit names an issue
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="origin/${{ github.base_ref }}..HEAD"
+          elif [ -n "${{ github.event.before }}" ] && git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null; then
+            range="${{ github.event.before }}..${{ github.sha }}"
+          else
+            range="-1"
+          fi
+
+          bad=0
+          for sha in $(git log --no-merges --pretty=format:%H $range); do
+            msg=$(git log -1 --pretty=format:%B "$sha")
+            case "$msg" in
+              "Revert "*|fixup!*|squash!*) continue ;;
+            esac
+            if ! printf '%s' "$msg" | grep -Eq '#[1-9][0-9]*'; then
+              echo "::error::$(git log -1 --pretty=format:'%h %s' "$sha") has no issue reference"
+              bad=1
+            fi
+          done
+          if [ "$bad" = "1" ]; then
+            echo "Every commit must reference an issue, such as Closes #24."
+            exit 1
+          fi

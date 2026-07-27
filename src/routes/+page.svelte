@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { version as buildVersion } from "$app/environment";
+  import {
+    browser,
+    dev,
+    version as buildVersion,
+  } from "$app/environment";
+  import { base } from "$app/paths";
   import { onDestroy, onMount, tick } from "svelte";
   import { version as appVersion } from "../../package.json";
   import FieldGuide from "$lib/components/FieldGuide.svelte";
@@ -140,6 +145,7 @@
   let gameMode = $state<GameMode>("journey");
   let collection = $state<CollectionEntry[]>([]);
   let legacyUnitemizedCount = $state(0);
+  let updateReady = $state(false);
   let toast = $state(
     "Current-scale things stick. Older specks dissolve quietly into mass.",
   );
@@ -163,6 +169,7 @@
     triangles: 0,
   });
   const saveStatus = { errorReported: false };
+  let waitingWorker: ServiceWorker | null = null;
   let resetInProgress = false;
   let resetGeneration: string | null = null;
 
@@ -552,6 +559,84 @@
       }
     }
   }
+
+  function applyUpdate() {
+    const worker = waitingWorker;
+    if (!worker) return;
+    persistSnapshot();
+    updateReady = false;
+    toast = "Saving this universe and opening the new build…";
+    const reloadWhenActive = () => {
+      if (worker.state !== "activated") return;
+      worker.removeEventListener("statechange", reloadWhenActive);
+      window.location.reload();
+    };
+    worker.addEventListener("statechange", reloadWhenActive);
+    worker.postMessage({ type: "ACTIVATE_UPDATE" });
+  }
+
+  onMount(() => {
+    document.documentElement.dataset.quarkatamariReady = "true";
+    window.dispatchEvent(new Event("quarkatamari:ready"));
+  });
+
+  onMount(() => {
+    if (
+      !browser ||
+      dev ||
+      !("serviceWorker" in navigator) ||
+      !["https:", "http:"].includes(location.protocol)
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    let registration: ServiceWorkerRegistration | null = null;
+    let trackedWorker: ServiceWorker | null = null;
+    const markReady = (worker: ServiceWorker) => {
+      if (
+        disposed ||
+        worker.state !== "installed" ||
+        !navigator.serviceWorker.controller
+      ) {
+        return;
+      }
+      waitingWorker = registration?.waiting ?? worker;
+      updateReady = true;
+      toast = "A new build is ready. Open the menu when you want to update.";
+    };
+    const onWorkerState = () => {
+      if (trackedWorker) markReady(trackedWorker);
+    };
+    const trackInstallingWorker = () => {
+      trackedWorker?.removeEventListener("statechange", onWorkerState);
+      trackedWorker = registration?.installing ?? null;
+      trackedWorker?.addEventListener("statechange", onWorkerState);
+    };
+    const onUpdateFound = () => trackInstallingWorker();
+
+    void navigator.serviceWorker
+      .register(`${base}/service-worker.js`, { type: "module" })
+      .then((nextRegistration) => {
+        if (disposed) return;
+        registration = nextRegistration;
+        registration.addEventListener("updatefound", onUpdateFound);
+        if (registration.waiting && navigator.serviceWorker.controller) {
+          waitingWorker = registration.waiting;
+          updateReady = true;
+        }
+        trackInstallingWorker();
+      })
+      .catch((error) => {
+        console.warn("Quarkatamari service worker registration failed", error);
+      });
+
+    return () => {
+      disposed = true;
+      registration?.removeEventListener("updatefound", onUpdateFound);
+      trackedWorker?.removeEventListener("statechange", onWorkerState);
+    };
+  });
 
   onMount(() => {
     try {
@@ -1058,11 +1143,13 @@
       {sound}
       {appVersion}
       {buildLabel}
+      {updateReady}
       onClose={closeMenu}
       onOpenGuide={openGuideFromMenu}
       onOpenAtlas={openAtlasFromMenu}
       onToggleSound={toggleSound}
       onReset={resetProgress}
+      onApplyUpdate={applyUpdate}
     />
 
     {#if showAtlas}

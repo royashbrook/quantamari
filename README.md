@@ -9,9 +9,9 @@ The current release contains 34 scale layers and 220 collectible identities.
 The default Long Game pace is forty times the Learning Tour pace; switching
 pace never rewrites earned progress. Every find is saved by stable ID in an
 animated, searchable Field Guide. Scale Lab can preview any layer without
-changing the journey. Escape opens a pause menu with sound, reset, About, and
-the exact running build. The shipped game is a static, offline-capable PWA; all
-gameplay and persistence stay in the browser.
+changing the journey. Escape opens a pause menu with sound, reset, About, save
+rescue, and the exact running build. The shipped game is a static,
+offline-capable PWA; all gameplay and persistence stay in the browser.
 
 ## Gameplay contract
 
@@ -142,7 +142,7 @@ running the end-to-end suite.
 
 ```bash
 npm ci
-npx playwright install chromium
+npx playwright install chromium webkit
 npm run dev
 npm run check
 npm test
@@ -171,6 +171,7 @@ Important code:
 - `src/lib/components/FieldGuide.svelte` — animated collection history
 - `src/lib/components/GameMenu.svelte` — pause, About, sound, and safe reset
 - `src/service-worker.ts` — generated, subpath-safe offline runtime
+- `src/rescue.template.html` — dependency-free installed-save recovery hatch
 - `tests/unit`, `tests/artifact`, and `tests/e2e` — Node, build, and browser
   contracts
 
@@ -193,4 +194,7 @@ rewrite in production. The v2.1 performance work is tracked in
 pause, reset, and About menu tracked in
 [issue #20](https://github.com/royashbrook/quarkatamari/issues/20), and v2.2.1
 adopts Roy's shared maker mark under
-[issue #22](https://github.com/royashbrook/quarkatamari/issues/22).
+[issue #22](https://github.com/royashbrook/quarkatamari/issues/22). v2.2.2 adds
+the standalone rescue hatch, legacy-worker cleanup, safe update handoff,
+production sourcemaps, and WebKit recovery coverage under
+[issue #24](https://github.com/royashbrook/quarkatamari/issues/24).
