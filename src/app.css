@@ -116,6 +116,16 @@ input:focus-visible {
   opacity: 0;
 }
 
+.awaiting-start .topbar {
+  visibility: visible;
+  opacity: 1;
+}
+
+.awaiting-start .topbar .actions {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .awaiting-start .three-canvas {
   opacity: 0.48;
 }
@@ -176,6 +186,13 @@ input:focus-visible {
   font: 650 9px var(--font-geist-mono), monospace;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.brand .version-stamp {
+  margin-top: 3px;
+  color: rgba(255, 250, 240, 0.66);
+  font-size: 8px;
+  letter-spacing: 0.08em;
 }
 
 .actions {
@@ -1041,8 +1058,13 @@ kbd {
     font-size: 12px;
   }
 
-  .brand small {
+  .brand .tagline {
     display: none;
+  }
+
+  .brand .version-stamp {
+    display: block;
+    margin-top: 2px;
   }
 
   .actions button:not(.sound) {

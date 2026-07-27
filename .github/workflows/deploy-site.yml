@@ -62,4 +62,6 @@ jobs:
           test -f dist/quarkatamari/index.html
           grep -q 'data-release="v2-sveltekit"' dist/quarkatamari/index.html
           grep -q "name=\"app-commit\" content=\"$QUARKATAMARI_REF\"" dist/quarkatamari/index.html
+          grep -q 'data-testid="build-stamp"' dist/quarkatamari/index.html
+          grep -q "· ${QUARKATAMARI_REF:0:7}<" dist/quarkatamari/index.html
           npx wrangler deploy

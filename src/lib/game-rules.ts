@@ -338,7 +338,7 @@ export function qualityTierForFps(
 ): QualityTier {
   if (current === "high") return framesPerSecond < 44 ? "balanced" : "high";
   if (current === "balanced") {
-    if (framesPerSecond < 31) return "battery";
+    if (framesPerSecond < 24) return "battery";
     if (allowUpgrade && framesPerSecond > 56) return "high";
     return "balanced";
   }
@@ -357,7 +357,7 @@ export function lowPickupBudget(viewportWidth: number, tier: QualityTier) {
 }
 
 export function pixelRatioCap(mobile: boolean, tier: QualityTier) {
-  if (tier === "high") return mobile ? 1.75 : 2;
+  if (tier === "high") return mobile ? 1.6 : 1.75;
   if (tier === "balanced") return mobile ? 1.4 : 1.6;
   return mobile ? 1.1 : 1.25;
 }

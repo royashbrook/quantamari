@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { version as buildVersion } from "$app/environment";
   import { onDestroy, onMount, tick } from "svelte";
+  import { version as appVersion } from "../../package.json";
   import FieldGuide from "$lib/components/FieldGuide.svelte";
   import {
     type Curio,
@@ -68,6 +70,12 @@
     galaxy: { wave: "sine", base: 210, glide: 0.72, interval: 1.5, decay: 0.32 },
     universe: { wave: "triangle", base: 160, glide: 2.1, interval: 2, decay: 0.35 },
   };
+  const buildHash = buildVersion.match(
+    /(?:^|g)([0-9a-f]{7,40})(?:-dirty)?$/,
+  )?.[1];
+  const buildLabel = `${buildHash?.slice(0, 7) ?? buildVersion}${
+    buildVersion.endsWith("-dirty") ? "+dirty" : ""
+  }`;
 
   const showAtlasRef: MutableRef<boolean> = { current: false };
   const showGuideRef: MutableRef<boolean> = { current: false };
@@ -699,7 +707,14 @@
         <div class="brand-ball" aria-hidden="true">✦</div>
         <div>
           <b>QUARKATAMARI</b>
-          <small>the scale of everything</small>
+          <small class="tagline">the scale of everything</small>
+          <small
+            class="version-stamp"
+            data-testid="build-stamp"
+            title={`Quarkatamari v${appVersion}, build ${buildVersion}`}
+          >
+            v{appVersion} · {buildLabel}
+          </small>
         </div>
       </div>
       <div class="actions">

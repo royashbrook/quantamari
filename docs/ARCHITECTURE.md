@@ -34,16 +34,18 @@ three entries per animation frame, checking the active quality tier's 2 ms work
 budget between promotions while always permitting one so population cannot
 stall. A first-time visual-template build ends that frame's promotion work.
 Cached template bounds remove per-spawn scene traversals. New objects bloom for
-800 ms and remain non-colliding until fully visible; replenishments enter
-through an outer ring.
+800 ms and remain non-colliding until fully visible. Only the first population
+uses the inner field; replenishments and post-transition populations enter
+through an outer ring. Distant pickups shrink out before their resources are
+released.
 
 Battery quality treats `maxDrawCalls` as a hard weighted budget. Each cached
 collectible template records its render-leaf cost, while the live scene is
 counted without pickup roots. Rich pickups are admitted only while their cost
 fits; the remainder share one instanced far-field draw. Transmission is disabled
 in battery mode so physical materials cannot add a hidden extra pass.
-Automatic quality can downgrade within a rendered world but cannot promote
-again until a semantic-world or viewport change. A downgrade rebuilds world
+Automatic quality is downgrade-only for the lifetime of a renderer. Semantic
+world and viewport changes do not unlock promotion. A downgrade rebuilds world
 instances once at the lower authored density; excess peripheral pickups shrink
 out individually until the lower population is reached. The promotion lock
 prevents either representation from being rebuilt in a five-second loop.
@@ -67,6 +69,12 @@ submission, then attach rolling p50/p95/max summaries. The complex baseline uses
 Scale Lab layer 20 and waits for at least 120 frames. Absolute timing is
 diagnostic because CI uses SwiftShader; real-device traces remain the authority
 for FPS.
+
+The existing quality budgets also pace active frame submission to 60 or 30 fps,
+with a 30 fps idle ceiling. An absolute deadline preserves those
+keeps common 60/120 Hz displays aligned and avoids cumulative drift or
+catch-up bursts on other refresh rates after a
+suspended tab.
 
 Environment and substrate replacement remain atomic. In the measured complex
 baseline their rebuilds stayed below 4 ms and 3 ms respectively, while the large

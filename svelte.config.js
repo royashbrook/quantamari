@@ -3,7 +3,9 @@ import { execFileSync } from "node:child_process";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 function sourceVersion() {
-  if (process.env.APP_VERSION) return process.env.APP_VERSION;
+  const explicitVersion =
+    process.env.QUARKATAMARI_REF ?? process.env.APP_VERSION;
+  if (explicitVersion) return explicitVersion;
   try {
     return execFileSync(
       "git",

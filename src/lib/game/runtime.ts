@@ -51,6 +51,7 @@ import {
   type MashRecordV4,
 } from "../save-data";
 import {
+  advanceFrameDeadline,
   createPhaseRecorder,
   type RuntimePhase,
 } from "./runtime-performance";
@@ -179,6 +180,7 @@ const MAX_PICKUP_PROMOTIONS_PER_FRAME = 3;
 const PICKUP_ENTRANCE_MS = 800;
 const PICKUP_RETIRE_MS = 600;
 const PICKUP_COLLISION_SCALE = 0.55;
+const PICKUP_RETIRE_DISTANCE = 54;
 const MAX_POP_BURSTS = 12;
 
 const pickupEntranceScale = (bornAt: number, now: number) => {
@@ -333,12 +335,7 @@ export function mountGame(
     debugWindow.__QUARKATAMARI_FORCED_QUALITY__ ?? null;
   let qualityTier: QualityTier =
     forcedQualityTier ?? (compactGpu ? "balanced" : "high");
-  let qualityUpgradeLocked = false;
-  const qualityRank: Record<QualityTier, number> = {
-    battery: 0,
-    balanced: 1,
-    high: 2,
-  };
+  const qualityUpgradeLocked = true;
   let richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
   const reducedWorldDetail = () =>
     compactGpu || qualityTier !== "high";
@@ -2146,7 +2143,6 @@ export function mountGame(
   const applyEraTheme = (index: number, announce = false) => {
     activeIndex = index;
     activeEra = ERAS[index];
-    qualityUpgradeLocked = false;
     if (labEra === null && debugEraOverride === null) game.era = index;
     early =
       activeEra.realm === "prephysical" || activeEra.realm === "particle";
@@ -4089,6 +4085,16 @@ export function mountGame(
     refreshMashProxy();
   };
 
+  const pickupSpawnProjection = new THREE.Vector3();
+  const pickupSpawnPointVisible = (x: number, y: number, z: number) => {
+    pickupSpawnProjection.set(x, y, z).project(camera);
+    return (
+      pickupSpawnProjection.z >= -1 &&
+      pickupSpawnProjection.z <= 1 &&
+      Math.abs(pickupSpawnProjection.x) <= 1.15 &&
+      Math.abs(pickupSpawnProjection.y) <= 1.15
+    );
+  };
   const spawnPickup = (
     seed: number,
     bornAt: number,
@@ -4167,6 +4173,7 @@ export function mountGame(
     let spawnX = game.x;
     let spawnZ = game.z;
     let bestClearance = Number.NEGATIVE_INFINITY;
+    let bestOffscreen = false;
     const attempts = big ? 36 : 18;
     const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
     const chunkSize = worldChunkSize(activeWorldKind);
@@ -4233,12 +4240,23 @@ export function mountGame(
         sceneryClearanceAt(candidateX, candidateZ),
         corridorClearance,
       );
-      if (clearance > bestClearance) {
+      const candidateOffscreen =
+        outerRing &&
+        !pickupSpawnPointVisible(
+          candidateX,
+          Math.max(0.22, size * 0.48),
+          candidateZ,
+        );
+      if (
+        (candidateOffscreen && clearance >= 0 && !bestOffscreen) ||
+        (candidateOffscreen === bestOffscreen && clearance > bestClearance)
+      ) {
         bestClearance = clearance;
+        bestOffscreen = candidateOffscreen;
         spawnX = candidateX;
         spawnZ = candidateZ;
       }
-      if (clearance >= 0) break;
+      if (clearance >= 0 && (!outerRing || candidateOffscreen)) break;
     }
     if (bestClearance < 0) {
       disposeVisual(visual);
@@ -4289,6 +4307,7 @@ export function mountGame(
   );
   let initialQueuedPickups = 0;
   let populationQueued = false;
+  let needsInnerSpawnRing = true;
   let totalSpawned = 0;
   let spawnedLastFrame = 0;
   let maxSpawnedPerFrame = 0;
@@ -4304,21 +4323,15 @@ export function mountGame(
 
   const reconcilePickupQueue = () => {
     const desiredPickupCount = activePickupBudget();
-    pickups = pickups.filter((pickup) => {
-      const distance = Math.hypot(
-        pickup.root.position.x - game.x,
-        pickup.root.position.z - game.z,
-      );
-      if (distance < 54) return true;
-      removePickup(pickup);
-      return false;
-    });
     pickupSpawnQueue.reconcile(
       activeScalePickupCount(),
       desiredPickupCount,
     );
     if (!populationQueued && pickupSpawnQueue.pending > 0) {
-      initialQueuedPickups = pickupSpawnQueue.pending;
+      initialQueuedPickups = needsInnerSpawnRing
+        ? pickupSpawnQueue.pending
+        : 0;
+      needsInnerSpawnRing = false;
       populationQueued = true;
     }
     initialQueuedPickups = Math.min(
@@ -4326,21 +4339,18 @@ export function mountGame(
       pickupSpawnQueue.pending,
     );
   };
-  const retireOneExcessPickup = (now: number) => {
-    if (activeScalePickupCount() <= activePickupBudget()) return;
+  const retireOnePeripheralPickup = (now: number) => {
+    const overBudget = activeScalePickupCount() > activePickupBudget();
     let farthestIndex = -1;
     let farthestDistance = Number.NEGATIVE_INFINITY;
     pickups.forEach((pickup, index) => {
-      if (
-        pickup.sourceEra < activeIndex ||
-        pickup.retireStartedAt !== null
-      ) {
-        return;
-      }
+      if (pickup.retireStartedAt !== null) return;
       const distance = Math.hypot(
         pickup.root.position.x - game.x,
         pickup.root.position.z - game.z,
       );
+      const distant = distance >= PICKUP_RETIRE_DISTANCE;
+      if (!distant && (!overBudget || pickup.sourceEra < activeIndex)) return;
       if (distance > farthestDistance) {
         farthestIndex = index;
         farthestDistance = distance;
@@ -4352,6 +4362,7 @@ export function mountGame(
   const drainPickupQueue = (now: number) => {
     spawnedLastFrame = 0;
     if (pickupSpawnQueue.pending === 0) return;
+    camera.updateMatrixWorld();
     const startedAt = phaseStart();
     const { maxChunkWorkMs } = worldPerformanceBudget(qualityTier);
     pickupSpawnQueue.drain(
@@ -4619,7 +4630,6 @@ export function mountGame(
   let width = 0;
   let height = 0;
   const resize = () => {
-    qualityUpgradeLocked = false;
     const box = mount.getBoundingClientRect();
     width = box.width;
     height = box.height;
@@ -4800,6 +4810,8 @@ export function mountGame(
   }
 
   let last = performance.now();
+  let nextFrameDeadline = last;
+  let framePacingIdle = true;
   let frame = 0;
   let hudClock = 0;
   let rollRadiusClock = 0;
@@ -4907,16 +4919,56 @@ export function mountGame(
     baseSceneDrawCallsDirty = false;
   };
   const animate = (now: number) => {
-    const frameStartedAt = phaseStart();
-    const frameInterval = now - last;
-    const dt = Math.min(0.033, frameInterval / 1000);
-    last = now;
-    if (document.hidden || modalOpenRef.current) {
+    if (
+      document.hidden ||
+      modalOpenRef.current ||
+      now - last > 1_000
+    ) {
+      last = now;
+      nextFrameDeadline = now;
       performanceWindowStarted = now;
       performanceFrames = 0;
       frame = requestAnimationFrame(animate);
       return;
     }
+    const keys = keysRef.current;
+    const controlsActive =
+      joystickRef.current.active ||
+      keys.w ||
+      keys.a ||
+      keys.s ||
+      keys.d ||
+      keys.arrowup ||
+      keys.arrowdown ||
+      keys.arrowleft ||
+      keys.arrowright ||
+      keys[" "];
+    const nextFramePacingIdle =
+      scaleTransitionStarted < 0 &&
+      !pendingLayerAdvance &&
+      !controlsActive &&
+      Math.hypot(game.vx, game.vz) < 0.04;
+    if (nextFramePacingIdle !== framePacingIdle) {
+      framePacingIdle = nextFramePacingIdle;
+      nextFrameDeadline = now;
+      performanceWindowStarted = now;
+      performanceFrames = 0;
+    }
+    const tierTargetFps = worldPerformanceBudget(qualityTier).targetFps;
+    const advancedDeadline = advanceFrameDeadline(
+      now,
+      nextFrameDeadline,
+      framePacingIdle ? Math.min(30, tierTargetFps) : tierTargetFps,
+    );
+    if (advancedDeadline === null) {
+      frame = requestAnimationFrame(animate);
+      return;
+    }
+    nextFrameDeadline = advancedDeadline;
+    const frameStartedAt = phaseStart();
+    const frameInterval = now - last;
+    const dt = Math.min(0.05, frameInterval / 1000);
+    last = now;
     phaseRecorder?.record("frame-interval", frameInterval);
     const simulationStartedAt = phaseStart();
     performanceFrames += 1;
@@ -4927,9 +4979,12 @@ export function mountGame(
       const overRenderBudget =
         renderer.info.render.calls > performanceBudget.maxDrawCalls ||
         renderer.info.render.triangles > performanceBudget.maxTriangles;
-      const budgetAdjustedFps = overRenderBudget
-        ? Math.min(measuredFps, qualityTier === "high" ? 40 : 28)
+      const capacityFps = framePacingIdle
+        ? Math.max(measuredFps, performanceBudget.targetFps)
         : measuredFps;
+      const budgetAdjustedFps = overRenderBudget
+        ? Math.min(capacityFps, qualityTier === "high" ? 40 : 20)
+        : capacityFps;
       const nextQualityTier =
         forcedQualityTier ??
         qualityTierForFps(
@@ -4938,11 +4993,6 @@ export function mountGame(
           !qualityUpgradeLocked,
         );
       if (nextQualityTier !== qualityTier) {
-        const downgraded =
-          qualityRank[nextQualityTier] < qualityRank[qualityTier];
-        if (downgraded) {
-          qualityUpgradeLocked = true;
-        }
         qualityTier = nextQualityTier;
         richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
         renderer.setPixelRatio(
@@ -4958,16 +5008,14 @@ export function mountGame(
         visualTemplates.forEach((template) => {
           applyPhysicalMaterialQuality(template.root);
         });
-        if (downgraded) {
-          const qualityViewScale = semanticViewScale(
-            activeIndex,
-            game.lens,
-            ERAS.length,
-          );
-          rebuildEnvironment(activeIndex);
-          buildSubstrate(qualityViewScale);
-          applyGroundScaleTexture(qualityViewScale);
-        }
+        const qualityViewScale = semanticViewScale(
+          activeIndex,
+          game.lens,
+          ERAS.length,
+        );
+        rebuildEnvironment(activeIndex);
+        buildSubstrate(qualityViewScale);
+        applyGroundScaleTexture(qualityViewScale);
         reconcilePickupQueue();
         baseSceneDrawCallsDirty = true;
       }
@@ -4976,7 +5024,7 @@ export function mountGame(
     }
     pickupRetireClock += dt;
     if (pickupRetireClock >= 0.18) {
-      retireOneExcessPickup(now);
+      retireOnePeripheralPickup(now);
       pickupRetireClock = 0;
     }
     pickups = pickups.filter((pickup) => {
@@ -5076,7 +5124,12 @@ export function mountGame(
       rollGroup.rotation.z -= (game.vx * dt) / Math.max(0.5, game.radius);
 
       for (const pickup of pickups) {
-        if (pickup.sourceEra < activeIndex) continue;
+        if (
+          pickup.sourceEra < activeIndex ||
+          pickup.retireStartedAt !== null
+        ) {
+          continue;
+        }
         const entranceScale = pickupLifecycleScale(pickup, now);
         if (entranceScale < PICKUP_COLLISION_SCALE) continue;
         const collisionRadius = pickup.visualRadius * entranceScale;
