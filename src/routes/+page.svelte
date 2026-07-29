@@ -482,7 +482,7 @@
     const checkForUpdate = () => {
       if (disposed || !registration) return;
       void registration.update().catch((error) => {
-        console.warn("Quarkatamari update check failed", error);
+        console.warn("Quantamari update check failed", error);
       });
     };
     const checkWhenVisible = () => {
@@ -517,7 +517,7 @@
         checkForUpdate();
       })
       .catch((error) => {
-        console.warn("Quarkatamari service worker registration failed", error);
+        console.warn("Quantamari service worker registration failed", error);
       });
 
     return () => {
@@ -723,7 +723,7 @@
         if (cancelled) return;
         gameRef.current.running = false;
         toast = "The game code could not start. Reload to try again.";
-        console.error("Quarkatamari runtime boot failed", error);
+        console.error("Quantamari runtime boot failed", error);
       });
     return () => {
       cancelled = true;
@@ -804,12 +804,12 @@
 </script>
 
 <svelte:head>
-  <title>Quarkatamari — Roll up the scale of everything</title>
+  <title>Quantamari — Roll up the scale of everything</title>
   <meta
     name="description"
     content="A browser-only rolling game from the theory below known physics to the fiction beyond the observable universe."
   />
-  <meta name="application-name" content="Quarkatamari" />
+  <meta name="application-name" content="Quantamari" />
 </svelte:head>
 
 <main class="shell" data-release="v2-sveltekit">
@@ -826,18 +826,18 @@
     onpointercancel={pointerUp}
     onwheel={wheelLens}
     role="group"
-    aria-label="Quarkatamari game world and controls"
+    aria-label="Quantamari game world and controls"
   >
     <header class="topbar hud">
       <div class="brand">
         <div class="brand-ball" aria-hidden="true">✦</div>
         <div>
-          <b>QUARKATAMARI</b>
+          <b>QUANTAMARI</b>
           <small class="tagline">the scale of everything</small>
           <small
             class="version-stamp"
             data-testid="build-stamp"
-            title={`Quarkatamari v${appVersion}, build ${buildVersion}`}
+            title={`Quantamari v${appVersion}, build ${buildVersion}`}
           >
             v{appVersion} · {buildLabel}
           </small>
@@ -881,7 +881,7 @@
       >
         <span class="update-banner-mark" aria-hidden="true">↻</span>
         <span class="update-banner-copy">
-          <b>{updateApplying ? "Updating Quarkatamari…" : "Update ready"}</b>
+          <b>{updateApplying ? "Updating Quantamari…" : "Update ready"}</b>
           <small>
             {updateApplying
               ? "Your universe is saved. Loading the new build now."

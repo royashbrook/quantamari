@@ -1,6 +1,6 @@
 # Performance and scale budget
 
-Quarkatamari stays browser-only. Rust/WASM is not currently justified: source
+Quantamari stays browser-only. Rust/WASM is not currently justified: source
 review and the in-game renderer counters identify render objects, draw calls,
 and GPU detail as the main scaling risks, while the physics loop remains small.
 

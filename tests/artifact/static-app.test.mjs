@@ -59,7 +59,7 @@ test("build is a standalone, subpath-safe static PWA", async () => {
   const buildLabel = `${buildHash?.slice(0, 7) ?? buildMetadata.version}${
     buildMetadata.version.endsWith("-dirty") ? "+dirty" : ""
   }`;
-  assert.match(html, /<title>Quarkatamari/);
+  assert.match(html, /<title>Quantamari/);
   assert.match(html, /data-release="v2-sveltekit"/);
   assert.match(html, /data-testid="build-stamp"/);
   assert.ok(html.includes(`v${packageMetadata.version} · ${buildLabel}`));

@@ -1,6 +1,6 @@
-# Quarkatamari
+# Quantamari
 
-Quarkatamari is an untimed, browser-based 3D rolling game about the scale of
+Quantamari is an untimed, browser-based 3D rolling game about the scale of
 everything. Begin with a deliberately speculative visualization near the
 edge of known physics, roll through particles, atoms, cells, dust, rooms,
 planets, and galaxies, then continue forever into a clearly fictional beyond.
@@ -50,13 +50,13 @@ offline-capable PWA; all gameplay and persistence stay in the browser.
   lazy-loaded. See
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - The native game menu pauses simulation without changing journey state. Reset
-  requires confirmation and removes only Quarkatamari's browser save keys.
+  requires confirmation and removes only Quantamari's browser save keys.
 
 ## Science contract
 
 Last reviewed: 2026-07-26.
 
-Quarkatamari is an educational scale journey wrapped in an impossible rolling
+Quantamari is an educational scale journey wrapped in an impossible rolling
 toy. It aims for scientific honesty without pretending the central mechanic is
 literal physics. The scientifically anchored path spans roughly 62 orders of
 magnitude, so scale changes are logarithmic.

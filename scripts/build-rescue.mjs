@@ -15,7 +15,7 @@ const result = await build({
     lib: {
       entry: new URL("../src/rescue-entry.ts", import.meta.url).pathname,
       formats: ["iife"],
-      name: "QuarkatamariRescue",
+      name: "QuantamariRescue",
     },
   },
 });

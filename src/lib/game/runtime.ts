@@ -4289,7 +4289,7 @@ export function mountGame(
       if (disposed) return;
       gameRef.current.running = false;
       setToast("The 3D world could not start. Reload to try again.");
-      console.error("Quarkatamari 3D boot failed", error);
+      console.error("Quantamari 3D boot failed", error);
     });
   return () => {
     disposed = true;

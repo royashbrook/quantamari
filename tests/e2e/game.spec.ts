@@ -250,7 +250,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v2\.4\.0 · /);
+  await expect(buildStamp).toContainText(/^v3\.0\.0 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -270,9 +270,9 @@ test("boots the static game at its production subpath", async ({ page }) => {
     "rel",
     "external",
   );
-  await menu.getByRole("button", { name: "About Quarkatamari" }).click();
+  await menu.getByRole("button", { name: "About Quantamari" }).click();
   await expect(
-    menu.getByRole("heading", { name: "About Quarkatamari" }),
+    menu.getByRole("heading", { name: "About Quantamari" }),
   ).toBeVisible();
   await expect(menu.getByTestId("about-build")).toHaveText(
     (await buildStamp.textContent())?.trim() ?? "",
@@ -292,7 +292,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
   );
   await page.keyboard.press("Escape");
   await expect(
-    menu.getByRole("heading", { name: "About Quarkatamari" }),
+    menu.getByRole("heading", { name: "About Quantamari" }),
   ).toBeHidden();
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
@@ -505,7 +505,7 @@ test("game menu freezes the world and Escape resumes it", async ({ page }) => {
   await expect(menu).toBeHidden();
 });
 
-test("reset clears Quarkatamari progress in every open tab", async ({
+test("reset clears Quantamari progress in every open tab", async ({
   page,
   context,
 }) => {
@@ -1549,7 +1549,7 @@ test("a waiting update stays visible outside the menu until activated", async ({
   expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(390);
 
   await updateButton.click();
-  await expect(banner).toContainText("Updating Quarkatamari");
+  await expect(banner).toContainText("Updating Quantamari");
   await expect(banner.getByRole("button", { name: "Loading…" })).toBeDisabled();
   await expect
     .poll(() =>
