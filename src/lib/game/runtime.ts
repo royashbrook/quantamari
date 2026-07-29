@@ -338,7 +338,14 @@ export function mountGame(
       phaseRecorder.record(phase, readPerformanceClock() - startedAt);
     }
   };
-  const compactGpu = window.innerWidth <= 860;
+  // A coarse primary pointer marks phones and tablets regardless of
+  // orientation — a landscape iPhone Pro Max is 932 CSS px wide and would
+  // otherwise be classified as a desktop GPU.
+  const coarsePointer =
+    window.matchMedia?.("(pointer: coarse)").matches === true;
+  const isCompactView = (viewportWidth: number) =>
+    coarsePointer || viewportWidth <= 860;
+  const compactGpu = isCompactView(window.innerWidth);
   const forcedQualityTier =
     debugWindow.__QUARKATAMARI_FORCED_QUALITY__ ?? null;
   let qualityTier: QualityTier =
@@ -2807,7 +2814,7 @@ export function mountGame(
   };
 
   const activePickupBudget = () => {
-    const base = pickupBudget(width, qualityTier);
+    const base = pickupBudget(width, qualityTier, coarsePointer);
     if (activeIndex === 0) return Math.max(12, Math.floor(base * 0.1));
     if (activeIndex <= 3) return Math.floor(base * 0.55);
     return base;
@@ -2936,7 +2943,7 @@ export function mountGame(
     effectiveRollRadius = CORE_RADIUS_MIN;
     rollRadiusClock = 0.12;
     const nextFloatHeight = CORE_RADIUS_MIN * 0.94;
-    const mobileView = width <= 860;
+    const mobileView = isCompactView(width);
     playerRoot.position.set(game.x, nextFloatHeight, game.z);
     camera.position.set(
       game.x + game.vx * 0.24 * game.lens,
@@ -3152,13 +3159,13 @@ export function mountGame(
     renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio || 1,
-        pixelRatioCap(width <= 860, qualityTier),
+        pixelRatioCap(isCompactView(width), qualityTier),
       ),
     );
     renderer.setSize(width, height, false);
     camera.aspect = Math.max(0.2, width / height);
     camera.fov = boundedVerticalFov(
-      width <= 860 ? 56 : 46,
+      isCompactView(width) ? 56 : 46,
       camera.aspect,
     );
     camera.updateProjectionMatrix();
@@ -3167,6 +3174,26 @@ export function mountGame(
   resize();
   reconcilePickupQueue();
   window.addEventListener("resize", resize);
+  // iOS URL-bar collapse and the software keyboard resize the visual
+  // viewport without firing a window resize.
+  window.visualViewport?.addEventListener("resize", resize);
+
+  // iOS Safari reclaims WebGL contexts from backgrounded PWAs. Preventing
+  // the default on loss lets the browser restore the same context, and
+  // Three.js reinitializes its GL state on the restored context.
+  const onContextLost = (event: Event) => {
+    event.preventDefault();
+    persistSnapshot();
+  };
+  const onContextRestored = () => {
+    resize();
+    setToast("Graphics restarted. Your universe is safe.");
+  };
+  renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+  renderer.domElement.addEventListener(
+    "webglcontextrestored",
+    onContextRestored,
+  );
 
   const performanceDebug = phaseRecorder
     ? {
@@ -3527,7 +3554,7 @@ export function mountGame(
         renderer.setPixelRatio(
           Math.min(
             window.devicePixelRatio || 1,
-            pixelRatioCap(width <= 860, qualityTier),
+            pixelRatioCap(isCompactView(width), qualityTier),
           ),
         );
         renderer.setSize(width, height, false);
@@ -4171,7 +4198,7 @@ export function mountGame(
       popBurstMesh.instanceColor.needsUpdate = popBursts.length > 0;
     }
 
-    const mobileView = width <= 860;
+    const mobileView = isCompactView(width);
     desiredCamera.set(
       game.x + game.vx * 0.24 * game.lens,
       floatHeight +
@@ -4243,6 +4270,12 @@ export function mountGame(
   return () => {
     cancelAnimationFrame(frame);
     window.removeEventListener("resize", resize);
+    window.visualViewport?.removeEventListener("resize", resize);
+    renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
+    renderer.domElement.removeEventListener(
+      "webglcontextrestored",
+      onContextRestored,
+    );
     if (debugWindow.__QUARKATAMARI_PERFORMANCE__ === performanceDebug) {
       delete debugWindow.__QUARKATAMARI_PERFORMANCE__;
     }

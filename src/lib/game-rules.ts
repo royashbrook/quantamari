@@ -345,15 +345,26 @@ export function qualityTierForFps(
   return allowUpgrade && framesPerSecond > 43 ? "balanced" : "battery";
 }
 
-export function pickupBudget(viewportWidth: number, tier: QualityTier) {
-  const mobile = viewportWidth <= 860;
+export function pickupBudget(
+  viewportWidth: number,
+  tier: QualityTier,
+  compactDevice = false,
+) {
+  // compactDevice covers touch devices whose landscape width exceeds the
+  // 860px breakpoint (e.g. an iPhone Pro Max at 932 CSS px) but whose GPU
+  // budget is still a phone's.
+  const mobile = compactDevice || viewportWidth <= 860;
   if (tier === "high") return mobile ? 140 : 160;
   if (tier === "balanced") return mobile ? 120 : 130;
   return mobile ? 88 : 96;
 }
 
-export function lowPickupBudget(viewportWidth: number, tier: QualityTier) {
-  return Math.floor(pickupBudget(viewportWidth, tier) * 0.84);
+export function lowPickupBudget(
+  viewportWidth: number,
+  tier: QualityTier,
+  compactDevice = false,
+) {
+  return Math.floor(pickupBudget(viewportWidth, tier, compactDevice) * 0.84);
 }
 
 export function pixelRatioCap(mobile: boolean, tier: QualityTier) {

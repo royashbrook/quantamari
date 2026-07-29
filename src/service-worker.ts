@@ -34,11 +34,35 @@ worker.addEventListener("activate", (event) => {
   );
 });
 
+// A lie-fi connection should fall back to the cached shell instead of
+// hanging a PWA launch until the network fully fails.
+const NAVIGATION_TIMEOUT_MS = 3500;
+
+function fetchWithTimeout(request: Request, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(request, { signal: controller.signal }).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
 worker.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
   if (url.origin !== worker.location.origin) return;
+
+  // Cache writes happen after the response is returned so they never sit on
+  // the critical path of a page load.
+  const storeInCache = (
+    key: Request | string,
+    response: Response,
+  ) => {
+    const copy = response.clone();
+    event.waitUntil(
+      caches.open(CACHE).then((cache) => cache.put(key, copy)),
+    );
+  };
 
   event.respondWith(
     (async () => {
@@ -46,9 +70,12 @@ worker.addEventListener("fetch", (event) => {
 
       if (event.request.mode === "navigate") {
         try {
-          const response = await fetch(event.request);
+          const response = await fetchWithTimeout(
+            event.request,
+            NAVIGATION_TIMEOUT_MS,
+          );
           if (!response.ok) throw new Error(`Navigation failed: ${response.status}`);
-          await cache.put(event.request, response.clone());
+          storeInCache(event.request, response);
           return response;
         } catch {
           return (
@@ -67,7 +94,7 @@ worker.addEventListener("fetch", (event) => {
       try {
         const response = await fetch(event.request);
         if (response.ok) {
-          await cache.put(event.request, response.clone());
+          storeInCache(event.request, response);
         }
         return response;
       } catch {

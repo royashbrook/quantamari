@@ -200,6 +200,14 @@ test("adaptive quality uses hysteresis and meaningful mobile budgets", () => {
   assert.equal(pickupBudget(1200, "balanced"), 130);
   assert.equal(pickupBudget(1200, "battery"), 96);
   assert.equal(pickupBudget(390, "balanced"), 120);
+  // A landscape phone reports a desktop-class width but keeps phone budgets
+  // when the caller marks the device compact.
+  assert.equal(pickupBudget(932, "high", true), 140);
+  assert.equal(pickupBudget(932, "balanced", true), 120);
+  assert.equal(
+    lowPickupBudget(932, "balanced", true),
+    Math.floor(pickupBudget(932, "balanced", true) * 0.84),
+  );
   assert.ok(pickupBudget(1200, "high") > pickupBudget(390, "high"));
   assert.ok(pickupBudget(390, "high") > pickupBudget(390, "battery"));
   assert.equal(

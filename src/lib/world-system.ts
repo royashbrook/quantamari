@@ -342,7 +342,11 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
   balanced: {
-    targetFps: 30,
+    // Modern phones boot into balanced; they deserve 60fps submission while
+    // the draw/triangle budgets stay at the cooler balanced ceiling. Devices
+    // that cannot reach it simply render fewer frames — the battery demotion
+    // threshold (<24fps) is unchanged.
+    targetFps: 60,
     maxDrawCalls: 120,
     maxTriangles: 300_000,
     maxRichObjects: 48,
