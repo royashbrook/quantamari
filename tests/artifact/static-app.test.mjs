@@ -36,7 +36,10 @@ test("build is a standalone, subpath-safe static PWA", async () => {
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.start_url, "./");
   assert.equal(manifest.scope, "./");
-  assert.equal(manifest.id, "./");
+  // No explicit id: the spec resolves a relative id against the ORIGIN, not
+  // the manifest URL, so "./" would silently re-identify the installed PWA
+  // as https://host/ instead of the /quarkatamari/ start_url default.
+  assert.equal(manifest.id, undefined);
   assert.deepEqual(
     manifest.icons.map((icon) => icon.sizes),
     ["192x192", "512x512", "192x192", "512x512"],

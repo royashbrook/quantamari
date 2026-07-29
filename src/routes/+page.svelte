@@ -194,7 +194,9 @@
       worldPointers.clear();
       steeringPointerId = null;
       pinchDistance = null;
-      joystickVisual = { ...joystickVisual, active: false };
+      // Property write only: spreading joystickVisual here would make this
+      // effect read the state it writes and loop forever.
+      joystickVisual.active = false;
     }
   });
 
@@ -701,7 +703,7 @@
       worldPointers.clear();
       steeringPointerId = null;
       pinchDistance = null;
-      joystickVisual = { ...joystickVisual, active: false };
+      joystickVisual.active = false;
     };
     const onVisibilityChange = () => {
       if (document.hidden) clearInput();
@@ -786,13 +788,17 @@
       originX: x,
       originY: y,
     };
-    joystickVisual = { active: true, originX: x, originY: y, x, y };
+    joystickVisual.active = true;
+    joystickVisual.originX = x;
+    joystickVisual.originY = y;
+    joystickVisual.x = x;
+    joystickVisual.y = y;
   }
 
   function stopSteering() {
     steeringPointerId = null;
     joystickRef.current.active = false;
-    joystickVisual = { ...joystickVisual, active: false };
+    joystickVisual.active = false;
   }
 
   function pointerDown(event: PointerEvent) {
@@ -846,11 +852,8 @@
     if (event.pointerId !== steeringPointerId) return;
     joystickRef.current.x = event.clientX;
     joystickRef.current.y = event.clientY;
-    joystickVisual = {
-      ...joystickVisual,
-      x: event.clientX,
-      y: event.clientY,
-    };
+    joystickVisual.x = event.clientX;
+    joystickVisual.y = event.clientY;
   }
 
   function pointerUp(event: PointerEvent) {
@@ -900,9 +903,8 @@
 
   let era = $derived(ERAS[hud.era]);
   let journeyIndex = $derived(hud.journeyEra);
-  let nextEra = $derived(
-    ERAS[Math.min(journeyIndex + 1, ERAS.length - 1)],
-  );
+  // The final layer wraps to layer 0 as a new cycle, so "Next" names it.
+  let nextEra = $derived(ERAS[(journeyIndex + 1) % ERAS.length]);
   let scale = $derived(
     labEra === null
       ? formatEraScale(journeyIndex, hud.progress)
@@ -935,6 +937,7 @@
     class:started
     class:awaiting-start={!started}
     class:empty-origin={started && hud.era === 0}
+    class:lab-active={labEra !== null}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
@@ -943,7 +946,13 @@
     onpointercancel={pointerUp}
     onwheel={wheelLens}
     oncontextmenu={(event) => {
-      if (started && !modalOpenRef.current) event.preventDefault();
+      const target = event.target as HTMLElement;
+      const interactive = target.closest(
+        "button, a, input, select, textarea, .modal, dialog",
+      );
+      if (started && !modalOpenRef.current && !interactive) {
+        event.preventDefault();
+      }
     }}
     role="group"
     aria-label="Quantamari game world and controls"
@@ -1111,7 +1120,7 @@
 
     <div class="toast hud" role="status" aria-live="polite">
       <span>✦</span>
-      {toast}
+      <span class="toast-text">{toast}</span>
     </div>
 
     <div class="controls hud">

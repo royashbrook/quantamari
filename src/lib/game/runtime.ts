@@ -2964,8 +2964,12 @@ export function mountGame(
       ERAS.length,
     );
     const outgoingWorldScale = transitionWorldScale;
+    // Only the first arrival at the final layer announces the unlock; after a
+    // wrap the lens has been open the whole time (deepLensUnlocked cycles>0).
     const unlockedDeepLens =
-      nextIndex === ERAS.length - 1 && previousIndex < nextIndex;
+      nextIndex === ERAS.length - 1 &&
+      previousIndex < nextIndex &&
+      game.cycles === 0;
 
     game.era = nextIndex;
     game.progress = 0;

@@ -751,9 +751,32 @@ test.describe("real touch input", () => {
     test.setTimeout(60_000);
     await enablePerformanceDiagnostics(page);
     await begin(page);
-    await expect(page.locator(".surge-button")).toBeVisible();
+    const surge = page.locator(".surge-button");
+    await expect(surge).toBeVisible();
+    // The button carries the hud class; a regression to the .hud
+    // pointer-events:none rule would leave it visible but dead.
+    expect(
+      await surge.evaluate((el) => getComputedStyle(el).pointerEvents),
+    ).toBe("auto");
 
     const cdp = await page.context().newCDPSession(page);
+    // Pressing surge must not fall through to the canvas and start steering.
+    const surgeBox = await surge.boundingBox();
+    expect(surgeBox).not.toBeNull();
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        {
+          x: surgeBox!.x + surgeBox!.width / 2,
+          y: surgeBox!.y + surgeBox!.height / 2,
+        },
+      ],
+    });
+    await expect(page.locator(".joy-thumb")).toBeHidden();
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
     const startPosition = (await readPerformanceDiagnostics(page))?.runtime
       .player ?? { x: 0, z: 0 };
 
