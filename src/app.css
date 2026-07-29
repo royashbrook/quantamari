@@ -8,6 +8,10 @@
   --sky: #9ce7ff;
   --font-geist-sans: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   --font-geist-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -55,6 +59,9 @@ input:focus-visible {
   isolation: isolate;
   background: var(--deep);
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .world::before,
@@ -143,13 +150,14 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 26px;
+  padding: calc(20px + var(--safe-top)) calc(26px + var(--safe-right)) 20px
+    calc(26px + var(--safe-left));
 }
 
 .update-banner {
   position: absolute;
   z-index: 25;
-  top: 17px;
+  top: calc(17px + var(--safe-top));
   left: 50%;
   display: flex;
   width: min(540px, calc(100vw - 470px));
@@ -313,7 +321,7 @@ input:focus-visible {
 .lab-banner {
   position: absolute;
   z-index: 12;
-  top: 17px;
+  top: calc(17px + var(--safe-top));
   left: 50%;
   display: flex;
   align-items: center;
@@ -344,8 +352,8 @@ input:focus-visible {
 .scale-card {
   position: absolute;
   z-index: 8;
-  top: 88px;
-  left: 26px;
+  top: calc(88px + var(--safe-top));
+  left: calc(26px + var(--safe-left));
   width: min(346px, calc(100vw - 52px));
   padding: 17px 19px 15px;
   border: 3px solid #4b2868;
@@ -484,8 +492,8 @@ input:focus-visible {
 .stats {
   position: absolute;
   z-index: 8;
-  top: 88px;
-  right: 26px;
+  top: calc(88px + var(--safe-top));
+  right: calc(26px + var(--safe-right));
   display: flex;
   align-items: stretch;
   gap: 15px;
@@ -525,8 +533,8 @@ input:focus-visible {
 .fact-card {
   position: absolute;
   z-index: 8;
-  bottom: 23px;
-  left: 26px;
+  bottom: calc(23px + var(--safe-bottom));
+  left: calc(26px + var(--safe-left));
   width: min(330px, calc(100vw - 52px));
   padding: 14px 17px 15px;
   border: 3px solid #4b2868;
@@ -592,7 +600,7 @@ input:focus-visible {
 .toast {
   position: absolute;
   z-index: 8;
-  bottom: 61px;
+  bottom: calc(61px + var(--safe-bottom));
   left: 50%;
   display: flex;
   align-items: center;
@@ -618,8 +626,8 @@ input:focus-visible {
 .controls {
   position: absolute;
   z-index: 7;
-  right: 26px;
-  bottom: 24px;
+  right: calc(26px + var(--safe-right));
+  bottom: calc(24px + var(--safe-bottom));
   display: flex;
   gap: 16px;
   color: rgba(255, 250, 240, 0.82);
@@ -1106,6 +1114,76 @@ kbd {
   border-color: #d66a99;
 }
 
+.joy {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  pointer-events: none;
+}
+
+.joy i {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.joy-ring {
+  width: 124px;
+  height: 124px;
+  border: 3px dashed rgba(255, 250, 240, 0.55);
+  background: radial-gradient(
+    circle,
+    rgba(255, 250, 240, 0.07),
+    rgba(255, 250, 240, 0.02) 70%
+  );
+}
+
+.joy-thumb {
+  width: 46px;
+  height: 46px;
+  border: 3px solid #4b2868;
+  background: radial-gradient(circle at 32% 26%, #fff8c2, #ff7dd0 62%, #b78bff);
+  box-shadow: 0 4px 0 rgba(75, 40, 104, 0.85), 0 0 22px rgba(255, 125, 208, 0.5);
+}
+
+.surge-button {
+  position: absolute;
+  z-index: 9;
+  right: calc(17px + var(--safe-right));
+  bottom: calc(150px + var(--safe-bottom));
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 76px;
+  min-height: 56px;
+  justify-content: center;
+  padding: 0 18px;
+  border: 3px solid #4b2868;
+  border-radius: 22px 18px 24px 19px;
+  background: linear-gradient(135deg, #fff7b1, #ffe170);
+  box-shadow: 0 6px 0 #4b2868, 0 12px 26px rgba(7, 4, 28, 0.3);
+  color: #4b2868;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  touch-action: none;
+}
+
+.surge-button:active {
+  box-shadow: 0 2px 0 #4b2868;
+  transform: translateY(4px);
+  background: linear-gradient(135deg, #ffe170, #ffce4f);
+}
+
+@media (pointer: coarse) {
+  .surge-button {
+    display: flex;
+  }
+}
+
 @media (max-width: 860px) {
   .shell,
   .world {
@@ -1113,12 +1191,44 @@ kbd {
   }
 
   .topbar {
-    padding: 13px 15px;
+    padding: calc(13px + var(--safe-top)) calc(15px + var(--safe-right)) 13px
+      calc(15px + var(--safe-left));
+  }
+
+  /* A live WebGL canvas sits under every HUD card: on phone GPUs stacked
+     backdrop blurs cost real frame time, so mobile trades them for slightly
+     more opaque paper. */
+  .update-banner,
+  .lab-banner,
+  .scale-card,
+  .stats,
+  .toast,
+  .fact-card,
+  .welcome {
+    backdrop-filter: none;
+  }
+
+  .scale-card {
+    background:
+      radial-gradient(
+        circle at 93% 10%,
+        color-mix(in srgb, var(--pop) 35%, transparent),
+        transparent 30%
+      ),
+      rgba(255, 250, 240, 0.97);
+  }
+
+  .stats {
+    background: rgba(223, 248, 255, 0.97);
+  }
+
+  .toast {
+    background: rgba(255, 250, 240, 0.97);
   }
 
   .update-banner {
     position: fixed;
-    top: 67px;
+    top: calc(67px + var(--safe-top));
     width: calc(100vw - 24px);
     min-width: 0;
     gap: 8px;
@@ -1170,8 +1280,13 @@ kbd {
 
   .lab-banner {
     top: auto;
-    bottom: 90px;
+    bottom: calc(90px + var(--safe-bottom));
     max-width: calc(100vw - 28px);
+  }
+
+  .lab-banner button {
+    height: 40px;
+    font-size: 10px;
   }
 
   .lab-banner > span {
@@ -1181,11 +1296,15 @@ kbd {
   }
 
   .scale-card {
-    top: 60px;
-    left: 15px;
+    top: calc(60px + var(--safe-top));
+    left: calc(15px + var(--safe-left));
     width: min(248px, calc(100vw - 30px));
     padding: 9px 11px 8px;
     border-radius: 15px;
+  }
+
+  .lens-control {
+    font-size: 10px;
   }
 
   .kicker {
@@ -1220,7 +1339,7 @@ kbd {
   .stats {
     top: auto;
     right: auto;
-    bottom: 14px;
+    bottom: calc(14px + var(--safe-bottom));
     left: 50%;
     width: calc(100vw - 30px);
     justify-content: space-around;
@@ -1236,12 +1355,50 @@ kbd {
     font-size: 12px;
   }
 
+  /* Mobile keeps the educational payoff as a compact strip instead of
+     hiding it: name, two clamped fact lines, and the science link. */
   .fact-card {
+    bottom: calc(128px + var(--safe-bottom));
+    left: 50%;
+    width: calc(100vw - 30px);
+    padding: 9px 12px 10px;
+    border-radius: 14px;
+    transform: translateX(-50%);
+  }
+
+  .fact-kicker {
     display: none;
   }
 
+  .fact-card h2 {
+    margin: 0 0 2px;
+    font-size: 12px;
+  }
+
+  .fact-card p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .fact-source {
+    font-size: 10px;
+  }
+
+  .fact-actions {
+    margin-top: 5px;
+  }
+
+  .fact-actions button {
+    min-height: 40px;
+    padding: 0 12px;
+    font-size: 10px;
+  }
+
   .toast {
-    bottom: 76px;
+    bottom: calc(76px + var(--safe-bottom));
     font-size: 10px;
   }
 
@@ -1252,14 +1409,22 @@ kbd {
   .touch-tip {
     position: absolute;
     z-index: 7;
-    right: 17px;
-    bottom: 103px;
+    bottom: calc(300px + var(--safe-bottom));
+    left: 50%;
     display: block;
-    color: rgba(255, 255, 255, 0.48);
-    font-size: 9px;
+    max-width: calc(100vw - 30px);
+    color: rgba(255, 255, 255, 0.58);
+    font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.08em;
+    text-align: center;
     text-transform: uppercase;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+
+  .surge-button {
+    bottom: calc(384px + var(--safe-bottom));
   }
 
   .welcome {
@@ -1312,6 +1477,23 @@ kbd {
 
   .atlas-mode > span {
     flex-basis: 100%;
+  }
+
+  .atlas-mode button {
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: 10px;
+  }
+
+  .era-actions button {
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: 10px;
+  }
+
+  .scale-scrubber input {
+    height: 44px;
+    margin: 8px 0 6px;
   }
 
   .era-list {

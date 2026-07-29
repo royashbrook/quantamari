@@ -697,8 +697,10 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
   await begin(page);
-  await expect(page.getByText("◎ drag anywhere to roll")).toBeVisible();
-  await expect(page.locator(".fact-card")).toBeHidden();
+  await expect(
+    page.getByText("◎ drag anywhere to roll · pinch to zoom"),
+  ).toBeVisible();
+  await expect(page.locator(".fact-card")).toBeVisible();
   await page.getByRole("button", { name: "Open game menu" }).click();
   await expect(page.getByRole("dialog", { name: "Game menu" })).toBeVisible();
   expect(

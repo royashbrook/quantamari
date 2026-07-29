@@ -131,6 +131,14 @@
     fact: ERAS[0].lesson,
     source: ERAS[0].curios[0].source ?? ERAS[0].sources[0],
   });
+  let joystickVisual = $state({
+    active: false,
+    originX: 0,
+    originY: 0,
+    x: 0,
+    y: 0,
+  });
+  let touchTipSeen = $state(false);
   let hud = $state<HudState>({
     hours: 0,
     picked: 0,
@@ -181,6 +189,10 @@
     if (showAtlas || showGuide || showMenu) {
       joystickRef.current.active = false;
       keysRef.current = {};
+      worldPointers.clear();
+      steeringPointerId = null;
+      pinchDistance = null;
+      joystickVisual = { ...joystickVisual, active: false };
     }
   });
 
@@ -677,6 +689,10 @@
     const clearInput = () => {
       keysRef.current = {};
       joystickRef.current.active = false;
+      worldPointers.clear();
+      steeringPointerId = null;
+      pinchDistance = null;
+      joystickVisual = { ...joystickVisual, active: false };
     };
     const onVisibilityChange = () => {
       if (document.hidden) clearInput();
@@ -733,6 +749,43 @@
 
   onDestroy(closeAudio);
 
+  // One finger steers through joystickRef; a second finger converts the
+  // gesture into a pinch that drives the free lens. Pointer ids are tracked
+  // so stray touches can never hijack or kill an active gesture.
+  const worldPointers = new Map<number, { x: number; y: number }>();
+  let steeringPointerId: number | null = null;
+  let pinchDistance: number | null = null;
+
+  function pinchPointerPair() {
+    const points = [...worldPointers.values()];
+    return points.length === 2 ? points : null;
+  }
+
+  function pinchSpread() {
+    const pair = pinchPointerPair();
+    if (!pair) return null;
+    return Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
+  }
+
+  function beginSteering(pointerId: number, x: number, y: number) {
+    touchTipSeen = true;
+    steeringPointerId = pointerId;
+    joystickRef.current = {
+      active: true,
+      x,
+      y,
+      originX: x,
+      originY: y,
+    };
+    joystickVisual = { active: true, originX: x, originY: y, x, y };
+  }
+
+  function stopSteering() {
+    steeringPointerId = null;
+    joystickRef.current.active = false;
+    joystickVisual = { ...joystickVisual, active: false };
+  }
+
   function pointerDown(event: PointerEvent) {
     const target = event.target as HTMLElement;
     const insideInteractiveUi = Boolean(
@@ -747,24 +800,66 @@
     ) {
       return;
     }
-    joystickRef.current = {
-      active: true,
+    if (worldPointers.size >= 2) return;
+    worldPointers.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
-      originX: event.clientX,
-      originY: event.clientY,
-    };
-    (event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId);
+    });
+    if (worldPointers.size === 2) {
+      stopSteering();
+      pinchDistance = pinchSpread();
+    } else {
+      beginSteering(event.pointerId, event.clientX, event.clientY);
+    }
+    try {
+      (event.currentTarget as HTMLDivElement).setPointerCapture(
+        event.pointerId,
+      );
+    } catch {
+      // Synthetic or already-released pointers cannot be captured; steering
+      // still tracks moves that stay over the world element.
+    }
   }
 
   function pointerMove(event: PointerEvent) {
-    if (!joystickRef.current.active) return;
+    const tracked = worldPointers.get(event.pointerId);
+    if (!tracked) return;
+    tracked.x = event.clientX;
+    tracked.y = event.clientY;
+    if (pinchDistance !== null) {
+      const spread = pinchSpread();
+      if (spread !== null && spread > 24) {
+        adjustLens(pinchDistance / spread);
+        pinchDistance = spread;
+      }
+      return;
+    }
+    if (event.pointerId !== steeringPointerId) return;
     joystickRef.current.x = event.clientX;
     joystickRef.current.y = event.clientY;
+    joystickVisual = {
+      ...joystickVisual,
+      x: event.clientX,
+      y: event.clientY,
+    };
   }
 
-  function pointerUp() {
-    joystickRef.current.active = false;
+  function pointerUp(event: PointerEvent) {
+    if (!worldPointers.delete(event.pointerId)) return;
+    if (pinchDistance !== null) {
+      pinchDistance = null;
+      // Hand steering back to the finger that stayed down.
+      const [remaining] = [...worldPointers.entries()];
+      if (remaining) {
+        beginSteering(remaining[0], remaining[1].x, remaining[1].y);
+      }
+      return;
+    }
+    if (event.pointerId === steeringPointerId) stopSteering();
+  }
+
+  function surgePress(active: boolean) {
+    keysRef.current[" "] = active;
   }
 
   function wheelLens(event: WheelEvent) {
@@ -780,6 +875,19 @@
   const scienceSourceCount = new Set(
     ERAS.flatMap((item) => item.sources.map((source) => source.url)),
   ).size;
+
+  const JOYSTICK_THROW_PX = 62;
+  let joyThumb = $derived.by(() => {
+    const dx = joystickVisual.x - joystickVisual.originX;
+    const dy = joystickVisual.y - joystickVisual.originY;
+    const length = Math.hypot(dx, dy);
+    const scale =
+      length > JOYSTICK_THROW_PX ? JOYSTICK_THROW_PX / length : 1;
+    return {
+      x: joystickVisual.originX + dx * scale,
+      y: joystickVisual.originY + dy * scale,
+    };
+  });
 
   let era = $derived(ERAS[hud.era]);
   let journeyIndex = $derived(hud.journeyEra);
@@ -825,6 +933,9 @@
     onpointerup={pointerUp}
     onpointercancel={pointerUp}
     onwheel={wheelLens}
+    oncontextmenu={(event) => {
+      if (started && !modalOpenRef.current) event.preventDefault();
+    }}
     role="group"
     aria-label="Quantamari game world and controls"
   >
@@ -998,7 +1109,40 @@
         {Math.round(hud.triangles / 1000)}k tris
       </span>
     </div>
-    <div class="touch-tip hud">◎ drag anywhere to roll</div>
+    {#if !touchTipSeen}
+      <div class="touch-tip hud">◎ drag anywhere to roll · pinch to zoom</div>
+    {/if}
+
+    {#if joystickVisual.active}
+      <div class="joy" aria-hidden="true">
+        <i
+          class="joy-ring"
+          style={`left: ${joystickVisual.originX}px; top: ${joystickVisual.originY}px`}
+        ></i>
+        <i
+          class="joy-thumb"
+          style={`left: ${joyThumb.x}px; top: ${joyThumb.y}px`}
+        ></i>
+      </div>
+    {/if}
+
+    {#if started}
+      <button
+        class="surge-button hud"
+        type="button"
+        aria-label="Hold to surge"
+        onpointerdown={(event) => {
+          event.preventDefault();
+          surgePress(true);
+        }}
+        onpointerup={() => surgePress(false)}
+        onpointerleave={() => surgePress(false)}
+        onpointercancel={() => surgePress(false)}
+        oncontextmenu={(event) => event.preventDefault()}
+      >
+        ✦ surge
+      </button>
+    {/if}
 
     {#if !started}
       <section class="welcome modal">
