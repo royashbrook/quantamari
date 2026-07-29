@@ -82,7 +82,7 @@ test("rescue is self-contained and rejects a structurally invalid save", async (
   await page.locator("#restoreBox").fill(JSON.stringify({ hello: "universe" }));
   await page.getByRole("button", { name: "Validate and restore" }).click();
   await expect(page.locator("#restoreMessage")).toContainText(
-    "not a supported Quarkatamari",
+    "not a supported Quantamari",
   );
   expect(
     await page.evaluate(() => localStorage.getItem("everything-roll-save-v4")),

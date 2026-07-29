@@ -250,7 +250,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v2\.4\.0 · /);
+  await expect(buildStamp).toContainText(/^v3\.0\.0 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -270,9 +270,9 @@ test("boots the static game at its production subpath", async ({ page }) => {
     "rel",
     "external",
   );
-  await menu.getByRole("button", { name: "About Quarkatamari" }).click();
+  await menu.getByRole("button", { name: "About Quantamari" }).click();
   await expect(
-    menu.getByRole("heading", { name: "About Quarkatamari" }),
+    menu.getByRole("heading", { name: "About Quantamari" }),
   ).toBeVisible();
   await expect(menu.getByTestId("about-build")).toHaveText(
     (await buildStamp.textContent())?.trim() ?? "",
@@ -292,7 +292,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
   );
   await page.keyboard.press("Escape");
   await expect(
-    menu.getByRole("heading", { name: "About Quarkatamari" }),
+    menu.getByRole("heading", { name: "About Quantamari" }),
   ).toBeHidden();
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
@@ -505,7 +505,7 @@ test("game menu freezes the world and Escape resumes it", async ({ page }) => {
   await expect(menu).toBeHidden();
 });
 
-test("reset clears Quarkatamari progress in every open tab", async ({
+test("reset clears Quantamari progress in every open tab", async ({
   page,
   context,
 }) => {
@@ -697,8 +697,10 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
   await begin(page);
-  await expect(page.getByText("◎ drag anywhere to roll")).toBeVisible();
-  await expect(page.locator(".fact-card")).toBeHidden();
+  await expect(
+    page.getByText("◎ drag anywhere to roll · pinch to zoom"),
+  ).toBeVisible();
+  await expect(page.locator(".fact-card")).toBeVisible();
   await page.getByRole("button", { name: "Open game menu" }).click();
   await expect(page.getByRole("dialog", { name: "Game menu" })).toBeVisible();
   expect(
@@ -734,6 +736,123 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
     return { x: Number(save.x ?? 0), z: Number(save.z ?? 0) };
   });
   expect(Math.hypot(savedPosition.x, savedPosition.z)).toBeGreaterThan(0);
+});
+
+test.describe("real touch input", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  });
+
+  test("touch drag steers with a visible joystick, pinch drives the lens, surge button shows", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await enablePerformanceDiagnostics(page);
+    await begin(page);
+    const surge = page.locator(".surge-button");
+    await expect(surge).toBeVisible();
+    // The button carries the hud class; a regression to the .hud
+    // pointer-events:none rule would leave it visible but dead.
+    expect(
+      await surge.evaluate((el) => getComputedStyle(el).pointerEvents),
+    ).toBe("auto");
+
+    const cdp = await page.context().newCDPSession(page);
+    // Pressing surge must not fall through to the canvas and start steering.
+    const surgeBox = await surge.boundingBox();
+    expect(surgeBox).not.toBeNull();
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        {
+          x: surgeBox!.x + surgeBox!.width / 2,
+          y: surgeBox!.y + surgeBox!.height / 2,
+        },
+      ],
+    });
+    await expect(page.locator(".joy-thumb")).toBeHidden();
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    const startPosition = (await readPerformanceDiagnostics(page))?.runtime
+      .player ?? { x: 0, z: 0 };
+
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: 195, y: 500 }],
+    });
+    try {
+      for (let step = 1; step <= 5; step += 1) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [{ x: 195 + step * 18, y: 500 }],
+        });
+      }
+      await expect(page.locator(".joy-thumb")).toBeVisible();
+      await expect
+        .poll(
+          async () => {
+            const player = (await readPerformanceDiagnostics(page))?.runtime
+              .player;
+            return player
+              ? Math.hypot(
+                  player.x - startPosition.x,
+                  player.z - startPosition.z,
+                )
+              : 0;
+          },
+          { timeout: 15_000 },
+        )
+        .toBeGreaterThan(0.01);
+    } finally {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+    }
+    await expect(page.locator(".joy-thumb")).toBeHidden();
+
+    // Two-finger pinch-out zooms the lens in (value drops below 1.00).
+    const initialLens = await page
+      .locator(".lens-control span")
+      .textContent();
+    expect(initialLens).toContain("1.00×");
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        { x: 170, y: 470, id: 0 },
+        { x: 220, y: 530, id: 1 },
+      ],
+    });
+    try {
+      for (let step = 1; step <= 6; step += 1) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [
+            { x: 170 - step * 12, y: 470 - step * 12, id: 0 },
+            { x: 220 + step * 12, y: 530 + step * 12, id: 1 },
+          ],
+        });
+      }
+    } finally {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+    }
+    await expect
+      .poll(async () =>
+        Number(
+          (await page.locator(".lens-control span").textContent())?.match(
+            /([\d.]+)×/,
+          )?.[1] ?? "1",
+        ),
+      )
+      .toBeLessThan(1);
+  });
 });
 
 test("desktop framing stays bounded and the nearest rug keeps authored identities", async ({
@@ -1549,7 +1668,7 @@ test("a waiting update stays visible outside the menu until activated", async ({
   expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(390);
 
   await updateButton.click();
-  await expect(banner).toContainText("Updating Quarkatamari");
+  await expect(banner).toContainText("Updating Quantamari");
   await expect(banner.getByRole("button", { name: "Loading…" })).toBeDisabled();
   await expect
     .poll(() =>

@@ -70,7 +70,7 @@ function showCurrentSave() {
   try {
     const raw = availableCandidate(readCandidates());
     if (!raw) {
-      status.textContent = "No Quarkatamari save was found here.";
+      status.textContent = "No Quantamari save was found here.";
       status.className = "message bad";
       details.textContent =
         "Try opening this page from the installed app if that is where you played.";
@@ -139,10 +139,10 @@ function downloadSave() {
   );
   const link = document.createElement("a");
   link.href = url;
-  link.download = "quarkatamari-save.json";
+  link.download = "quantamari-save.json";
   link.click();
   URL.revokeObjectURL(url);
-  message.textContent = "Downloaded quarkatamari-save.json.";
+  message.textContent = "Downloaded quantamari-save.json.";
   message.className = "message good";
 }
 
@@ -157,14 +157,14 @@ function restoreSave() {
   }
   if (!parsed) {
     message.textContent =
-      "That is JSON, but not a supported Quarkatamari v2, v3, or v4 save.";
+      "That is JSON, but not a supported Quantamari v2, v3, or v4 save.";
     message.className = "message bad";
     return;
   }
   if (
     availableCandidate(readCandidates()) &&
     !window.confirm(
-      "Replace the save in this copy of Quarkatamari? A rescue backup will be kept.",
+      "Replace the save in this copy of Quantamari? A rescue backup will be kept.",
     )
   ) {
     return;
@@ -209,7 +209,7 @@ function loadRescueBackup() {
 
 async function repairAppFiles() {
   const message = element("repairMessage");
-  message.textContent = "Cleaning only Quarkatamari app files…";
+  message.textContent = "Cleaning only Quantamari app files…";
   message.className = "message";
   try {
     if ("caches" in window) {

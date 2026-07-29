@@ -1,6 +1,6 @@
 # Performance and scale budget
 
-Quarkatamari stays browser-only. Rust/WASM is not currently justified: source
+Quantamari stays browser-only. Rust/WASM is not currently justified: source
 review and the in-game renderer counters identify render objects, draw calls,
 and GPU detail as the main scaling risks, while the physics loop remains small.
 
@@ -43,8 +43,13 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
 | Tier | Target | Draw calls | Triangles | Rich objects | Instances |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | High | 60 fps | 180 | 600k | 64 | 4,000 |
-| Balanced | 30 fps | 120 | 300k | 48 | 2,500 |
+| Balanced | 60 fps | 120 | 300k | 48 | 2,500 |
 | Battery | 30 fps | 80 | 180k | 32 | 1,500 |
+
+Balanced targets 60 fps submission with the cooler draw/triangle budgets so
+modern phones (which boot into balanced) feel smooth; devices that cannot
+reach it simply render fewer frames, and the battery demotion threshold is
+unchanged.
 
 The desktop controls HUD reports measured FPS, draw calls, and triangle count.
 Quality falls when a device misses its target and remains at the cooler tier for

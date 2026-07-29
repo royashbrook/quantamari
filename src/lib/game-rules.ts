@@ -109,8 +109,30 @@ export function canStartPointerSteering(
   return started && !modalOpen && !insideInteractiveUi;
 }
 
-export function deepLensUnlocked(activeLayer: number, layerCount: number) {
-  return layerCount > 0 && activeLayer >= layerCount - 1;
+export function deepLensUnlocked(
+  activeLayer: number,
+  layerCount: number,
+  completedCycles = 0,
+) {
+  return (
+    layerCount > 0 &&
+    (completedCycles > 0 || activeLayer >= layerCount - 1)
+  );
+}
+
+/**
+ * Completing the final authored layer folds the journey back to layer 0 as a
+ * new cycle: the Metaversal Beyond and the Theory Playground are both
+ * SPECULATIVE-realm bookends, so the wrap is a narrative loop, not a claim
+ * that the universe is literally a quantum foam bubble.
+ */
+export function nextLayerAdvance(currentLayer: number, layerCount: number) {
+  if (layerCount <= 0) return { nextIndex: 0, wrapped: false };
+  const wrapped = currentLayer >= layerCount - 1;
+  return {
+    nextIndex: wrapped ? 0 : Math.min(layerCount - 1, currentLayer + 1),
+    wrapped,
+  };
 }
 
 export function radiusForLayerProgress(progress: number) {
@@ -345,15 +367,26 @@ export function qualityTierForFps(
   return allowUpgrade && framesPerSecond > 43 ? "balanced" : "battery";
 }
 
-export function pickupBudget(viewportWidth: number, tier: QualityTier) {
-  const mobile = viewportWidth <= 860;
+export function pickupBudget(
+  viewportWidth: number,
+  tier: QualityTier,
+  compactDevice = false,
+) {
+  // compactDevice covers touch devices whose landscape width exceeds the
+  // 860px breakpoint (e.g. an iPhone Pro Max at 932 CSS px) but whose GPU
+  // budget is still a phone's.
+  const mobile = compactDevice || viewportWidth <= 860;
   if (tier === "high") return mobile ? 140 : 160;
   if (tier === "balanced") return mobile ? 120 : 130;
   return mobile ? 88 : 96;
 }
 
-export function lowPickupBudget(viewportWidth: number, tier: QualityTier) {
-  return Math.floor(pickupBudget(viewportWidth, tier) * 0.84);
+export function lowPickupBudget(
+  viewportWidth: number,
+  tier: QualityTier,
+  compactDevice = false,
+) {
+  return Math.floor(pickupBudget(viewportWidth, tier, compactDevice) * 0.84);
 }
 
 export function pixelRatioCap(mobile: boolean, tier: QualityTier) {

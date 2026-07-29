@@ -18,6 +18,7 @@ import {
   collectionProgressGain,
   collectibleIdentityFor,
   mashProxyScale,
+  nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
   pickupBudget,
@@ -224,6 +225,7 @@ export type GameState = {
   progress: number;
   picked: number;
   zooms: number;
+  cycles: number;
   era: number;
   mode: GameMode;
   running: boolean;
@@ -242,6 +244,7 @@ export type HudState = {
   radius: number;
   lens: number;
   zooms: number;
+  cycles: number;
   quality: QualityTier;
   fps: number;
   drawCalls: number;
@@ -338,7 +341,14 @@ export function mountGame(
       phaseRecorder.record(phase, readPerformanceClock() - startedAt);
     }
   };
-  const compactGpu = window.innerWidth <= 860;
+  // A coarse primary pointer marks phones and tablets regardless of
+  // orientation — a landscape iPhone Pro Max is 932 CSS px wide and would
+  // otherwise be classified as a desktop GPU.
+  const coarsePointer =
+    window.matchMedia?.("(pointer: coarse)").matches === true;
+  const isCompactView = (viewportWidth: number) =>
+    coarsePointer || viewportWidth <= 860;
+  const compactGpu = isCompactView(window.innerWidth);
   const forcedQualityTier =
     debugWindow.__QUARKATAMARI_FORCED_QUALITY__ ?? null;
   let qualityTier: QualityTier =
@@ -868,7 +878,7 @@ export function mountGame(
   rollGroup.add(mashGroup);
   scene.add(playerRoot);
 
-  const makeBallFaceTexture = (reaction = false) => {
+  const makeBallFaceTexture = (expression: "smile" | "chomp" | "joy" = "smile") => {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
     canvas.height = 256;
@@ -881,7 +891,43 @@ export function mountGame(
     context.ellipse(201, 154, 26, 14, 0.12, 0, Math.PI * 2);
     context.fill();
     context.fillStyle = "#26143a";
-    if (reaction) {
+    if (expression === "joy") {
+      // Closed ^-^ eyes, a big open smile, and sparkles for layer advances.
+      context.lineWidth = 15;
+      context.strokeStyle = "#26143a";
+      context.beginPath();
+      context.arc(86, 116, 24, Math.PI + 0.35, -0.35);
+      context.stroke();
+      context.beginPath();
+      context.arc(170, 116, 24, Math.PI + 0.35, -0.35);
+      context.stroke();
+      context.beginPath();
+      context.arc(128, 148, 34, 0.25, Math.PI - 0.25);
+      context.closePath();
+      context.fill();
+      context.fillStyle = "#ff8ab8";
+      context.beginPath();
+      context.ellipse(128, 172, 18, 9, 0, 0, Math.PI);
+      context.fill();
+      context.fillStyle = "#fff8c2";
+      for (const [x, y, r] of [
+        [34, 74, 9],
+        [222, 66, 7],
+        [206, 196, 6],
+      ] as const) {
+        context.beginPath();
+        for (let point = 0; point < 8; point += 1) {
+          const angle = (point * Math.PI) / 4;
+          const radius = point % 2 === 0 ? r : r * 0.42;
+          context.lineTo(
+            x + Math.cos(angle) * radius,
+            y + Math.sin(angle) * radius,
+          );
+        }
+        context.closePath();
+        context.fill();
+      }
+    } else if (expression === "chomp") {
       context.lineWidth = 15;
       context.strokeStyle = "#26143a";
       context.beginPath();
@@ -917,7 +963,8 @@ export function mountGame(
     return texture;
   };
   const happyFaceTexture = makeBallFaceTexture();
-  const chompFaceTexture = makeBallFaceTexture(true);
+  const chompFaceTexture = makeBallFaceTexture("chomp");
+  const joyFaceTexture = makeBallFaceTexture("joy");
   const ballFaceMaterial = new THREE.SpriteMaterial({
     map: happyFaceTexture,
     transparent: true,
@@ -2807,7 +2854,7 @@ export function mountGame(
   };
 
   const activePickupBudget = () => {
-    const base = pickupBudget(width, qualityTier);
+    const base = pickupBudget(width, qualityTier, coarsePointer);
     if (activeIndex === 0) return Math.max(12, Math.floor(base * 0.1));
     if (activeIndex <= 3) return Math.floor(base * 0.55);
     return base;
@@ -2912,15 +2959,37 @@ export function mountGame(
 
   const advanceLayer = (animated: boolean) => {
     const previousIndex = game.era;
-    const nextIndex = Math.min(ERAS.length - 1, previousIndex + 1);
+    const { nextIndex, wrapped } = nextLayerAdvance(
+      previousIndex,
+      ERAS.length,
+    );
     const outgoingWorldScale = transitionWorldScale;
+    // Only the first arrival at the final layer announces the unlock; after a
+    // wrap the lens has been open the whole time (deepLensUnlocked cycles>0).
     const unlockedDeepLens =
-      nextIndex === ERAS.length - 1 && previousIndex < nextIndex;
+      nextIndex === ERAS.length - 1 &&
+      previousIndex < nextIndex &&
+      game.cycles === 0;
 
     game.era = nextIndex;
     game.progress = 0;
     game.radius = CORE_RADIUS_MIN;
     game.zooms += 1;
+    if (wrapped) {
+      // The Metaversal Beyond folds back into fresh quantum foam: the ball is
+      // reborn, so the mash, pickups, and floating-origin drift all reset
+      // rather than carrying 94 decades of scale across the seam.
+      game.cycles += 1;
+      game.x = 0;
+      game.z = 0;
+      game.originX = 0;
+      game.originZ = 0;
+      game.vx = 0;
+      game.vz = 0;
+      retireVisibleMash();
+      pickups.forEach((pickup) => removePickup(pickup));
+      pickups = [];
+    }
     if (animated) {
       game.vx *= 0.25;
       game.vz *= 0.25;
@@ -2936,7 +3005,7 @@ export function mountGame(
     effectiveRollRadius = CORE_RADIUS_MIN;
     rollRadiusClock = 0.12;
     const nextFloatHeight = CORE_RADIUS_MIN * 0.94;
-    const mobileView = width <= 860;
+    const mobileView = isCompactView(width);
     playerRoot.position.set(game.x, nextFloatHeight, game.z);
     camera.position.set(
       game.x + game.vx * 0.24 * game.lens,
@@ -2983,18 +3052,31 @@ export function mountGame(
         if (child instanceof THREE.Sprite) child.visible = sourceEra >= nextIndex;
       });
     });
+    if (wrapped) needsInnerSpawnRing = true;
     resetPickupQueue();
     reconcilePickupQueue();
 
-    setToast(
-      animated
-        ? `${ERAS[nextIndex].name} resolves around you; ${ERAS[previousIndex].name} remains beneath it.`
-        : `Scale crossed smoothly into ${ERAS[nextIndex].name}. The prior layer is now part of the world beneath you.`,
-    );
-    if (!animated) ping(300 + nextIndex * 12, true);
+    faceReactionUntil = readPerformanceClock() + 1400;
+    ballFaceMaterial.map = joyFaceTexture;
+
+    if (wrapped) {
+      setToast(
+        `The ${ERAS[previousIndex].name} folds into fresh quantum foam. Cycle ${
+          game.cycles + 1
+        } begins — the scale of everything, again.`,
+      );
+      ping(880, true);
+    } else {
+      setToast(
+        animated
+          ? `${ERAS[nextIndex].name} resolves around you; ${ERAS[previousIndex].name} remains beneath it.`
+          : `Scale crossed smoothly into ${ERAS[nextIndex].name}. The prior layer is now part of the world beneath you.`,
+      );
+      if (!animated) ping(300 + nextIndex * 12, true);
+    }
     if (unlockedDeepLens) {
       setToast(
-        "Known-universe journey complete! The free lens now opens from 1/256× to 256×.",
+        "Known-universe journey complete! The free lens now opens from 1/256× to 256× — and the top of scale folds back into the bottom.",
       );
     }
     scaleTransitionStarted = -1;
@@ -3152,13 +3234,13 @@ export function mountGame(
     renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio || 1,
-        pixelRatioCap(width <= 860, qualityTier),
+        pixelRatioCap(isCompactView(width), qualityTier),
       ),
     );
     renderer.setSize(width, height, false);
     camera.aspect = Math.max(0.2, width / height);
     camera.fov = boundedVerticalFov(
-      width <= 860 ? 56 : 46,
+      isCompactView(width) ? 56 : 46,
       camera.aspect,
     );
     camera.updateProjectionMatrix();
@@ -3167,6 +3249,26 @@ export function mountGame(
   resize();
   reconcilePickupQueue();
   window.addEventListener("resize", resize);
+  // iOS URL-bar collapse and the software keyboard resize the visual
+  // viewport without firing a window resize.
+  window.visualViewport?.addEventListener("resize", resize);
+
+  // iOS Safari reclaims WebGL contexts from backgrounded PWAs. Preventing
+  // the default on loss lets the browser restore the same context, and
+  // Three.js reinitializes its GL state on the restored context.
+  const onContextLost = (event: Event) => {
+    event.preventDefault();
+    persistSnapshot();
+  };
+  const onContextRestored = () => {
+    resize();
+    setToast("Graphics restarted. Your universe is safe.");
+  };
+  renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+  renderer.domElement.addEventListener(
+    "webglcontextrestored",
+    onContextRestored,
+  );
 
   const performanceDebug = phaseRecorder
     ? {
@@ -3283,11 +3385,11 @@ export function mountGame(
           };
         },
         completeLayer: () => {
+          // Completing the final layer is allowed: it wraps into a new cycle.
           if (
             labEra !== null ||
             scaleTransitionStarted >= 0 ||
-            pendingLayerAdvance ||
-            game.era >= ERAS.length - 1
+            pendingLayerAdvance
           ) {
             return false;
           }
@@ -3527,7 +3629,7 @@ export function mountGame(
         renderer.setPixelRatio(
           Math.min(
             window.devicePixelRatio || 1,
-            pixelRatioCap(width <= 860, qualityTier),
+            pixelRatioCap(isCompactView(width), qualityTier),
           ),
         );
         renderer.setSize(width, height, false);
@@ -4171,7 +4273,7 @@ export function mountGame(
       popBurstMesh.instanceColor.needsUpdate = popBursts.length > 0;
     }
 
-    const mobileView = width <= 860;
+    const mobileView = isCompactView(width);
     desiredCamera.set(
       game.x + game.vx * 0.24 * game.lens,
       floatHeight +
@@ -4219,6 +4321,7 @@ export function mountGame(
         radius: game.radius,
         lens: game.lens,
         zooms: game.zooms,
+        cycles: game.cycles,
         quality: qualityTier,
         fps: measuredFps,
         drawCalls: renderer.info.render.calls,
@@ -4243,6 +4346,12 @@ export function mountGame(
   return () => {
     cancelAnimationFrame(frame);
     window.removeEventListener("resize", resize);
+    window.visualViewport?.removeEventListener("resize", resize);
+    renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
+    renderer.domElement.removeEventListener(
+      "webglcontextrestored",
+      onContextRestored,
+    );
     if (debugWindow.__QUARKATAMARI_PERFORMANCE__ === performanceDebug) {
       delete debugWindow.__QUARKATAMARI_PERFORMANCE__;
     }
@@ -4269,6 +4378,7 @@ export function mountGame(
     visualTemplates.clear();
     happyFaceTexture.dispose();
     chompFaceTexture.dispose();
+    joyFaceTexture.dispose();
     groundTexture?.dispose();
     coreSurfaceTexture?.dispose();
     dustGeometry.dispose();
@@ -4289,7 +4399,7 @@ export function mountGame(
       if (disposed) return;
       gameRef.current.running = false;
       setToast("The 3D world could not start. Reload to try again.");
-      console.error("Quarkatamari 3D boot failed", error);
+      console.error("Quantamari 3D boot failed", error);
     });
   return () => {
     disposed = true;

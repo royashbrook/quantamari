@@ -1,6 +1,6 @@
 # V2 architecture
 
-Quarkatamari is a static browser game. SvelteKit prerenders the shell, Vite
+Quantamari is a static browser game. SvelteKit prerenders the shell, Vite
 bundles it, and `adapter-static` emits `dist/client`. There is no application
 server, API, database, authentication layer, or server-side game state.
 
@@ -36,14 +36,14 @@ server, API, database, authentication layer, or server-side game state.
 - `static/rescue.html` is generated as one inline IIFE with no runtime imports.
   The inline watchdog in `src/app.html` links to it even when the app module
   graph fails. Rescue validates and migrates saves with the normal domain code,
-  while cache repair is restricted to Quarkatamari's names and scope.
+  while cache repair is restricted to Quantamari's names and scope.
 
 The UI/runtime boundary is deliberately small. A framework render can update
 HUD and collection state, but it does not rebuild the scene. Opening the native
 menu, Field Guide, or Scale Lab dialog pauses input and rendering. Scale Lab
 remounts a preview without mutating journey progress, and leaving the route
 destroys every renderer listener and animation frame. Confirmed reset suppresses
-autosave/pagehide writes, removes only the three Quarkatamari save generations,
+autosave/pagehide writes, removes only the three Quantamari save generations,
 broadcasts a reset generation to every open same-origin game instance, and
 reloads the same static route.
 

@@ -86,6 +86,7 @@
       progress: 0,
       picked: 0,
       zooms: 0,
+      cycles: 0,
       era: 0,
       mode: "journey",
       running: false,
@@ -131,6 +132,14 @@
     fact: ERAS[0].lesson,
     source: ERAS[0].curios[0].source ?? ERAS[0].sources[0],
   });
+  let joystickVisual = $state({
+    active: false,
+    originX: 0,
+    originY: 0,
+    x: 0,
+    y: 0,
+  });
+  let touchTipSeen = $state(false);
   let hud = $state<HudState>({
     hours: 0,
     picked: 0,
@@ -140,6 +149,7 @@
     radius: CORE_RADIUS_MIN,
     lens: 1,
     zooms: 0,
+    cycles: 0,
     quality: "high" as QualityTier,
     fps: 60,
     drawCalls: 0,
@@ -181,6 +191,12 @@
     if (showAtlas || showGuide || showMenu) {
       joystickRef.current.active = false;
       keysRef.current = {};
+      worldPointers.clear();
+      steeringPointerId = null;
+      pinchDistance = null;
+      // Property write only: spreading joystickVisual here would make this
+      // effect read the state it writes and loop forever.
+      joystickVisual.active = false;
     }
   });
 
@@ -220,7 +236,11 @@
 
   function adjustLens(factor: number) {
     const game = gameRef.current;
-    const finishedJourney = deepLensUnlocked(game.era, ERAS.length);
+    const finishedJourney = deepLensUnlocked(
+      game.era,
+      ERAS.length,
+      game.cycles,
+    );
     const minimumLens = finishedJourney ? 1 / 256 : 1 / 8;
     const maximumLens = finishedJourney ? 256 : 8;
     game.lens = Math.max(
@@ -401,6 +421,7 @@
         ? labSnapshot.z + labSnapshot.originZ
         : game.z + game.originZ,
       zooms: game.zooms,
+      cycles: game.cycles,
       sound: game.sound,
       mash: mashHistoryRef.current,
       collection: collectionRef.current,
@@ -482,7 +503,7 @@
     const checkForUpdate = () => {
       if (disposed || !registration) return;
       void registration.update().catch((error) => {
-        console.warn("Quarkatamari update check failed", error);
+        console.warn("Quantamari update check failed", error);
       });
     };
     const checkWhenVisible = () => {
@@ -517,7 +538,7 @@
         checkForUpdate();
       })
       .catch((error) => {
-        console.warn("Quarkatamari service worker registration failed", error);
+        console.warn("Quantamari service worker registration failed", error);
       });
 
     return () => {
@@ -598,6 +619,7 @@
     game.originZ = 0;
     game.radius = radiusForLayerProgress(game.progress);
     game.zooms = saved.zooms;
+    game.cycles = saved.cycles;
     game.sound = saved.sound;
     mashHistoryRef.current = saved.mash;
     collectionRef.current = saved.collection;
@@ -616,6 +638,7 @@
       progress: game.progress,
       radius: game.radius,
       zooms: game.zooms,
+      cycles: game.cycles,
     };
 
     if (loaded.sourceVersion < 4) {
@@ -677,6 +700,10 @@
     const clearInput = () => {
       keysRef.current = {};
       joystickRef.current.active = false;
+      worldPointers.clear();
+      steeringPointerId = null;
+      pinchDistance = null;
+      joystickVisual.active = false;
     };
     const onVisibilityChange = () => {
       if (document.hidden) clearInput();
@@ -723,7 +750,7 @@
         if (cancelled) return;
         gameRef.current.running = false;
         toast = "The game code could not start. Reload to try again.";
-        console.error("Quarkatamari runtime boot failed", error);
+        console.error("Quantamari runtime boot failed", error);
       });
     return () => {
       cancelled = true;
@@ -732,6 +759,47 @@
   });
 
   onDestroy(closeAudio);
+
+  // One finger steers through joystickRef; a second finger converts the
+  // gesture into a pinch that drives the free lens. Pointer ids are tracked
+  // so stray touches can never hijack or kill an active gesture.
+  const worldPointers = new Map<number, { x: number; y: number }>();
+  let steeringPointerId: number | null = null;
+  let pinchDistance: number | null = null;
+
+  function pinchPointerPair() {
+    const points = [...worldPointers.values()];
+    return points.length === 2 ? points : null;
+  }
+
+  function pinchSpread() {
+    const pair = pinchPointerPair();
+    if (!pair) return null;
+    return Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
+  }
+
+  function beginSteering(pointerId: number, x: number, y: number) {
+    touchTipSeen = true;
+    steeringPointerId = pointerId;
+    joystickRef.current = {
+      active: true,
+      x,
+      y,
+      originX: x,
+      originY: y,
+    };
+    joystickVisual.active = true;
+    joystickVisual.originX = x;
+    joystickVisual.originY = y;
+    joystickVisual.x = x;
+    joystickVisual.y = y;
+  }
+
+  function stopSteering() {
+    steeringPointerId = null;
+    joystickRef.current.active = false;
+    joystickVisual.active = false;
+  }
 
   function pointerDown(event: PointerEvent) {
     const target = event.target as HTMLElement;
@@ -747,24 +815,63 @@
     ) {
       return;
     }
-    joystickRef.current = {
-      active: true,
+    if (worldPointers.size >= 2) return;
+    worldPointers.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
-      originX: event.clientX,
-      originY: event.clientY,
-    };
-    (event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId);
+    });
+    if (worldPointers.size === 2) {
+      stopSteering();
+      pinchDistance = pinchSpread();
+    } else {
+      beginSteering(event.pointerId, event.clientX, event.clientY);
+    }
+    try {
+      (event.currentTarget as HTMLDivElement).setPointerCapture(
+        event.pointerId,
+      );
+    } catch {
+      // Synthetic or already-released pointers cannot be captured; steering
+      // still tracks moves that stay over the world element.
+    }
   }
 
   function pointerMove(event: PointerEvent) {
-    if (!joystickRef.current.active) return;
+    const tracked = worldPointers.get(event.pointerId);
+    if (!tracked) return;
+    tracked.x = event.clientX;
+    tracked.y = event.clientY;
+    if (pinchDistance !== null) {
+      const spread = pinchSpread();
+      if (spread !== null && spread > 24) {
+        adjustLens(pinchDistance / spread);
+        pinchDistance = spread;
+      }
+      return;
+    }
+    if (event.pointerId !== steeringPointerId) return;
     joystickRef.current.x = event.clientX;
     joystickRef.current.y = event.clientY;
+    joystickVisual.x = event.clientX;
+    joystickVisual.y = event.clientY;
   }
 
-  function pointerUp() {
-    joystickRef.current.active = false;
+  function pointerUp(event: PointerEvent) {
+    if (!worldPointers.delete(event.pointerId)) return;
+    if (pinchDistance !== null) {
+      pinchDistance = null;
+      // Hand steering back to the finger that stayed down.
+      const [remaining] = [...worldPointers.entries()];
+      if (remaining) {
+        beginSteering(remaining[0], remaining[1].x, remaining[1].y);
+      }
+      return;
+    }
+    if (event.pointerId === steeringPointerId) stopSteering();
+  }
+
+  function surgePress(active: boolean) {
+    keysRef.current[" "] = active;
   }
 
   function wheelLens(event: WheelEvent) {
@@ -781,11 +888,23 @@
     ERAS.flatMap((item) => item.sources.map((source) => source.url)),
   ).size;
 
+  const JOYSTICK_THROW_PX = 62;
+  let joyThumb = $derived.by(() => {
+    const dx = joystickVisual.x - joystickVisual.originX;
+    const dy = joystickVisual.y - joystickVisual.originY;
+    const length = Math.hypot(dx, dy);
+    const scale =
+      length > JOYSTICK_THROW_PX ? JOYSTICK_THROW_PX / length : 1;
+    return {
+      x: joystickVisual.originX + dx * scale,
+      y: joystickVisual.originY + dy * scale,
+    };
+  });
+
   let era = $derived(ERAS[hud.era]);
   let journeyIndex = $derived(hud.journeyEra);
-  let nextEra = $derived(
-    ERAS[Math.min(journeyIndex + 1, ERAS.length - 1)],
-  );
+  // The final layer wraps to layer 0 as a new cycle, so "Next" names it.
+  let nextEra = $derived(ERAS[(journeyIndex + 1) % ERAS.length]);
   let scale = $derived(
     labEra === null
       ? formatEraScale(journeyIndex, hud.progress)
@@ -804,12 +923,12 @@
 </script>
 
 <svelte:head>
-  <title>Quarkatamari — Roll up the scale of everything</title>
+  <title>Quantamari — Roll up the scale of everything</title>
   <meta
     name="description"
     content="A browser-only rolling game from the theory below known physics to the fiction beyond the observable universe."
   />
-  <meta name="application-name" content="Quarkatamari" />
+  <meta name="application-name" content="Quantamari" />
 </svelte:head>
 
 <main class="shell" data-release="v2-sveltekit">
@@ -818,6 +937,7 @@
     class:started
     class:awaiting-start={!started}
     class:empty-origin={started && hud.era === 0}
+    class:lab-active={labEra !== null}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
@@ -825,19 +945,28 @@
     onpointerup={pointerUp}
     onpointercancel={pointerUp}
     onwheel={wheelLens}
+    oncontextmenu={(event) => {
+      const target = event.target as HTMLElement;
+      const interactive = target.closest(
+        "button, a, input, select, textarea, .modal, dialog",
+      );
+      if (started && !modalOpenRef.current && !interactive) {
+        event.preventDefault();
+      }
+    }}
     role="group"
-    aria-label="Quarkatamari game world and controls"
+    aria-label="Quantamari game world and controls"
   >
     <header class="topbar hud">
       <div class="brand">
         <div class="brand-ball" aria-hidden="true">✦</div>
         <div>
-          <b>QUARKATAMARI</b>
+          <b>QUANTAMARI</b>
           <small class="tagline">the scale of everything</small>
           <small
             class="version-stamp"
             data-testid="build-stamp"
-            title={`Quarkatamari v${appVersion}, build ${buildVersion}`}
+            title={`Quantamari v${appVersion}, build ${buildVersion}`}
           >
             v{appVersion} · {buildLabel}
           </small>
@@ -881,7 +1010,7 @@
       >
         <span class="update-banner-mark" aria-hidden="true">↻</span>
         <span class="update-banner-copy">
-          <b>{updateApplying ? "Updating Quarkatamari…" : "Update ready"}</b>
+          <b>{updateApplying ? "Updating Quantamari…" : "Update ready"}</b>
           <small>
             {updateApplying
               ? "Your universe is saved. Loading the new build now."
@@ -958,6 +1087,13 @@
       <div><b>{journeyIndex}</b><small>layers underfoot</small></div>
       <i></i>
       <div><b>{hud.zooms}</b><small>scale shifts</small></div>
+      {#if hud.cycles > 0}
+        <i></i>
+        <div class="cycle-stat">
+          <b>♻ {hud.cycles + 1}</b>
+          <small>cycle</small>
+        </div>
+      {/if}
     </aside>
 
     <aside class="fact-card hud">
@@ -984,7 +1120,7 @@
 
     <div class="toast hud" role="status" aria-live="polite">
       <span>✦</span>
-      {toast}
+      <span class="toast-text">{toast}</span>
     </div>
 
     <div class="controls hud">
@@ -998,7 +1134,40 @@
         {Math.round(hud.triangles / 1000)}k tris
       </span>
     </div>
-    <div class="touch-tip hud">◎ drag anywhere to roll</div>
+    {#if !touchTipSeen}
+      <div class="touch-tip hud">◎ drag anywhere to roll · pinch to zoom</div>
+    {/if}
+
+    {#if joystickVisual.active}
+      <div class="joy" aria-hidden="true">
+        <i
+          class="joy-ring"
+          style={`left: ${joystickVisual.originX}px; top: ${joystickVisual.originY}px`}
+        ></i>
+        <i
+          class="joy-thumb"
+          style={`left: ${joyThumb.x}px; top: ${joyThumb.y}px`}
+        ></i>
+      </div>
+    {/if}
+
+    {#if started}
+      <button
+        class="surge-button hud"
+        type="button"
+        aria-label="Hold to surge"
+        onpointerdown={(event) => {
+          event.preventDefault();
+          surgePress(true);
+        }}
+        onpointerup={() => surgePress(false)}
+        onpointerleave={() => surgePress(false)}
+        onpointercancel={() => surgePress(false)}
+        oncontextmenu={(event) => event.preventDefault()}
+      >
+        ✦ surge
+      </button>
+    {/if}
 
     {#if !started}
       <section class="welcome modal">

@@ -1,6 +1,6 @@
 # GitHub deployment workflow
 
-Quarkatamari is a browser-only static PWA. GitHub is the normal release path:
+Quantamari is a browser-only static PWA. GitHub is the normal release path:
 
 - **GitHub** (`royashbrook/quarkatamari`) is the source of truth.
 - Every verified production-affecting push to GitHub `main` automatically
@@ -27,7 +27,7 @@ Do not replace a working GitHub remote merely to match the example name.
 4. GitHub runs the Node, static artifact, Chromium renderer, WebKit/iPhone
    recovery, and offline tests.
 5. After they pass, the workflow asks `royashbrook.com` to build the exact
-   verified Quarkatamari commit and rejects a mismatched or missing artifact.
+   verified Quantamari commit and rejects a mismatched or missing artifact.
 6. Verify the public URL, manifest, service worker, and current release marker.
 
 For the v2 cutover, merge the backward-compatible
@@ -46,7 +46,7 @@ The v2 cutover is tracked in
 ## Recovery
 
 - Open `/quarkatamari/rescue.html` before clearing browser data. It can export
-  and validate the local save, then clear only Quarkatamari app files.
+  and validate the local save, then clear only Quantamari app files.
 - Roll back by reverting the release commit on GitHub `main`; `v1.0.0` is the
   checkpoint immediately before the v2 framework rewrite.
 - If local and GitHub history diverge, fetch and reconcile on a temporary

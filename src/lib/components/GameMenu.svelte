@@ -176,7 +176,7 @@
           <button type="button" onclick={() => (view = "about")}>
             <span class={styles.icon} aria-hidden="true">?</span>
             <span>
-              <b>About Quarkatamari</b>
+              <b>About Quantamari</b>
               <small>Credits, code, and this exact build</small>
             </span>
           </button>
@@ -205,7 +205,7 @@
           <div class={styles.aboutHero}>
             <div aria-hidden="true">✦</div>
             <span>THE SCALE OF EVERYTHING</span>
-            <h3>About Quarkatamari</h3>
+            <h3>About Quantamari</h3>
             <p>
               A browser-only rolling game about how strange reality gets when
               you zoom all the way in—or all the way out.
