@@ -1,9 +1,11 @@
 # Quantamari
 
-Quantamari is an untimed, browser-based 3D rolling game about the scale of
-everything. Begin with a deliberately speculative visualization near the
+Quantamari (formerly Quarkatamari — the repository and deploy path keep the
+historical name) is an untimed, browser-based 3D rolling game about the scale
+of everything. Begin with a deliberately speculative visualization near the
 edge of known physics, roll through particles, atoms, cells, dust, rooms,
-planets, and galaxies, then continue forever into a clearly fictional beyond.
+planets, and galaxies, then continue forever: completing the fictional beyond
+folds the journey back into a fresh quantum foam as a new cycle.
 
 The current release contains 34 scale layers and 220 collectible identities.
 The default Long Game pace is forty times the Learning Tour pace; switching
@@ -11,7 +13,10 @@ pace never rewrites earned progress. Every find is saved by stable ID in an
 animated, searchable Field Guide. Scale Lab can preview any layer without
 changing the journey. Escape opens a pause menu with sound, reset, About, save
 rescue, and the exact running build. The shipped game is a static,
-offline-capable PWA; all gameplay and persistence stay in the browser.
+offline-capable PWA designed mobile-first for modern iPhones and Android
+phones: drag anywhere to roll, pinch to zoom the free lens, hold the surge
+button to sprint, and every HUD surface respects notch and home-indicator
+safe areas. All gameplay and persistence stay in the browser.
 
 ## Gameplay contract
 
@@ -225,3 +230,11 @@ v2.4 bounds desktop and ultrawide world framing, prioritizes nearby authored
 pickup detail, and rebuilds the nearest prior-layer rug from recognizable
 low-detail catalog models under
 [issue #32](https://github.com/royashbrook/quarkatamari/issues/32).
+v3.0 rebrands the game as Quantamari, makes the PWA mobile-first
+(pointer-id-safe drag steering, pinch-to-zoom lens, hold-to-surge, safe-area
+HUD, compact fact card, dedicated maskable icons), targets 60 fps on the
+balanced tier, moves service-worker cache writes off the critical path, and
+folds the completed journey back into a fresh quantum foam as an eternal
+cycle under [issue #34](https://github.com/royashbrook/quarkatamari/issues/34).
+The deploy path, save keys, and cache namespace deliberately keep the
+historical quarkatamari names so installed PWAs and saves survive the rebrand.

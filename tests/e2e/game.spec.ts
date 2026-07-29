@@ -738,6 +738,100 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   expect(Math.hypot(savedPosition.x, savedPosition.z)).toBeGreaterThan(0);
 });
 
+test.describe("real touch input", () => {
+  test.use({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 390, height: 844 },
+  });
+
+  test("touch drag steers with a visible joystick, pinch drives the lens, surge button shows", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await enablePerformanceDiagnostics(page);
+    await begin(page);
+    await expect(page.locator(".surge-button")).toBeVisible();
+
+    const cdp = await page.context().newCDPSession(page);
+    const startPosition = (await readPerformanceDiagnostics(page))?.runtime
+      .player ?? { x: 0, z: 0 };
+
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: 195, y: 500 }],
+    });
+    try {
+      for (let step = 1; step <= 5; step += 1) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [{ x: 195 + step * 18, y: 500 }],
+        });
+      }
+      await expect(page.locator(".joy-thumb")).toBeVisible();
+      await expect
+        .poll(
+          async () => {
+            const player = (await readPerformanceDiagnostics(page))?.runtime
+              .player;
+            return player
+              ? Math.hypot(
+                  player.x - startPosition.x,
+                  player.z - startPosition.z,
+                )
+              : 0;
+          },
+          { timeout: 15_000 },
+        )
+        .toBeGreaterThan(0.01);
+    } finally {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+    }
+    await expect(page.locator(".joy-thumb")).toBeHidden();
+
+    // Two-finger pinch-out zooms the lens in (value drops below 1.00).
+    const initialLens = await page
+      .locator(".lens-control span")
+      .textContent();
+    expect(initialLens).toContain("1.00×");
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        { x: 170, y: 470, id: 0 },
+        { x: 220, y: 530, id: 1 },
+      ],
+    });
+    try {
+      for (let step = 1; step <= 6; step += 1) {
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [
+            { x: 170 - step * 12, y: 470 - step * 12, id: 0 },
+            { x: 220 + step * 12, y: 530 + step * 12, id: 1 },
+          ],
+        });
+      }
+    } finally {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+    }
+    await expect
+      .poll(async () =>
+        Number(
+          (await page.locator(".lens-control span").textContent())?.match(
+            /([\d.]+)×/,
+          )?.[1] ?? "1",
+        ),
+      )
+      .toBeLessThan(1);
+  });
+});
+
 test("desktop framing stays bounded and the nearest rug keeps authored identities", async ({
   page,
 }) => {
