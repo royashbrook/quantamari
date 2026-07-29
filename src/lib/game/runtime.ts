@@ -878,7 +878,7 @@ export function mountGame(
   rollGroup.add(mashGroup);
   scene.add(playerRoot);
 
-  const makeBallFaceTexture = (reaction = false) => {
+  const makeBallFaceTexture = (expression: "smile" | "chomp" | "joy" = "smile") => {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
     canvas.height = 256;
@@ -891,7 +891,43 @@ export function mountGame(
     context.ellipse(201, 154, 26, 14, 0.12, 0, Math.PI * 2);
     context.fill();
     context.fillStyle = "#26143a";
-    if (reaction) {
+    if (expression === "joy") {
+      // Closed ^-^ eyes, a big open smile, and sparkles for layer advances.
+      context.lineWidth = 15;
+      context.strokeStyle = "#26143a";
+      context.beginPath();
+      context.arc(86, 116, 24, Math.PI + 0.35, -0.35);
+      context.stroke();
+      context.beginPath();
+      context.arc(170, 116, 24, Math.PI + 0.35, -0.35);
+      context.stroke();
+      context.beginPath();
+      context.arc(128, 148, 34, 0.25, Math.PI - 0.25);
+      context.closePath();
+      context.fill();
+      context.fillStyle = "#ff8ab8";
+      context.beginPath();
+      context.ellipse(128, 172, 18, 9, 0, 0, Math.PI);
+      context.fill();
+      context.fillStyle = "#fff8c2";
+      for (const [x, y, r] of [
+        [34, 74, 9],
+        [222, 66, 7],
+        [206, 196, 6],
+      ] as const) {
+        context.beginPath();
+        for (let point = 0; point < 8; point += 1) {
+          const angle = (point * Math.PI) / 4;
+          const radius = point % 2 === 0 ? r : r * 0.42;
+          context.lineTo(
+            x + Math.cos(angle) * radius,
+            y + Math.sin(angle) * radius,
+          );
+        }
+        context.closePath();
+        context.fill();
+      }
+    } else if (expression === "chomp") {
       context.lineWidth = 15;
       context.strokeStyle = "#26143a";
       context.beginPath();
@@ -927,7 +963,8 @@ export function mountGame(
     return texture;
   };
   const happyFaceTexture = makeBallFaceTexture();
-  const chompFaceTexture = makeBallFaceTexture(true);
+  const chompFaceTexture = makeBallFaceTexture("chomp");
+  const joyFaceTexture = makeBallFaceTexture("joy");
   const ballFaceMaterial = new THREE.SpriteMaterial({
     map: happyFaceTexture,
     transparent: true,
@@ -3015,6 +3052,9 @@ export function mountGame(
     resetPickupQueue();
     reconcilePickupQueue();
 
+    faceReactionUntil = readPerformanceClock() + 1400;
+    ballFaceMaterial.map = joyFaceTexture;
+
     if (wrapped) {
       setToast(
         `The ${ERAS[previousIndex].name} folds into fresh quantum foam. Cycle ${
@@ -4334,6 +4374,7 @@ export function mountGame(
     visualTemplates.clear();
     happyFaceTexture.dispose();
     chompFaceTexture.dispose();
+    joyFaceTexture.dispose();
     groundTexture?.dispose();
     coreSurfaceTexture?.dispose();
     dustGeometry.dispose();

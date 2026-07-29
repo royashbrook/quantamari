@@ -36,15 +36,31 @@ test("build is a standalone, subpath-safe static PWA", async () => {
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.start_url, "./");
   assert.equal(manifest.scope, "./");
+  assert.equal(manifest.id, "./");
   assert.deepEqual(
     manifest.icons.map((icon) => icon.sizes),
-    ["192x192", "512x512"],
+    ["192x192", "512x512", "192x192", "512x512"],
   );
-  assert.ok(manifest.icons.every((icon) => icon.purpose.includes("maskable")));
+  // Any-purpose and maskable icons are separate assets: a maskable render
+  // crops into the safe zone, so a shared asset would lose its framing.
+  assert.deepEqual(
+    manifest.icons.map((icon) => icon.purpose),
+    ["any", "any", "maskable", "maskable"],
+  );
 
-  for (const icon of ["icon-192.png", "icon-512.png"]) {
+  for (const icon of [
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable-192.png",
+    "icon-maskable-512.png",
+  ]) {
     assert.ok((await stat(resolve(clientRoot, icon))).size > 1_000);
   }
+
+  // Mobile PWA head contract: notch-safe viewport and iOS standalone metas.
+  const appHtml = await readFile(resolve(clientRoot, "index.html"), "utf8");
+  assert.match(appHtml, /viewport-fit=cover/);
+  assert.match(appHtml, /apple-mobile-web-app-status-bar-style/);
 
   const html = await readFile(resolve(clientRoot, "index.html"), "utf8");
   const packageMetadata = JSON.parse(
