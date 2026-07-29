@@ -86,6 +86,7 @@
       progress: 0,
       picked: 0,
       zooms: 0,
+      cycles: 0,
       era: 0,
       mode: "journey",
       running: false,
@@ -148,6 +149,7 @@
     radius: CORE_RADIUS_MIN,
     lens: 1,
     zooms: 0,
+    cycles: 0,
     quality: "high" as QualityTier,
     fps: 60,
     drawCalls: 0,
@@ -232,7 +234,11 @@
 
   function adjustLens(factor: number) {
     const game = gameRef.current;
-    const finishedJourney = deepLensUnlocked(game.era, ERAS.length);
+    const finishedJourney = deepLensUnlocked(
+      game.era,
+      ERAS.length,
+      game.cycles,
+    );
     const minimumLens = finishedJourney ? 1 / 256 : 1 / 8;
     const maximumLens = finishedJourney ? 256 : 8;
     game.lens = Math.max(
@@ -413,6 +419,7 @@
         ? labSnapshot.z + labSnapshot.originZ
         : game.z + game.originZ,
       zooms: game.zooms,
+      cycles: game.cycles,
       sound: game.sound,
       mash: mashHistoryRef.current,
       collection: collectionRef.current,
@@ -610,6 +617,7 @@
     game.originZ = 0;
     game.radius = radiusForLayerProgress(game.progress);
     game.zooms = saved.zooms;
+    game.cycles = saved.cycles;
     game.sound = saved.sound;
     mashHistoryRef.current = saved.mash;
     collectionRef.current = saved.collection;
@@ -628,6 +636,7 @@
       progress: game.progress,
       radius: game.radius,
       zooms: game.zooms,
+      cycles: game.cycles,
     };
 
     if (loaded.sourceVersion < 4) {
@@ -1069,6 +1078,13 @@
       <div><b>{journeyIndex}</b><small>layers underfoot</small></div>
       <i></i>
       <div><b>{hud.zooms}</b><small>scale shifts</small></div>
+      {#if hud.cycles > 0}
+        <i></i>
+        <div class="cycle-stat">
+          <b>♻ {hud.cycles + 1}</b>
+          <small>cycle</small>
+        </div>
+      {/if}
     </aside>
 
     <aside class="fact-card hud">

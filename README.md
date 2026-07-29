@@ -39,6 +39,11 @@ offline-capable PWA; all gameplay and persistence stay in the browser.
   player-width corridor remains; failed placements are declined.
 - Obstacles use depenetration plus tangent sliding instead of frame-dependent
   bounce impulses.
+- Completing the final fictional layer folds the journey back into a fresh
+  Theory Playground as a new cycle. The Field Guide, collection history, and
+  pace choice persist across cycles; the mash and position are reborn. The
+  wrap is a narrative loop between the two SPECULATIVE bookend eras, not a
+  claim that the universe is literally a quantum foam bubble.
 - Every named collectible has a stable-ID model signature, motion personality,
   synthesized three-note pickup voice, Field Guide portrait, reality-based form
   note, fact, confidence label, and authoritative scale/topic reference.

@@ -18,6 +18,7 @@ import {
   deepLensUnlocked,
   lowPickupBudget,
   mashProxyScale,
+  nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
   pickupBudget,
@@ -91,6 +92,32 @@ test("reaching the final authored layer unlocks the deep lens for new and migrat
   assert.equal(deepLensUnlocked(ERAS.length - 1, ERAS.length), true);
   assert.equal(deepLensUnlocked(ERAS.length, ERAS.length), true);
   assert.equal(deepLensUnlocked(0, 0), false);
+  // The deep lens stays unlocked after the journey wraps back to layer 0.
+  assert.equal(deepLensUnlocked(0, ERAS.length, 1), true);
+  assert.equal(deepLensUnlocked(5, ERAS.length, 3), true);
+  assert.equal(deepLensUnlocked(0, ERAS.length, 0), false);
+  assert.equal(deepLensUnlocked(0, 0, 1), false);
+});
+
+test("the final authored layer folds back to layer 0 as a new cycle", () => {
+  assert.deepEqual(nextLayerAdvance(0, ERAS.length), {
+    nextIndex: 1,
+    wrapped: false,
+  });
+  assert.deepEqual(nextLayerAdvance(ERAS.length - 2, ERAS.length), {
+    nextIndex: ERAS.length - 1,
+    wrapped: false,
+  });
+  assert.deepEqual(nextLayerAdvance(ERAS.length - 1, ERAS.length), {
+    nextIndex: 0,
+    wrapped: true,
+  });
+  // Out-of-range indices past the end still wrap home instead of sticking.
+  assert.deepEqual(nextLayerAdvance(ERAS.length + 4, ERAS.length), {
+    nextIndex: 0,
+    wrapped: true,
+  });
+  assert.deepEqual(nextLayerAdvance(0, 0), { nextIndex: 0, wrapped: false });
 });
 
 test("collection drives one bounded logarithmic layer transition", () => {

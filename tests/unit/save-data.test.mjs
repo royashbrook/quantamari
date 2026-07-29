@@ -104,6 +104,34 @@ test("v4 loading keeps valid records while dropping malformed records", () => {
   assert.equal(loaded?.save.unitemizedPicked, 4);
   assert.equal(loaded?.save.picked, 9);
   assert.equal(loaded?.save.sound, false);
+  // Pre-v3.0 saves carry no cycles field and default to cycle 0.
+  assert.equal(loaded?.save.cycles, 0);
+});
+
+test("completed journey cycles survive a save round trip and legacy saves default to zero", () => {
+  const snapshot = {
+    mode: "journey",
+    eraId: "theory-playground",
+    progress: 0.5,
+    picked: 700,
+    unitemizedPicked: 0,
+    x: 3,
+    z: 4,
+    zooms: 40,
+    cycles: 2,
+    sound: true,
+    mash: [],
+    collection: [],
+  };
+  const raw = serializeSaveData(createSaveData(snapshot));
+  const loaded = loadSaveCandidates({ v4: raw }, catalog);
+  assert.equal(loaded?.save.cycles, 2);
+
+  const negative = loadSaveCandidates(
+    { v4: JSON.stringify({ ...JSON.parse(raw), cycles: -3 }) },
+    catalog,
+  );
+  assert.equal(negative?.save.cycles, 0);
 });
 
 test("a corrupt v4 falls back to v3 and maps numeric eras through the frozen atlas", () => {

@@ -37,6 +37,8 @@ export type SaveDataV4 = {
   x: number;
   z: number;
   zooms: number;
+  /** Completed full journeys through every layer. Absent in pre-v3.0 saves. */
+  cycles: number;
   sound: boolean;
   mash: MashRecordV4[];
   collection: CollectionEntry[];
@@ -366,6 +368,7 @@ function sanitizeV4(
     x: boundedNumber(value.x, 0),
     z: boundedNumber(value.z, 0),
     zooms: nonnegativeInteger(value.zooms),
+    cycles: nonnegativeInteger(value.cycles),
     sound: typeof value.sound === "boolean" ? value.sound : true,
     mash: sanitizedMash(value.mash, catalog),
     collection,
@@ -456,6 +459,7 @@ function legacySaveFields(
     x: boundedNumber(value.x, 0),
     z: boundedNumber(value.z, 0),
     zooms: nonnegativeInteger(value.zooms),
+    cycles: 0,
     sound: typeof value.sound === "boolean" ? value.sound : true,
     mash,
     collection,

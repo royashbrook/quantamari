@@ -530,6 +530,10 @@ input:focus-visible {
   background: rgba(75, 40, 104, 0.18);
 }
 
+.cycle-stat b {
+  color: #b73c79;
+}
+
 .fact-card {
   position: absolute;
   z-index: 8;

@@ -18,6 +18,7 @@ import {
   collectionProgressGain,
   collectibleIdentityFor,
   mashProxyScale,
+  nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
   pickupBudget,
@@ -224,6 +225,7 @@ export type GameState = {
   progress: number;
   picked: number;
   zooms: number;
+  cycles: number;
   era: number;
   mode: GameMode;
   running: boolean;
@@ -242,6 +244,7 @@ export type HudState = {
   radius: number;
   lens: number;
   zooms: number;
+  cycles: number;
   quality: QualityTier;
   fps: number;
   drawCalls: number;
@@ -2919,7 +2922,10 @@ export function mountGame(
 
   const advanceLayer = (animated: boolean) => {
     const previousIndex = game.era;
-    const nextIndex = Math.min(ERAS.length - 1, previousIndex + 1);
+    const { nextIndex, wrapped } = nextLayerAdvance(
+      previousIndex,
+      ERAS.length,
+    );
     const outgoingWorldScale = transitionWorldScale;
     const unlockedDeepLens =
       nextIndex === ERAS.length - 1 && previousIndex < nextIndex;
@@ -2928,6 +2934,21 @@ export function mountGame(
     game.progress = 0;
     game.radius = CORE_RADIUS_MIN;
     game.zooms += 1;
+    if (wrapped) {
+      // The Metaversal Beyond folds back into fresh quantum foam: the ball is
+      // reborn, so the mash, pickups, and floating-origin drift all reset
+      // rather than carrying 94 decades of scale across the seam.
+      game.cycles += 1;
+      game.x = 0;
+      game.z = 0;
+      game.originX = 0;
+      game.originZ = 0;
+      game.vx = 0;
+      game.vz = 0;
+      retireVisibleMash();
+      pickups.forEach((pickup) => removePickup(pickup));
+      pickups = [];
+    }
     if (animated) {
       game.vx *= 0.25;
       game.vz *= 0.25;
@@ -2990,18 +3011,28 @@ export function mountGame(
         if (child instanceof THREE.Sprite) child.visible = sourceEra >= nextIndex;
       });
     });
+    if (wrapped) needsInnerSpawnRing = true;
     resetPickupQueue();
     reconcilePickupQueue();
 
-    setToast(
-      animated
-        ? `${ERAS[nextIndex].name} resolves around you; ${ERAS[previousIndex].name} remains beneath it.`
-        : `Scale crossed smoothly into ${ERAS[nextIndex].name}. The prior layer is now part of the world beneath you.`,
-    );
-    if (!animated) ping(300 + nextIndex * 12, true);
+    if (wrapped) {
+      setToast(
+        `The ${ERAS[previousIndex].name} folds into fresh quantum foam. Cycle ${
+          game.cycles + 1
+        } begins — the scale of everything, again.`,
+      );
+      ping(880, true);
+    } else {
+      setToast(
+        animated
+          ? `${ERAS[nextIndex].name} resolves around you; ${ERAS[previousIndex].name} remains beneath it.`
+          : `Scale crossed smoothly into ${ERAS[nextIndex].name}. The prior layer is now part of the world beneath you.`,
+      );
+      if (!animated) ping(300 + nextIndex * 12, true);
+    }
     if (unlockedDeepLens) {
       setToast(
-        "Known-universe journey complete! The free lens now opens from 1/256× to 256×.",
+        "Known-universe journey complete! The free lens now opens from 1/256× to 256× — and the top of scale folds back into the bottom.",
       );
     }
     scaleTransitionStarted = -1;
@@ -3310,11 +3341,11 @@ export function mountGame(
           };
         },
         completeLayer: () => {
+          // Completing the final layer is allowed: it wraps into a new cycle.
           if (
             labEra !== null ||
             scaleTransitionStarted >= 0 ||
-            pendingLayerAdvance ||
-            game.era >= ERAS.length - 1
+            pendingLayerAdvance
           ) {
             return false;
           }
@@ -4246,6 +4277,7 @@ export function mountGame(
         radius: game.radius,
         lens: game.lens,
         zooms: game.zooms,
+        cycles: game.cycles,
         quality: qualityTier,
         fps: measuredFps,
         drawCalls: renderer.info.render.calls,

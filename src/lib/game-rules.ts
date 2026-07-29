@@ -109,8 +109,30 @@ export function canStartPointerSteering(
   return started && !modalOpen && !insideInteractiveUi;
 }
 
-export function deepLensUnlocked(activeLayer: number, layerCount: number) {
-  return layerCount > 0 && activeLayer >= layerCount - 1;
+export function deepLensUnlocked(
+  activeLayer: number,
+  layerCount: number,
+  completedCycles = 0,
+) {
+  return (
+    layerCount > 0 &&
+    (completedCycles > 0 || activeLayer >= layerCount - 1)
+  );
+}
+
+/**
+ * Completing the final authored layer folds the journey back to layer 0 as a
+ * new cycle: the Metaversal Beyond and the Theory Playground are both
+ * SPECULATIVE-realm bookends, so the wrap is a narrative loop, not a claim
+ * that the universe is literally a quantum foam bubble.
+ */
+export function nextLayerAdvance(currentLayer: number, layerCount: number) {
+  if (layerCount <= 0) return { nextIndex: 0, wrapped: false };
+  const wrapped = currentLayer >= layerCount - 1;
+  return {
+    nextIndex: wrapped ? 0 : Math.min(layerCount - 1, currentLayer + 1),
+    wrapped,
+  };
 }
 
 export function radiusForLayerProgress(progress: number) {
