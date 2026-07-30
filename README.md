@@ -14,9 +14,10 @@ animated, searchable Field Guide. Scale Lab can preview any layer without
 changing the journey. Escape opens a pause menu with sound, reset, About, save
 rescue, and the exact running build. The shipped game is a static,
 offline-capable PWA designed mobile-first for modern iPhones and Android
-phones: drag anywhere to roll, pinch to zoom the free lens, hold the surge
-button to sprint, and every HUD surface respects notch and home-indicator
-safe areas. All gameplay and persistence stay in the browser.
+phones: drag anywhere to roll, pinch to zoom the free lens, and read journey
+progress from one touch-through bottom dock that
+respects notch and home-indicator safe areas. All gameplay and persistence
+stay in the browser.
 
 ## Gameplay contract
 
@@ -233,7 +234,7 @@ pickup detail, and rebuilds the nearest prior-layer rug from recognizable
 low-detail catalog models under
 [issue #32](https://github.com/royashbrook/quantamari/issues/32).
 v3.0 rebrands the game as Quantamari, makes the PWA mobile-first
-(pointer-id-safe drag steering, pinch-to-zoom lens, hold-to-surge, safe-area
+(pointer-id-safe drag steering, pinch-to-zoom lens, safe-area
 HUD, compact fact card, dedicated maskable icons), targets 60 fps on the
 balanced tier, moves service-worker cache writes off the critical path, and
 folds the completed journey back into a fresh quantum foam as an eternal
@@ -259,6 +260,12 @@ bottom gap, reduces the permanent mobile HUD to compact status and touch
 controls, waits for a real pickup before showing a fact, and keeps every guide
 exit visible without triggering iOS input zoom. The fix is tracked under
 [issue #40](https://github.com/royashbrook/quantamari/issues/40).
+v3.1.2 removes Surge, keeps only the brand and Menu above the mobile world,
+and collapses scale, frontier progress, and run totals into one translucent,
+touch-through bottom dock. Pickups temporarily replace that dock with a
+bounded fact notice before progress returns, including in installed iPhone
+landscape. The redesign is tracked under
+[issue #42](https://github.com/royashbrook/quantamari/issues/42).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.
