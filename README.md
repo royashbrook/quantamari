@@ -245,11 +245,15 @@ v3.1 keeps Long Game dense without changing its 40× progression, replaces
 automatic quality switching with persistent Standard and Battery Optimized
 profiles, bounds rendering work, gives every catalog form an intentional
 silhouette, prevents the free lens from revealing unearned scale layers, and
-turns Giant Worlds into an atmospheric cloud-top scene under
+turns Giant Worlds into an atmospheric cloud-top scene. Its compact welcome
+screen also launches Long Game or Learning Tour directly without hiding either
+action below a small-iPhone viewport. These changes are tracked under
 [issues #10](https://github.com/royashbrook/quantamari/issues/10),
 [#11](https://github.com/royashbrook/quantamari/issues/11),
 [#28](https://github.com/royashbrook/quantamari/issues/28), and
-[#32](https://github.com/royashbrook/quantamari/issues/32).
+[#32](https://github.com/royashbrook/quantamari/issues/32), with the launch
+screen fix under
+[#38](https://github.com/royashbrook/quantamari/issues/38).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

@@ -206,8 +206,11 @@ async function inspectInstanceColors(page: Page) {
 
 async function begin(page: Page, mode: "Long game" | "Learning tour" = "Learning tour") {
   await page.goto(appPath);
-  await page.getByRole("button", { name: mode }).click();
-  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await page
+    .getByRole("button", {
+      name: mode === "Long game" ? "Play Long Game" : "Play Learning Tour",
+    })
+    .click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
@@ -344,10 +347,12 @@ test("boots the static game at its production root", async ({ page }) => {
   const buildStamp = page.getByTestId("build-stamp");
   await expect(buildStamp).toContainText(`v${appVersion} · `);
   await expect(buildStamp).toBeVisible();
-  await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(
+    page.getByRole("button", { name: "Play Long Game" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Play Learning Tour" }),
+  ).toBeVisible();
 
   const menuTrigger = page.getByRole("button", { name: "Open game menu" });
   await expect(menuTrigger).toBeVisible();
@@ -393,7 +398,7 @@ test("boots the static game at its production root", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
   await expect(menuTrigger).toBeFocused();
-  const startButton = page.getByRole("button", { name: "Begin becoming" });
+  const startButton = page.getByRole("button", { name: "Play Long Game" });
   await startButton.focus();
   await page.keyboard.press("Escape");
   await expect(menu).toBeVisible();
@@ -401,11 +406,7 @@ test("boots the static game at its production root", async ({ page }) => {
   await expect(menu).toBeHidden();
   await expect(startButton).toBeFocused();
 
-  await page.getByRole("button", { name: "Learning tour" }).click();
-  await expect(
-    page.getByRole("button", { name: "Learning tour" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
@@ -456,7 +457,7 @@ test("field guide hydrates a stable-ID v4 collection", async ({ page }) => {
   });
 
   await page.goto(appPath);
-  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
@@ -476,14 +477,24 @@ test("browser changes survive a page reload", async ({ page }) => {
   await page.reload();
 
   await expect(
-    page.getByRole("button", { name: "Learning tour" }),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.getByRole("button", { name: "Play Learning Tour" }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(
+            localStorage.getItem("everything-roll-save-v4") ?? "{}",
+          ).mode,
+      ),
+    )
+    .toBe("learning");
   await page.getByRole("button", { name: "Open game menu" }).click();
   await expect(
     page.getByRole("button", { name: "Turn on sound" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
@@ -613,8 +624,7 @@ test("performance profile changes only by explicit persisted choice", async ({
   expect(stored.save.performanceProfile).toBeUndefined();
 
   await page.reload();
-  await page.getByRole("button", { name: "Learning tour" }).click();
-  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
@@ -767,7 +777,7 @@ test("reset clears Quantamari progress in every open tab", async ({
   await page.goto(appPath);
   const otherPage = await context.newPage();
   await otherPage.goto(appPath);
-  await otherPage.getByRole("button", { name: "Begin becoming" }).click();
+  await otherPage.getByRole("button", { name: "Play Long Game" }).click();
   await expect(otherPage.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
@@ -2001,7 +2011,7 @@ test("a cold install can boot the lazy Three.js world offline", async ({
     await expect(
       page.getByRole("heading", { name: /You are not a ball/ }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Begin becoming" }).click();
+    await page.getByRole("button", { name: "Play Long Game" }).click();
     await expect(page.locator("canvas.three-canvas")).toBeVisible({
       timeout: 30_000,
     });

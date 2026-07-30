@@ -55,7 +55,7 @@ test("the in-game rescue link follows the deployed base path", async ({
   page,
 }) => {
   await page.goto(appPath);
-  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await page.getByRole("button", { name: "Play Long Game" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
