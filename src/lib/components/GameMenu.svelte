@@ -1,6 +1,7 @@
 <script lang="ts">
   import { base } from "$app/paths";
   import { tick } from "svelte";
+  import type { PerformanceProfile } from "$lib/performance-profile";
   import styles from "./game-menu.module.css";
 
   type MenuView = "main" | "about" | "reset";
@@ -9,6 +10,7 @@
     open: boolean;
     started: boolean;
     sound: boolean;
+    performanceProfile: PerformanceProfile;
     appVersion: string;
     buildLabel: string;
     updateReady: boolean;
@@ -16,6 +18,7 @@
     onOpenGuide: () => void;
     onOpenAtlas: () => void;
     onToggleSound: () => void;
+    onToggleBatteryOptimized: () => void;
     onReset: () => boolean;
     onApplyUpdate: () => void;
   };
@@ -24,6 +27,7 @@
     open,
     started,
     sound,
+    performanceProfile,
     appVersion,
     buildLabel,
     updateReady,
@@ -31,6 +35,7 @@
     onOpenGuide,
     onOpenAtlas,
     onToggleSound,
+    onToggleBatteryOptimized,
     onReset,
     onApplyUpdate,
   }: GameMenuProps = $props();
@@ -152,6 +157,25 @@
               <small>{sound ? "Quiet the tiny universe" : "Bring back the pings"}</small>
             </span>
           </button>
+          <button
+            class={styles.performanceChoice}
+            type="button"
+            role="switch"
+            aria-checked={performanceProfile === "battery"}
+            onclick={onToggleBatteryOptimized}
+          >
+            <span class={styles.icon} aria-hidden="true">
+              {performanceProfile === "battery" ? "◐" : "✦"}
+            </span>
+            <span>
+              <b>Battery Optimized</b>
+              <small>
+                {performanceProfile === "battery"
+                  ? "On · cooler rendering, same universe"
+                  : "Off · stable Standard graphics"}
+              </small>
+            </span>
+          </button>
           <button type="button" onclick={onOpenGuide}>
             <span class={styles.icon} aria-hidden="true">✦</span>
             <span>
@@ -224,7 +248,7 @@
               <dt>Source</dt>
               <dd>
                 <a
-                  href="https://github.com/royashbrook/quarkatamari"
+                  href="https://github.com/royashbrook/quantamari"
                   target="_blank"
                   rel="noreferrer"
                 >GitHub ↗</a>
@@ -246,8 +270,9 @@
           <span class={styles.dangerKicker}>THIS CANNOT BE UNDONE</span>
           <h3>Reset all progress?</h3>
           <p>
-            Your collected things, scale layers, position, and settings will be
-            removed from this browser. The game itself stays installed.
+            Your collected things, scale layers, position, and journey settings
+            will be removed from this browser. This device’s graphics choice and
+            the game itself stay installed.
           </p>
           {#if resetFailed}
             <p class={styles.error} role="alert">

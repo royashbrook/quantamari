@@ -16,15 +16,11 @@ import {
   collectionProgressGain,
   collectibleIdentityFor,
   deepLensUnlocked,
-  lowPickupBudget,
   mashProxyScale,
   nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
-  pickupBudget,
-  pixelRatioCap,
   progressAfterPickup,
-  qualityTierForFps,
   radiusForLayerProgress,
   resolveCircleAabbCollision,
   resolveCircularCollision,
@@ -211,35 +207,4 @@ test("the authored scale increases and infinite play has no scale cap", () => {
   assert.equal(eraAt(JOURNEY_HOURS), ERAS.length - 1);
   assert.ok(logMetersAt(JOURNEY_HOURS + 10) > logMetersAt(JOURNEY_HOURS));
   assert.ok(logMetersAt(JOURNEY_HOURS + 10_000) > logMetersAt(JOURNEY_HOURS + 10));
-});
-
-test("adaptive quality uses hysteresis and meaningful mobile budgets", () => {
-  assert.equal(qualityTierForFps(60, "high"), "high");
-  assert.equal(qualityTierForFps(40, "high"), "balanced");
-  assert.equal(qualityTierForFps(29, "balanced"), "balanced");
-  assert.equal(qualityTierForFps(20, "balanced"), "battery");
-  assert.equal(qualityTierForFps(45, "battery"), "balanced");
-  assert.equal(qualityTierForFps(60, "balanced", false), "balanced");
-  assert.equal(qualityTierForFps(60, "battery", false), "battery");
-  assert.equal(qualityTierForFps(20, "balanced", false), "battery");
-
-  assert.equal(pickupBudget(1200, "high"), 160);
-  assert.equal(pickupBudget(1200, "balanced"), 130);
-  assert.equal(pickupBudget(1200, "battery"), 96);
-  assert.equal(pickupBudget(390, "balanced"), 120);
-  // A landscape phone reports a desktop-class width but keeps phone budgets
-  // when the caller marks the device compact.
-  assert.equal(pickupBudget(932, "high", true), 140);
-  assert.equal(pickupBudget(932, "balanced", true), 120);
-  assert.equal(
-    lowPickupBudget(932, "balanced", true),
-    Math.floor(pickupBudget(932, "balanced", true) * 0.84),
-  );
-  assert.ok(pickupBudget(1200, "high") > pickupBudget(390, "high"));
-  assert.ok(pickupBudget(390, "high") > pickupBudget(390, "battery"));
-  assert.equal(
-    lowPickupBudget(390, "balanced"),
-    Math.floor(pickupBudget(390, "balanced") * 0.84),
-  );
-  assert.ok(pixelRatioCap(true, "battery") < pixelRatioCap(false, "high"));
 });

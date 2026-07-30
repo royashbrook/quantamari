@@ -20,7 +20,16 @@ type PerformanceSnapshot = {
     radius: number;
     playerScale: number;
     worldScale: number;
-    qualityUpgradeLocked: boolean;
+    performanceProfile: "standard" | "battery";
+    adaptiveQuality: boolean;
+    profileSettings: {
+      qualityTier: "high" | "balanced" | "battery";
+      targetFps: number;
+      idleTargetFps: number;
+      pixelRatioCap: number;
+      antialias: boolean;
+      shadows: boolean;
+    };
     worldGeneration: number;
     transitionActive: boolean;
     pickups: {
@@ -98,6 +107,18 @@ async function enablePerformanceDiagnostics(
         : {}),
     });
   }, forcedQuality);
+}
+
+async function seedPerformanceProfile(
+  page: Page,
+  profile: "standard" | "battery",
+) {
+  await page.addInitScript((selectedProfile) => {
+    localStorage.setItem(
+      "quantamari-performance-profile",
+      selectedProfile,
+    );
+  }, profile);
 }
 
 async function readPerformanceDiagnostics(page: Page) {
@@ -262,6 +283,9 @@ test("boots the static game at its production root", async ({ page }) => {
   await menuTrigger.click();
   const menu = page.getByRole("dialog", { name: "Game menu" });
   await expect(menu).toBeVisible();
+  await expect(
+    menu.getByRole("switch", { name: /Battery Optimized/ }),
+  ).toHaveAttribute("aria-checked", "false");
   await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
     "href",
     "/rescue",
@@ -392,6 +416,90 @@ test("browser changes survive a page reload", async ({ page }) => {
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
+});
+
+test("performance profile changes only by explicit persisted choice", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.performanceProfile,
+    )
+    .toBe("standard");
+  const standard = await readPerformanceDiagnostics(page);
+  expect(standard?.runtime.quality).toBe("balanced");
+  expect(standard?.runtime.adaptiveQuality).toBe(false);
+  expect(standard?.runtime.profileSettings).toMatchObject({
+    targetFps: 30,
+    idleTargetFps: 24,
+    pixelRatioCap: 1.25,
+  });
+  const semanticPopulation = standard?.runtime.pickups.target;
+  const standardWorldGeneration = standard?.runtime.worldGeneration;
+  await page.waitForTimeout(5_500);
+  const afterStandardMeasurement = await readPerformanceDiagnostics(page);
+  expect(afterStandardMeasurement?.runtime.performanceProfile).toBe(
+    "standard",
+  );
+  expect(afterStandardMeasurement?.runtime.quality).toBe("balanced");
+  expect(afterStandardMeasurement?.runtime.worldGeneration).toBe(
+    standardWorldGeneration,
+  );
+
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  const profileSwitch = page.getByRole("switch", {
+    name: /Battery Optimized/,
+  });
+  await profileSwitch.click();
+  await expect(profileSwitch).toHaveAttribute("aria-checked", "true");
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.performanceProfile,
+      { timeout: 30_000 },
+    )
+    .toBe("battery");
+  const battery = await readPerformanceDiagnostics(page);
+  expect(battery?.runtime.quality).toBe("battery");
+  expect(battery?.runtime.adaptiveQuality).toBe(false);
+  expect(battery?.runtime.profileSettings).toMatchObject({
+    targetFps: 30,
+    idleTargetFps: 15,
+    pixelRatioCap: 1,
+    shadows: false,
+  });
+  expect(battery?.runtime.pickups.target).toBe(semanticPopulation);
+
+  await page.getByRole("button", { name: "Resume rolling" }).click();
+  const stableWorldGeneration = battery?.runtime.worldGeneration;
+  await page.waitForTimeout(5_500);
+  const afterMeasurementWindow = await readPerformanceDiagnostics(page);
+  expect(afterMeasurementWindow?.runtime.performanceProfile).toBe("battery");
+  expect(afterMeasurementWindow?.runtime.quality).toBe("battery");
+  expect(afterMeasurementWindow?.runtime.worldGeneration).toBe(
+    stableWorldGeneration,
+  );
+
+  const stored = await page.evaluate(() => ({
+    profile: localStorage.getItem("quantamari-performance-profile"),
+    save: JSON.parse(
+      localStorage.getItem("everything-roll-save-v4") ?? "{}",
+    ) as Record<string, unknown>,
+  }));
+  expect(stored.profile).toBe("battery");
+  expect(stored.save.performanceProfile).toBeUndefined();
+
+  await page.reload();
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await expect(
+    page.getByRole("switch", { name: /Battery Optimized/ }),
+  ).toHaveAttribute("aria-checked", "true");
 });
 
 test("game menu freezes the world and Escape resumes it", async ({ page }) => {
@@ -531,6 +639,7 @@ test("reset clears Quantamari progress in every open tab", async ({
     );
     localStorage.setItem("everything-roll-save-v3", "legacy-v3");
     localStorage.setItem("everything-roll-save-v2", "legacy-v2");
+    localStorage.setItem("quantamari-performance-profile", "battery");
     localStorage.setItem("unrelated-origin-data", "keep-me");
   });
   await page.goto(appPath);
@@ -552,12 +661,14 @@ test("reset clears Quantamari progress in every open tab", async ({
       v4: localStorage.getItem("everything-roll-save-v4"),
       v3: localStorage.getItem("everything-roll-save-v3"),
       v2: localStorage.getItem("everything-roll-save-v2"),
+      profile: localStorage.getItem("quantamari-performance-profile"),
       unrelated: localStorage.getItem("unrelated-origin-data"),
     })),
   ).toMatchObject({
     v4: expect.any(String),
     v3: "legacy-v3",
     v2: "legacy-v2",
+    profile: "battery",
     unrelated: "keep-me",
   });
 
@@ -580,12 +691,14 @@ test("reset clears Quantamari progress in every open tab", async ({
       v4: localStorage.getItem("everything-roll-save-v4"),
       v3: localStorage.getItem("everything-roll-save-v3"),
       v2: localStorage.getItem("everything-roll-save-v2"),
+      profile: localStorage.getItem("quantamari-performance-profile"),
       unrelated: localStorage.getItem("unrelated-origin-data"),
     })),
   ).toEqual({
     v4: null,
     v3: null,
     v2: null,
+    profile: "battery",
     unrelated: "keep-me",
   });
   expect(
@@ -593,12 +706,14 @@ test("reset clears Quantamari progress in every open tab", async ({
       v4: localStorage.getItem("everything-roll-save-v4"),
       v3: localStorage.getItem("everything-roll-save-v3"),
       v2: localStorage.getItem("everything-roll-save-v2"),
+      profile: localStorage.getItem("quantamari-performance-profile"),
       unrelated: localStorage.getItem("unrelated-origin-data"),
     })),
   ).toEqual({
     v4: null,
     v3: null,
     v2: null,
+    profile: "battery",
     unrelated: "keep-me",
   });
   await otherPage.close();
@@ -919,6 +1034,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   test.setTimeout(110_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
+  await seedPerformanceProfile(page, "battery");
   await seedAttachedFoam(page);
   await begin(page);
   await page.getByRole("button", { name: "Open scale and science atlas" }).click();
@@ -945,8 +1061,12 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   expect(battery?.runtime.pickups.active).toBe(
     battery?.runtime.pickups.target,
   );
-  expect(battery?.runtime.qualityUpgradeLocked).toBe(true);
-  expect(battery?.runtime.representations.attachmentProxyActive).toBe(true);
+  expect(battery?.runtime.performanceProfile).toBe("battery");
+  expect(battery?.runtime.adaptiveQuality).toBe(false);
+  expect(battery?.runtime.representations.attachmentProxyActive).toBe(false);
+  expect(
+    battery?.runtime.representations.proxyPieces,
+  ).toBeGreaterThan(0);
   expect(
     (battery?.runtime.drawBudget.base ?? 0) +
     (battery?.runtime.drawBudget.richUsed ?? 0) +
@@ -965,7 +1085,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   await page.evaluate(() => window.dispatchEvent(new Event("resize")));
   const afterResize = await readPerformanceDiagnostics(page);
   expect(afterResize?.runtime.quality).toBe("battery");
-  expect(afterResize?.runtime.qualityUpgradeLocked).toBe(true);
+  expect(afterResize?.runtime.adaptiveQuality).toBe(false);
 
   const selected = await page.evaluate(() => {
     const debugWindow = window as typeof window & {
@@ -984,7 +1104,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
           snapshot &&
             snapshot.runtime.era === 21 &&
             snapshot.runtime.quality === "battery" &&
-            snapshot.runtime.qualityUpgradeLocked &&
+            snapshot.runtime.adaptiveQuality === false &&
             snapshot.runtime.pickups.current ===
               snapshot.runtime.pickups.target &&
             snapshot.runtime.pickups.queued === 0 &&
@@ -1016,7 +1136,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   await page.waitForTimeout(5_500);
   const afterAnotherQualityWindow = await readPerformanceDiagnostics(page);
   expect(afterAnotherQualityWindow?.runtime.quality).toBe("battery");
-  expect(afterAnotherQualityWindow?.runtime.qualityUpgradeLocked).toBe(true);
+  expect(afterAnotherQualityWindow?.runtime.adaptiveQuality).toBe(false);
   expect(afterAnotherQualityWindow?.runtime.worldGeneration).toBe(
     stableWorldGeneration,
   );
@@ -1097,11 +1217,11 @@ test("battery draw budgeting covers every authored era", async ({ page }) => {
       `era ${era} hid its retained substrate to meet the battery budget`,
     ).toBe(false);
     expect(
-      (snapshot?.runtime.drawBudget.base ?? 0) +
-        (snapshot?.runtime.drawBudget.richUsed ?? 0) +
-        ((snapshot?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
-      `era ${era} exceeded its weighted draw budget`,
-    ).toBeLessThanOrEqual(snapshot?.runtime.budget.maxDrawCalls ?? 0);
+      snapshot?.runtime.drawBudget.richUsed,
+      `era ${era} exceeded its allocated rich-detail budget`,
+    ).toBeLessThanOrEqual(
+      snapshot?.runtime.drawBudget.richBudget ?? 0,
+    );
   }
 });
 

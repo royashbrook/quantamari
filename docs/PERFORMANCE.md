@@ -8,20 +8,22 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
 
 - Three.js is a deferred browser chunk and loads only when play or Scale Lab
   begins.
-- The animation loop uses refresh-aligned 60/30 fps tier targets instead of
-  submitting at the display's full refresh rate. A stationary world settles to
-  30 fps, and long pauses drop missed frames instead of replaying them.
+- The animation loop uses fixed, refresh-aligned profile targets instead of
+  submitting at the display's full refresh rate. Standard targets 60 fps on a
+  wide viewport and 30 fps on a compact viewport, settling to 30 or 24 fps
+  while idle. Battery Optimized targets 30 fps active and 15 fps idle. Long
+  pauses drop missed frames instead of replaying them.
 - At most three semantic scale layers are resident: current, recognizable prior,
   and fabric prior.
 - Prior-layer objects and city buildings use `InstancedMesh`.
 - Far pickups hide their multi-part models and share one colored instanced mesh.
-- Rich pickup models have a quality-tier cap; battery mode tightens that cap
-  from measured draw calls until it meets budget. Pickup population, pixel ratio,
-  and shadows adapt through frame-rate hysteresis. Automatic quality is
-  downgrade-only for a running game; reload is the explicit reset. This prevents
-  viewport and layer changes from restarting a five-second promotion/downgrade
-  feedback loop. Excess and distant pickups use a 600 ms shrink-out instead of
-  disappearing abruptly.
+- Rich pickup models have a fixed profile cap. Standard caps device pixel ratio
+  at 1.5 on wide views and 1.25 on compact views. Battery Optimized caps it at
+  1, disables antialiasing, shadows, and transmission, and uses the tighter
+  rich-model budget. The selected profile is persisted and changes only through
+  the game menu: measured frame rate never switches profile, population,
+  environment, or substrate. Excess and distant pickups use a 600 ms
+  shrink-out instead of disappearing abruptly.
 - The mash keeps only 12–24 recent rich toys; older pieces collapse into one
   colored instanced proxy draw. When the mash itself projects below rich-detail
   size—or battery quality is required—its remaining toys use that same proxy
@@ -40,20 +42,17 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
 
 ## Budgets
 
-| Tier | Target | Draw calls | Triangles | Rich objects | Instances |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| High | 60 fps | 180 | 600k | 64 | 4,000 |
-| Balanced | 60 fps | 120 | 300k | 48 | 2,500 |
-| Battery | 30 fps | 80 | 180k | 32 | 1,500 |
+| Profile / view | Active | Idle | DPR cap | Draw calls | Triangles | Rich objects | Instances |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Standard / wide | 60 fps | 30 fps | 1.5 | 180 | 600k | 64 | 4,000 |
+| Standard / compact | 30 fps | 24 fps | 1.25 | 120 | 300k | 48 | 2,500 |
+| Battery Optimized | 30 fps | 15 fps | 1 | 80 | 180k | 32 | 1,500 |
 
-Balanced targets 60 fps submission with the cooler draw/triangle budgets so
-modern phones (which boot into balanced) feel smooth; devices that cannot
-reach it simply render fewer frames, and the battery demotion threshold is
-unchanged.
-
-The desktop controls HUD reports measured FPS, draw calls, and triangle count.
-Quality falls when a device misses its target and remains at the cooler tier for
-the rest of that running game.
+Viewport class determines only framing, frame pacing, DPR, and rendering
+budget. The selected profile never changes the authored encounter population
+or removes an entire environment, prior-layer rug, or substrate. Opt-in browser
+diagnostics report measured FPS, draw calls, and triangle count without
+changing the profile.
 
 ## WASM threshold
 

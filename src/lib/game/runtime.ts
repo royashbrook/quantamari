@@ -21,9 +21,7 @@ import {
   nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
-  pixelRatioCap,
   progressAfterPickup,
-  qualityTierForFps,
   radiusForLayerProgress,
   resolveCircleAabbCollision,
   resolveCircularCollision,
@@ -52,6 +50,10 @@ import {
   type GameMode,
   type MashRecordV4,
 } from "../save-data";
+import {
+  type PerformanceProfile,
+  performanceProfileSettings,
+} from "../performance-profile";
 import {
   advanceFrameDeadline,
   createPhaseRecorder,
@@ -250,10 +252,6 @@ export type HudState = {
   lens: number;
   zooms: number;
   cycles: number;
-  quality: QualityTier;
-  fps: number;
-  drawCalls: number;
-  triangles: number;
 };
 
 export type FactCard = {
@@ -276,6 +274,7 @@ export type RuntimeBindings = {
   mashHistoryRef: MutableRef<MashRecordV4[]>;
   collectionRef: MutableRef<CollectionEntry[]>;
   labEra: number | null;
+  performanceProfile: PerformanceProfile;
   setToast: (message: string) => void;
   setLastFact: (fact: FactCard) => void;
   setCollection: (entries: CollectionEntry[]) => void;
@@ -303,6 +302,7 @@ export function mountGame(
     mashHistoryRef,
     collectionRef,
     labEra,
+    performanceProfile: requestedPerformanceProfile,
     setToast,
     setLastFact,
     setCollection,
@@ -317,9 +317,6 @@ export function mountGame(
   const bootScene = async () => {
   if (disposed) return;
   const game = gameRef.current;
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   const debugWindow = window as typeof window & {
     __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
     __QUARKATAMARI_FORCED_QUALITY__?: QualityTier;
@@ -356,19 +353,33 @@ export function mountGame(
   const compactGpu = isCompactView(window.innerWidth);
   const forcedQualityTier =
     debugWindow.__QUARKATAMARI_FORCED_QUALITY__ ?? null;
-  let qualityTier: QualityTier =
-    forcedQualityTier ?? (compactGpu ? "balanced" : "high");
-  const qualityUpgradeLocked = true;
-  let richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
+  const performanceProfile: PerformanceProfile = forcedQualityTier
+    ? forcedQualityTier === "battery"
+      ? "battery"
+      : "standard"
+    : requestedPerformanceProfile;
+  const profileSettings = performanceProfileSettings(
+    performanceProfile,
+    compactGpu,
+  );
+  const qualityTier: QualityTier =
+    forcedQualityTier ?? profileSettings.qualityTier;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(46, 1, 0.06, 220);
+  const renderer = new THREE.WebGLRenderer({
+    antialias: profileSettings.antialias,
+    alpha: false,
+  });
+  const richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
   const reducedWorldDetail = () =>
     compactGpu || qualityTier !== "high";
   renderer.setPixelRatio(
     Math.min(
       window.devicePixelRatio || 1,
-      pixelRatioCap(compactGpu, qualityTier),
+      profileSettings.pixelRatioCap,
     ),
   );
-  renderer.shadowMap.enabled = qualityTier !== "battery";
+  renderer.shadowMap.enabled = profileSettings.shadows;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -392,7 +403,7 @@ export function mountGame(
   scene.add(hemisphere);
   const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
   keyLight.position.set(-7, 12, 8);
-  keyLight.castShadow = qualityTier !== "battery";
+  keyLight.castShadow = profileSettings.shadows;
   keyLight.shadow.mapSize.set(
     qualityTier === "high" ? (compactGpu ? 1024 : 2048) : 1024,
     qualityTier === "high" ? (compactGpu ? 1024 : 2048) : 1024,
@@ -469,9 +480,6 @@ export function mountGame(
   const pickupColorCache = new Map<string, THREE.Color>();
   let baseSceneDrawCalls = 0;
   let baseSceneDrawCallsDirty = true;
-  let batterySuppressedEnvironment = false;
-  let batterySuppressedDust = false;
-  let batterySuppressedSubstrate = false;
   let richPickupDrawCallBudget = 0;
   let richPickupDrawCalls = 0;
 
@@ -760,7 +768,6 @@ export function mountGame(
   const buildSubstrate = (viewScale: number) => {
     const startedAt = phaseStart();
     substrateGroup.visible = true;
-    batterySuppressedSubstrate = false;
     substrateGroup.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
         object.geometry.dispose();
@@ -1522,8 +1529,6 @@ export function mountGame(
   const buildEnvironment = (index: number) => {
     disposeEnvironment();
     environmentGroup.visible = true;
-    batterySuppressedEnvironment = false;
-    batterySuppressedDust = false;
     applyScaleTextures(index);
     environmentMode = environmentModeFor(index);
     activeWorldKind = worldSpecForEra(ERAS[index].name).kind;
@@ -3250,7 +3255,7 @@ export function mountGame(
     renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio || 1,
-        pixelRatioCap(isCompactView(width), qualityTier),
+        profileSettings.pixelRatioCap,
       ),
     );
     renderer.setSize(width, height, false);
@@ -3296,8 +3301,10 @@ export function mountGame(
             radius: game.radius,
             playerScale: playerRoot.scale.x,
             worldScale: transitionWorldScale,
-            qualityUpgradeLocked,
+            performanceProfile,
+            adaptiveQuality: false,
             quality: qualityTier,
+            profileSettings,
             worldGeneration,
             transitionActive: scaleTransitionStarted >= 0,
             pickups: {
@@ -3371,8 +3378,8 @@ export function mountGame(
               base: baseSceneDrawCalls,
               richBudget: richPickupDrawCallBudget,
               richUsed: richPickupDrawCalls,
-              environmentSuppressed: batterySuppressedEnvironment,
-              substrateSuppressed: batterySuppressedSubstrate,
+              environmentSuppressed: false,
+              substrateSuppressed: false,
             },
             bursts: {
               active: popBursts.length,
@@ -3530,39 +3537,12 @@ export function mountGame(
     });
     return drawCalls;
   };
-  const refreshBatteryBaseDrawCalls = (maxDrawCalls: number) => {
+  const refreshBaseSceneDrawCalls = () => {
     pickups.forEach((pickup) => {
       pickup.root.visible = false;
     });
     farPickupMesh.visible = false;
-    if (batterySuppressedEnvironment) {
-      environmentGroup.visible = true;
-      batterySuppressedEnvironment = false;
-    }
-    if (batterySuppressedDust) {
-      dustField.visible = true;
-      batterySuppressedDust = false;
-    }
-    if (batterySuppressedSubstrate) {
-      substrateGroup.visible = true;
-      batterySuppressedSubstrate = false;
-    }
     baseSceneDrawCalls = countVisibleBaseDrawCalls();
-    if (baseSceneDrawCalls > maxDrawCalls && dustField.visible) {
-      dustField.visible = false;
-      batterySuppressedDust = true;
-      baseSceneDrawCalls = countVisibleBaseDrawCalls();
-    }
-    if (baseSceneDrawCalls > maxDrawCalls && substrateGroup.visible) {
-      substrateGroup.visible = false;
-      batterySuppressedSubstrate = true;
-      baseSceneDrawCalls = countVisibleBaseDrawCalls();
-    }
-    if (baseSceneDrawCalls > maxDrawCalls && environmentGroup.visible) {
-      environmentGroup.visible = false;
-      batterySuppressedEnvironment = true;
-      baseSceneDrawCalls = countVisibleBaseDrawCalls();
-    }
     baseSceneDrawCallsDirty = false;
   };
   const animate = (now: number) => {
@@ -3601,11 +3581,12 @@ export function mountGame(
       performanceWindowStarted = now;
       performanceFrames = 0;
     }
-    const tierTargetFps = worldPerformanceBudget(qualityTier).targetFps;
     const advancedDeadline = advanceFrameDeadline(
       now,
       nextFrameDeadline,
-      framePacingIdle ? Math.min(30, tierTargetFps) : tierTargetFps,
+      framePacingIdle
+        ? profileSettings.idleTargetFps
+        : profileSettings.targetFps,
     );
     if (advancedDeadline === null) {
       frame = requestAnimationFrame(animate);
@@ -3622,50 +3603,6 @@ export function mountGame(
     const performanceWindow = now - performanceWindowStarted;
     if (performanceWindow >= 5000) {
       measuredFps = (performanceFrames * 1000) / performanceWindow;
-      const performanceBudget = worldPerformanceBudget(qualityTier);
-      const overRenderBudget =
-        renderer.info.render.calls > performanceBudget.maxDrawCalls ||
-        renderer.info.render.triangles > performanceBudget.maxTriangles;
-      const capacityFps = framePacingIdle
-        ? Math.max(measuredFps, performanceBudget.targetFps)
-        : measuredFps;
-      const budgetAdjustedFps = overRenderBudget
-        ? Math.min(capacityFps, qualityTier === "high" ? 40 : 20)
-        : capacityFps;
-      const nextQualityTier =
-        forcedQualityTier ??
-        qualityTierForFps(
-          budgetAdjustedFps,
-          qualityTier,
-          !qualityUpgradeLocked,
-        );
-      if (nextQualityTier !== qualityTier) {
-        qualityTier = nextQualityTier;
-        richPickupLimit = worldPerformanceBudget(qualityTier).maxRichObjects;
-        renderer.setPixelRatio(
-          Math.min(
-            window.devicePixelRatio || 1,
-            pixelRatioCap(isCompactView(width), qualityTier),
-          ),
-        );
-        renderer.setSize(width, height, false);
-        renderer.shadowMap.enabled = qualityTier !== "battery";
-        keyLight.castShadow = qualityTier !== "battery";
-        applyPhysicalMaterialQuality(scene);
-        visualTemplates.forEach((template) => {
-          applyPhysicalMaterialQuality(template.root);
-        });
-        const qualityViewScale = semanticViewScale(
-          activeIndex,
-          game.lens,
-          ERAS.length,
-        );
-        rebuildEnvironment(activeIndex);
-        buildSubstrate(qualityViewScale);
-        applyGroundScaleTexture(qualityViewScale);
-        reconcilePickupQueue();
-        baseSceneDrawCallsDirty = true;
-      }
       performanceWindowStarted = now;
       performanceFrames = 0;
     }
@@ -3915,11 +3852,10 @@ export function mountGame(
       height,
     );
     setMashProxyLod(
-      qualityTier === "battery" ||
-        !wantsRichProjectedDetail(
-          mashProjectedSize,
-          !mashProxyIncludesRich,
-        ),
+      !wantsRichProjectedDetail(
+        mashProjectedSize,
+        !mashProxyIncludesRich,
+      ),
     );
     const sceneryProjectedSize = projectedDiameterPixels(
       3 * transitionWorldScale,
@@ -3928,12 +3864,11 @@ export function mountGame(
       height,
     );
     setCentralSceneryLod(
-      qualityTier === "battery" ||
-        (PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
-          !wantsRichProjectedDetail(
-            sceneryProjectedSize,
-            centralSceneryCompact === false,
-          )),
+      PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
+        !wantsRichProjectedDetail(
+          sceneryProjectedSize,
+          centralSceneryCompact === false,
+        ),
     );
     const activeChunkSize = worldChunkSize(activeWorldKind);
     const chunkX = Math.round(game.x / activeChunkSize) * activeChunkSize;
@@ -4020,7 +3955,7 @@ export function mountGame(
       const silhouetteReserve =
         activeSilhouetteFamilies * 2 + fabricSilhouetteFamilies;
       if (baseSceneDrawCallsDirty) {
-        refreshBatteryBaseDrawCalls(renderBudget.maxDrawCalls);
+        refreshBaseSceneDrawCalls();
       }
       richPickupDrawCallBudget = Math.max(
         0,
@@ -4237,10 +4172,7 @@ export function mountGame(
     silhouetteBadgeInstances = silhouetteLod.badges;
     silhouetteLodDrawCalls = silhouetteLod.drawCalls;
     farPickupMesh.count = farPickupCount;
-    farPickupMesh.visible =
-      farPickupCount > 0 &&
-      (qualityTier !== "battery" ||
-        baseSceneDrawCalls < renderBudget.maxDrawCalls);
+    farPickupMesh.visible = farPickupCount > 0;
     farPickupMesh.instanceMatrix.needsUpdate = true;
     if (farPickupMesh.instanceColor) {
       farPickupMesh.instanceColor.needsUpdate = true;
@@ -4339,10 +4271,6 @@ export function mountGame(
         lens: game.lens,
         zooms: game.zooms,
         cycles: game.cycles,
-        quality: qualityTier,
-        fps: measuredFps,
-        drawCalls: renderer.info.render.calls,
-        triangles: renderer.info.render.triangles,
       });
       hudClock = 0;
     }

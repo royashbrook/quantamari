@@ -18,11 +18,15 @@
   } from "$lib/scale-data";
   import {
     CORE_RADIUS_MIN,
-    type QualityTier,
     canStartPointerSteering,
     deepLensUnlocked,
     radiusForLayerProgress,
   } from "$lib/game-rules";
+  import {
+    PERFORMANCE_PROFILE_STORAGE_KEY,
+    type PerformanceProfile,
+    parsePerformanceProfile,
+  } from "$lib/performance-profile";
   import {
     SAVE_KEYS,
     createSaveData,
@@ -120,6 +124,7 @@
   let labEra = $state<number | null>(null);
   let sound = $state(true);
   let gameMode = $state<GameMode>("journey");
+  let performanceProfile = $state<PerformanceProfile>("standard");
   let collection = $state<CollectionEntry[]>([]);
   let legacyUnitemizedCount = $state(0);
   let updateReady = $state(false);
@@ -150,10 +155,6 @@
     lens: 1,
     zooms: 0,
     cycles: 0,
-    quality: "high" as QualityTier,
-    fps: 60,
-    drawCalls: 0,
-    triangles: 0,
   });
   const saveStatus = { errorReported: false };
   let waitingWorker: ServiceWorker | null = null;
@@ -267,6 +268,23 @@
     gameRef.current.sound = next;
     sound = next;
     if (next) ping(520);
+  }
+
+  function toggleBatteryOptimized() {
+    const next =
+      performanceProfile === "battery" ? "standard" : "battery";
+    try {
+      localStorage.setItem(PERFORMANCE_PROFILE_STORAGE_KEY, next);
+    } catch {
+      toast =
+        "This browser blocked device settings. The current graphics profile is unchanged.";
+      return;
+    }
+    performanceProfile = next;
+    toast =
+      next === "battery"
+        ? "Battery Optimized is on: cooler rendering, same universe."
+        : "Standard graphics restored: stable detail with no automatic switching.";
   }
 
   function activeElement() {
@@ -459,6 +477,23 @@
   onMount(() => {
     document.documentElement.dataset.quarkatamariReady = "true";
     window.dispatchEvent(new Event("quarkatamari:ready"));
+  });
+
+  onMount(() => {
+    try {
+      performanceProfile = parsePerformanceProfile(
+        localStorage.getItem(PERFORMANCE_PROFILE_STORAGE_KEY),
+      );
+    } catch {
+      performanceProfile = "standard";
+    }
+    const syncPerformanceProfile = (event: StorageEvent) => {
+      if (event.key !== PERFORMANCE_PROFILE_STORAGE_KEY) return;
+      performanceProfile = parsePerformanceProfile(event.newValue);
+    };
+    window.addEventListener("storage", syncPerformanceProfile);
+    return () =>
+      window.removeEventListener("storage", syncPerformanceProfile);
   });
 
   onMount(() => {
@@ -723,6 +758,7 @@
   $effect(() => {
     const target = mount;
     const preview = labEra;
+    const selectedPerformanceProfile = performanceProfile;
     if (!started || !target) return;
     let cancelled = false;
     let destroy: (() => void) | undefined;
@@ -737,6 +773,7 @@
           mashHistoryRef,
           collectionRef,
           labEra: preview,
+          performanceProfile: selectedPerformanceProfile,
           setToast: updateToast,
           setLastFact: updateLastFact,
           setCollection: updateCollection,
@@ -1138,10 +1175,6 @@
       <span><kbd>I</kbd> science</span>
       <span><kbd>G</kbd> field guide</span>
       <span><kbd>ESC</kbd> menu</span>
-      <span class="quality-mode">
-        {hud.quality} · {Math.round(hud.fps)} fps · {hud.drawCalls} draws ·
-        {Math.round(hud.triangles / 1000)}k tris
-      </span>
     </div>
     {#if !touchTipSeen}
       <div class="touch-tip hud">◎ drag anywhere to roll · pinch to zoom</div>
@@ -1240,10 +1273,12 @@
       {appVersion}
       {buildLabel}
       {updateReady}
+      {performanceProfile}
       onClose={closeMenu}
       onOpenGuide={openGuideFromMenu}
       onOpenAtlas={openAtlasFromMenu}
       onToggleSound={toggleSound}
+      onToggleBatteryOptimized={toggleBatteryOptimized}
       onReset={resetProgress}
       onApplyUpdate={applyUpdate}
     />

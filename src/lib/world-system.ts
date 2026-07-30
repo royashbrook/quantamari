@@ -342,10 +342,8 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
   balanced: {
-    // Modern phones boot into balanced; they deserve 60fps submission while
-    // the draw/triangle budgets stay at the cooler balanced ceiling. Devices
-    // that cannot reach it simply render fewer frames — the battery demotion
-    // threshold (<24fps) is unchanged.
+    // Standard compact mode uses this fixed detail ceiling; frame pacing lives
+    // in the explicit performance profile rather than changing this tier.
     targetFps: 60,
     maxDrawCalls: 120,
     maxTriangles: 300_000,
@@ -356,7 +354,10 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
   },
   battery: {
     targetFps: 30,
-    maxDrawCalls: 80,
+    // Keep enough headroom for every authored environment and retained
+    // substrate. Battery savings come from pacing, DPR, shadows, triangles,
+    // and rich-object limits—not by hiding whole world layers.
+    maxDrawCalls: 120,
     maxTriangles: 180_000,
     maxRichObjects: 32,
     maxInstances: 1_500,
