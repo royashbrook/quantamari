@@ -60,14 +60,23 @@ test("build is a standalone root-origin static PWA", async () => {
     assert.ok((await stat(resolve(clientRoot, icon))).size > 1_000);
   }
 
-  // Mobile PWA head contract: notch-safe viewport and iOS standalone metas.
+  // Mobile PWA head contract. viewport-fit=cover must stay absent: installed
+  // iPhone PWAs otherwise strand a 68pt strip below the web viewport.
   const appHtml = await readFile(resolve(clientRoot, "index.html"), "utf8");
   const charsetAt = appHtml.indexOf('<meta charset="utf-8"');
   const firstScriptAt = appHtml.indexOf("<script");
   assert.ok(charsetAt >= 0 && charsetAt < 1_024);
   assert.ok(firstScriptAt === -1 || charsetAt < firstScriptAt);
   assert.doesNotMatch(appHtml, /qm-migrate/);
-  assert.match(appHtml, /viewport-fit=cover/);
+  const viewportMeta = appHtml
+    .match(/<meta\b[^>]*>/gi)
+    ?.find((tag) => /\bname\s*=\s*["']viewport["']/i.test(tag));
+  assert.ok(viewportMeta, "built app must include a viewport meta tag");
+  const viewportContent = viewportMeta.match(
+    /\bcontent\s*=\s*["']([^"']*)["']/i,
+  );
+  assert.ok(viewportContent, "viewport meta tag must include content");
+  assert.doesNotMatch(viewportContent[1], /\bviewport-fit\s*=\s*cover\b/i);
   assert.match(appHtml, /apple-mobile-web-app-status-bar-style/);
 
   const html = await readFile(resolve(clientRoot, "index.html"), "utf8");

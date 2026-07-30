@@ -254,6 +254,11 @@ action below a small-iPhone viewport. These changes are tracked under
 [#32](https://github.com/royashbrook/quantamari/issues/32), with the launch
 screen fix under
 [#38](https://github.com/royashbrook/quantamari/issues/38).
+v3.1.1 gives iPhone gameplay back to the world: it removes the installed-PWA
+bottom gap, reduces the permanent mobile HUD to compact status and touch
+controls, waits for a real pickup before showing a fact, and keeps every guide
+exit visible without triggering iOS input zoom. The fix is tracked under
+[issue #40](https://github.com/royashbrook/quantamari/issues/40).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

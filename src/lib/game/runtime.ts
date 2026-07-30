@@ -336,6 +336,7 @@ export function mountGame(
       previewEra: (index: number) => number;
       setLens: (value: number) => number;
       emitPickupBursts: (count: number) => number;
+      collectCurrentPickup: () => string | null;
     };
   };
   const phaseRecorder = debugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__
@@ -3633,6 +3634,17 @@ export function mountGame(
             );
           }
           return popBursts.length;
+        },
+        collectCurrentPickup: () => {
+          const pickupIndex = pickups.findIndex(
+            (pickup) => pickup.sourceEra === activeIndex,
+          );
+          if (pickupIndex < 0) return null;
+          const [pickup] = pickups.splice(pickupIndex, 1);
+          const name = pickup.curio.name;
+          collect(pickup, performance.now());
+          reconcilePickupQueue();
+          return name;
         },
       }
     : null;

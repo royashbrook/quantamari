@@ -232,6 +232,7 @@
   const descriptionId = `${componentId}-description`;
 
   let dialog = $state<HTMLDialogElement>();
+  let closeButton = $state<HTMLButtonElement>();
   let searchInput = $state<HTMLInputElement>();
   let search = $state("");
   let eraFilter = $state("");
@@ -388,11 +389,18 @@
     if (event.target === event.currentTarget) onClose();
   }
 
+  function focusInitialControl() {
+    const touchFirst =
+      navigator.maxTouchPoints > 0 ||
+      window.matchMedia("(pointer: coarse)").matches;
+    (touchFirst ? closeButton : searchInput)?.focus({ preventScroll: true });
+  }
+
   $effect(() => {
     if (!dialog) return;
     if (open && !dialog.open) {
       dialog.showModal();
-      void tick().then(() => searchInput?.focus());
+      void tick().then(focusInitialControl);
     } else if (!open && dialog.open) {
       dialog.close();
     }
@@ -480,6 +488,7 @@
         </p>
       </div>
       <button
+        bind:this={closeButton}
         class={styles.close}
         type="button"
         onclick={onClose}
