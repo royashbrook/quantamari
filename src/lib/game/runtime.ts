@@ -150,6 +150,7 @@ const WORLD_NAMES: Record<WorldKind, string> = {
   city: "a traversable city grid",
   landscape: "a continuous region of land and water",
   "planet-surface": "the curved surface of a world",
+  "giant-atmosphere": "the cloud tops above a giant world",
   "stellar-field": "a stellar neighborhood",
   "orbital-system": "an ocean of orbital systems",
   "galaxy-field": "a garden of galaxies",
@@ -757,6 +758,7 @@ export function mountGame(
   };
   let sceneryColliders: SceneryCollider[] = [];
   let semanticResidencyKey = "";
+  let substrateLayerIndices: number[] = [];
   let substrateAuthoredInstances = 0;
   let substrateGenericInstances = 0;
 
@@ -784,6 +786,7 @@ export function mountGame(
     const priorLayers = residentLayerIndices(viewScale, ERAS.length).filter(
       (layer) => layer < viewScale,
     );
+    substrateLayerIndices = [...priorLayers];
     priorLayers.forEach((layer, residentPosition) => {
       const depth = Math.max(1, Math.ceil(viewScale) - layer);
       const era = ERAS[layer];
@@ -2031,11 +2034,9 @@ export function mountGame(
     }
 
     if (activeWorldKind === "planet-surface") {
-      const gasGiant = activeEra.name === "Giant Worlds";
-      const atmosphere =
-        activeEra.name === "Planetary Pantry" || gasGiant;
+      const atmosphere = activeEra.name === "Planetary Pantry";
       const skyColor = atmosphere
-        ? new THREE.Color(gasGiant ? "#9d7b73" : "#3e87b7")
+        ? new THREE.Color("#3e87b7")
         : new THREE.Color("#071946");
       scene.background = skyColor;
       scene.fog = new THREE.FogExp2(skyColor, atmosphere ? 0.006 : 0.0035);
@@ -2051,11 +2052,7 @@ export function mountGame(
           reducedWorldDetail() ? 32 : 48,
         ),
         new THREE.MeshStandardMaterial({
-          color: gasGiant
-            ? "#c99a6f"
-            : atmosphere
-              ? "#5f9d63"
-              : "#3c77ad",
+          color: atmosphere ? "#5f9d63" : "#3c77ad",
           roughness: 0.92,
           metalness: 0,
           flatShading: true,
@@ -2067,34 +2064,100 @@ export function mountGame(
         sceneryGlow("#8ce7ff", 0.14, true),
         [0, -79, 0],
       );
-      if (gasGiant) {
-        [-26, -14, 0, 15, 28].forEach((latitude, band) => {
-          const radius = Math.sqrt(80 ** 2 - latitude ** 2);
-          addScenery(
-            new THREE.TorusGeometry(radius, band % 2 ? 1.5 : 2.4, 7, 96),
-            sceneryGlow(
-              ["#f2c78d", "#b86f62", "#ffe0a6"][band % 3],
-              0.22,
-            ),
-            [0, -79 + latitude, 0],
-            [Math.PI / 2, 0, 0],
-          );
-        });
-      } else {
-        for (let mountain = 0; mountain < 18; mountain += 1) {
-          const angle = (mountain / 18) * Math.PI * 2;
-          const distance = 27 + pseudo(mountain + 211) * 16;
-          addScenery(
-            new THREE.ConeGeometry(2.5 + pseudo(mountain + 221) * 2.5, 4 + pseudo(mountain + 231) * 5, 6),
-            sceneryToon(mountain % 3 ? "#6a7f6d" : "#8b7891"),
-            [Math.cos(angle) * distance, 2.3, Math.sin(angle) * distance],
-            [0, pseudo(mountain + 241) * Math.PI, 0],
-          );
-        }
+      for (let mountain = 0; mountain < 18; mountain += 1) {
+        const angle = (mountain / 18) * Math.PI * 2;
+        const distance = 27 + pseudo(mountain + 211) * 16;
+        addScenery(
+          new THREE.ConeGeometry(2.5 + pseudo(mountain + 221) * 2.5, 4 + pseudo(mountain + 231) * 5, 6),
+          sceneryToon(mountain % 3 ? "#6a7f6d" : "#8b7891"),
+          [Math.cos(angle) * distance, 2.3, Math.sin(angle) * distance],
+          [0, pseudo(mountain + 241) * Math.PI, 0],
+        );
       }
       if (!atmosphere) {
         addStarField(reducedWorldDetail() ? 260 : 430, 100, 315);
       }
+      addEraSignature(index);
+      return;
+    }
+
+    if (activeWorldKind === "giant-atmosphere") {
+      const skyColor = new THREE.Color("#594b69");
+      scene.background = skyColor;
+      scene.fog = new THREE.FogExp2(skyColor, 0.0045);
+      ground.visible = false;
+      dustField.visible = false;
+      hemisphere.intensity = 1.32;
+      keyLight.intensity = 3.1;
+
+      // Giant planets have no solid surface to roll on. The player occupies a
+      // deliberately airy cloud-top/orbital metaphor while the banded planet
+      // hangs well below the play plane.
+      addScenery(
+        new THREE.SphereGeometry(
+          42,
+          reducedWorldDetail() ? 36 : 56,
+          reducedWorldDetail() ? 24 : 38,
+        ),
+        new THREE.MeshStandardMaterial({
+          color: "#c99a6f",
+          roughness: 0.88,
+          metalness: 0,
+          flatShading: true,
+        }),
+        [0, -58, -48],
+      );
+      [-14, -7, 1, 9, 16].forEach((latitude, band) => {
+        const radius = Math.sqrt(42 ** 2 - latitude ** 2);
+        addScenery(
+          new THREE.TorusGeometry(radius, band % 2 ? 0.8 : 1.35, 6, 72),
+          sceneryGlow(
+            ["#f2c78d", "#b86f62", "#ffe0a6"][band % 3],
+            0.24,
+          ),
+          [0, -58 + latitude, -48],
+          [Math.PI / 2, 0, 0],
+        );
+      });
+      addScenery(
+        new THREE.TorusGeometry(55, 0.32, 6, 96),
+        sceneryGlow("#ead7aa", 0.28),
+        [0, -58, -48],
+        [Math.PI / 2 + 0.22, 0, -0.18],
+        [1, 1, 0.34],
+      );
+
+      const cloudCount = reducedWorldDetail() ? 46 : 72;
+      const clouds = new THREE.InstancedMesh(
+        new THREE.IcosahedronGeometry(1, 2),
+        sceneryGlow("#f8dcbf", 0.16, true),
+        cloudCount,
+      );
+      clouds.name = "giant-atmosphere:cloud-top";
+      const cloud = new THREE.Object3D();
+      for (let cell = 0; cell < cloudCount; cell += 1) {
+        const angle = pseudo(cell * 7.13 + index) * Math.PI * 2;
+        const distance = 7 + pseudo(cell * 11.29 + 3) * 55;
+        cloud.position.set(
+          Math.cos(angle) * distance,
+          -1.8 + pseudo(cell * 3.71 + 5) * 3.8,
+          Math.sin(angle) * distance,
+        );
+        cloud.rotation.set(
+          pseudo(cell + 11) * 0.4,
+          pseudo(cell + 17) * Math.PI,
+          pseudo(cell + 23) * 0.3,
+        );
+        const cloudScale = 1.2 + pseudo(cell * 5.3 + 29) * 3.4;
+        cloud.scale.set(cloudScale * 1.8, cloudScale * 0.42, cloudScale);
+        cloud.updateMatrix();
+        clouds.setMatrixAt(cell, cloud.matrix);
+      }
+      clouds.instanceMatrix.needsUpdate = true;
+      clouds.castShadow = false;
+      clouds.receiveShadow = false;
+      environmentGroup.add(clouds);
+      addStarField(reducedWorldDetail() ? 180 : 300, 104, index * 29);
       addEraSignature(index);
       return;
     }
@@ -3291,6 +3354,18 @@ export function mountGame(
     onContextRestored,
   );
 
+  const semanticWorldDiagnostics = () => {
+    const viewScale = semanticViewScale(
+      activeIndex,
+      game.lens,
+      ERAS.length,
+    );
+    return {
+      semanticViewScale: viewScale,
+      foundationLayers: [...substrateLayerIndices],
+    };
+  };
+
   const performanceDebug = phaseRecorder
     ? {
         snapshot: () => ({
@@ -3352,9 +3427,17 @@ export function mountGame(
               effectiveRadius: effectiveRollRadius,
             },
             world: {
+              kind: activeWorldKind,
+              surface: worldSpecForEra(activeEra.name).surface,
+              ...semanticWorldDiagnostics(),
               groundVisible: ground.visible,
               dustVisible: dustField.visible,
               environmentChildren: environmentGroup.children.length,
+              atmosphericCloudTop: Boolean(
+                environmentGroup.getObjectByName(
+                  "giant-atmosphere:cloud-top",
+                ),
+              ),
               substrateChildren: substrateGroup.children.length,
               substrateAuthoredInstances,
               substrateGenericInstances,

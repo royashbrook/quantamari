@@ -60,9 +60,14 @@ type PerformanceSnapshot = {
       effectiveRadius: number;
     };
     world: {
+      kind: string;
+      surface: string;
+      semanticViewScale: number;
+      foundationLayers: number[];
       groundVisible: boolean;
       dustVisible: boolean;
       environmentChildren: number;
+      atmosphericCloudTop: boolean;
       substrateChildren: number;
       substrateAuthoredInstances: number;
       substrateGenericInstances: number;
@@ -1574,6 +1579,127 @@ test("long game crosses a layer without a skip animation or size pop", async ({
     .toBeLessThan(0.03);
 });
 
+test("the optical lens resolves only reached layers and leaves the origin empty", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page, "balanced");
+  await begin(page);
+
+  const setLens = (value: number) =>
+    page.evaluate((nextLens) => {
+      const debugWindow = window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          setLens: (lens: number) => number;
+        };
+      };
+      return debugWindow.__QUARKATAMARI_PERFORMANCE__?.setLens(nextLens);
+    }, value);
+
+  expect(await setLens(8)).toBe(8);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            viewScale: snapshot.runtime.world.semanticViewScale,
+            foundations: snapshot.runtime.world.foundationLayers,
+            groundVisible: snapshot.runtime.world.groundVisible,
+            substrateChildren: snapshot.runtime.world.substrateChildren,
+            authored: snapshot.runtime.world.substrateAuthoredInstances,
+            generic: snapshot.runtime.world.substrateGenericInstances,
+          }
+        : null;
+    })
+    .toEqual({
+      era: 0,
+      viewScale: 0,
+      foundations: [],
+      groundVisible: false,
+      substrateChildren: 0,
+      authored: 0,
+      generic: 0,
+    });
+  await expect(page.locator(".lens-control span")).toContainText(
+    "no prior fabric",
+  );
+
+  const previewed = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (index: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(10);
+  });
+  expect(previewed).toBe(10);
+  await expect
+    .poll(
+      async () => (await readPerformanceDiagnostics(page))?.runtime.era,
+    )
+    .toBe(10);
+  expect(await setLens(8)).toBe(8);
+  await expect
+    .poll(async () => {
+      const world = (await readPerformanceDiagnostics(page))?.runtime.world;
+      return world
+        ? {
+            viewScale: world.semanticViewScale,
+            foundations: world.foundationLayers,
+          }
+        : null;
+    })
+    .toEqual({
+      viewScale: 10,
+      foundations: [9, 8],
+    });
+
+  expect(await setLens(1 / 256)).toBe(1 / 256);
+  await expect
+    .poll(async () => {
+      const world = (await readPerformanceDiagnostics(page))?.runtime.world;
+      return world
+        ? {
+            viewScale: world.semanticViewScale,
+            foundations: world.foundationLayers,
+          }
+        : null;
+    })
+    .toEqual({
+      viewScale: 2,
+      foundations: [1, 0],
+    });
+});
+
+test("Giant Worlds uses an atmospheric orbit instead of a solid surface", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page, "balanced");
+  await begin(page);
+  const previewed = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (index: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(26);
+  });
+  expect(previewed).toBe(26);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot?.runtime.era === 26
+        ? snapshot.runtime.world
+        : null;
+    })
+    .toMatchObject({
+      kind: "giant-atmosphere",
+      surface: "atmosphere",
+      groundVisible: false,
+      atmosphericCloudTop: true,
+    });
+});
+
 test("a learning scale shift rebuilds once and repopulates through the work queue", async ({
   page,
 }) => {
@@ -1604,9 +1730,14 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     before?.runtime.representations.attachmentScale ?? 0;
   expect(initialAttachmentScale).toBeGreaterThan(0);
   expect(before?.runtime.world).toEqual({
+    kind: "void",
+    surface: "none",
+    semanticViewScale: 0,
+    foundationLayers: [],
     groundVisible: false,
     dustVisible: false,
     environmentChildren: 0,
+    atmosphericCloudTop: false,
     substrateChildren: 0,
     substrateAuthoredInstances: 0,
     substrateGenericInstances: 0,

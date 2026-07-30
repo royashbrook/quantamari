@@ -52,6 +52,11 @@ test("every authored era maps to a grounded world kind and legacy visual stage",
   assert.equal(worldSpecForEra("Built Environment").kind, "city");
   assert.equal(worldSpecForEra("Landscape Scale").surface, "terrain");
   assert.equal(worldSpecForEra("Planetary Pantry").surface, "sphere");
+  assert.deepEqual(worldSpecForEra("Giant Worlds"), {
+    kind: "giant-atmosphere",
+    surface: "atmosphere",
+    legacyStage: "planet",
+  });
   assert.throws(() => worldSpecForEra("Missing Scale"), RangeError);
 });
 
@@ -175,21 +180,35 @@ test("resident layers retain the current view and at most two prior layers", () 
 test("free lens changes semantic residency without touching journey progress", () => {
   const journey = { layer: 10, progress: 0.42 };
   assert.equal(semanticViewScale(journey.layer, 1, ERAS.length), 10);
-  assert.equal(semanticViewScale(journey.layer, 2, ERAS.length), 11);
+  assert.equal(semanticViewScale(journey.layer, 2, ERAS.length), 10);
+  assert.equal(semanticViewScale(journey.layer, 256, ERAS.length), 10);
   assert.equal(semanticViewScale(journey.layer, 0.5, ERAS.length), 9);
   assert.deepEqual(
     residentLayerIndices(
       semanticViewScale(journey.layer, 2 ** 0.4, ERAS.length),
       ERAS.length,
     ),
-    [11, 10, 9],
+    [10, 9, 8],
   );
   assert.deepEqual(journey, { layer: 10, progress: 0.42 });
   assert.equal(semanticViewScale(0, 1 / 256, ERAS.length), 0);
+  assert.equal(semanticViewScale(0, 1, ERAS.length), 0);
+  assert.equal(semanticViewScale(0, 256, ERAS.length), 0);
   assert.equal(
     semanticViewScale(ERAS.length - 1, 256, ERAS.length),
     ERAS.length - 1,
   );
+
+  for (let active = 0; active < ERAS.length; active += 1) {
+    for (const lens of [1 / 256, 0.5, 1, 2, 8, 256]) {
+      const viewScale = semanticViewScale(active, lens, ERAS.length);
+      assert.ok(viewScale >= 0, `layer ${active} at ${lens}× crossed origin`);
+      assert.ok(
+        viewScale <= active,
+        `layer ${active} at ${lens}× revealed layer ${viewScale}`,
+      );
+    }
+  }
 });
 
 test("periodic chunks stay local and floating-origin shifts preserve tile phase", () => {
