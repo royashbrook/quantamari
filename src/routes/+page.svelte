@@ -1260,7 +1260,7 @@
         <div class="welcome-foot">
           <span>{collectibleCount} UNIQUE SPECIMENS</span><span>•</span>
           <span>{ERAS.length} SCALE LAYERS</span><span>•</span>
-          <span>{scienceSourceCount} PRIMARY LINKS</span><span>•</span>
+          <span>{scienceSourceCount} AUTHORITATIVE LINKS</span><span>•</span>
           <span>THEORY ON BOTH ENDS</span>
         </div>
       </section>
