@@ -13,12 +13,42 @@ type LodFamily = {
 };
 
 const INSTANCES_PER_COLLECTIBLE = 256;
+export const COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE = 128;
+export const COLLECTIBLE_LOD_BADGE_TEXTURE_LIMIT = 128;
+export const COLLECTIBLE_LOD_BADGE_TEXTURE_BYTES =
+  COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE *
+  COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE *
+  4;
+export const COLLECTIBLE_LOD_BADGE_MAX_TEXTURE_BYTES =
+  COLLECTIBLE_LOD_BADGE_TEXTURE_BYTES *
+  COLLECTIBLE_LOD_BADGE_TEXTURE_LIMIT;
 
-function createBadgeTexture(curio: Curio) {
+export function collectibleLodBadgeTextureBytes(textureCount: number) {
+  return (
+    Math.min(
+      COLLECTIBLE_LOD_BADGE_TEXTURE_LIMIT,
+      Math.max(0, Math.floor(textureCount)),
+    ) * COLLECTIBLE_LOD_BADGE_TEXTURE_BYTES
+  );
+}
+
+function stableBadgeColor(key: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `hsl(${(hash >>> 0) % 360} 68% 62%)`;
+}
+
+const FALLBACK_BADGE_SYMBOL = "•";
+
+function createBadgeTexture(symbol: string) {
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 256;
+  canvas.width = COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE;
+  canvas.height = COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE;
   const context = canvas.getContext("2d")!;
+  context.scale(0.5, 0.5);
   context.clearRect(0, 0, 256, 256);
   context.fillStyle = "rgba(255, 255, 255, .94)";
   context.strokeStyle = "#30203f";
@@ -27,7 +57,7 @@ function createBadgeTexture(curio: Curio) {
   context.arc(128, 128, 101, 0, Math.PI * 2);
   context.fill();
   context.stroke();
-  context.fillStyle = curio.color;
+  context.fillStyle = stableBadgeColor(symbol);
   context.beginPath();
   context.arc(128, 122, 80, 0, Math.PI * 2);
   context.fill();
@@ -55,19 +85,49 @@ function createBadgeTexture(curio: Curio) {
     context.fill();
   });
   context.fillStyle = "#30203f";
-  context.font = `900 ${curio.symbol.length > 2 ? 42 : curio.symbol.length > 1 ? 52 : 64}px "Arial Rounded MT Bold", Arial`;
+  context.font = `900 ${symbol.length > 2 ? 42 : symbol.length > 1 ? 52 : 64}px "Arial Rounded MT Bold", Arial`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(curio.symbol, 128, 193, 150);
+  context.fillText(symbol, 128, 193, 150);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.userData.collectibleBadgeSymbol = symbol;
   return texture;
 }
 
-function createBadgeMaterial(curio: Curio) {
+export function createCollectibleBadgeTextureCache() {
+  const textures = new Map<string, THREE.CanvasTexture>();
+
+  return {
+    textureFor(requestedSymbol: string) {
+      const symbol = requestedSymbol || FALLBACK_BADGE_SYMBOL;
+      const cached = textures.get(symbol);
+      if (cached) return cached;
+      const textureKey =
+        textures.size < COLLECTIBLE_LOD_BADGE_TEXTURE_LIMIT - 1 ||
+        symbol === FALLBACK_BADGE_SYMBOL
+          ? symbol
+          : FALLBACK_BADGE_SYMBOL;
+      const shared = textures.get(textureKey);
+      if (shared) return shared;
+      const texture = createBadgeTexture(textureKey);
+      textures.set(textureKey, texture);
+      return texture;
+    },
+    dispose() {
+      textures.forEach((texture) => texture.dispose());
+      textures.clear();
+    },
+  };
+}
+
+function createBadgeMaterial(texture: THREE.CanvasTexture) {
   return new THREE.MeshBasicMaterial({
-    map: createBadgeTexture(curio),
-    side: THREE.DoubleSide,
+    map: texture,
+    side: THREE.FrontSide,
     transparent: true,
     alphaTest: 0.08,
     depthTest: false,
@@ -89,22 +149,6 @@ function disposeBuiltVisual(root: THREE.Object3D) {
   materials.forEach((material) => material.dispose());
 }
 
-function traceSilhouetteGeometry(curio: Curio) {
-  switch (curio.shape) {
-    case "quark":
-      return new THREE.TorusKnotGeometry(0.42, 0.1, 28, 6, 2, 3);
-    case "spark":
-      return new THREE.OctahedronGeometry(0.58, 0);
-    case "bubble":
-    case "atom":
-      return new THREE.IcosahedronGeometry(0.54, 1);
-    case "fiber":
-      return new THREE.CapsuleGeometry(0.16, 0.78, 4, 8);
-    default:
-      return new THREE.TorusGeometry(0.42, 0.12, 6, 16);
-  }
-}
-
 /**
  * Converts an authored collectible into one merged, colored model, then
  * instances that model for every distant copy of the same specimen.
@@ -121,7 +165,16 @@ export function createCollectibleInstanceGeometry(
   const parts: THREE.BufferGeometry[] = [];
   visual.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
-    const geometry = object.geometry.clone().applyMatrix4(object.matrixWorld);
+    const transformed = object.geometry
+      .clone()
+      .applyMatrix4(object.matrixWorld);
+    const geometry = transformed.index
+      ? transformed.toNonIndexed()
+      : transformed;
+    if (geometry !== transformed) transformed.dispose();
+    if (!geometry.getAttribute("normal")) {
+      geometry.computeVertexNormals();
+    }
     const material = Array.isArray(object.material)
       ? object.material[0]
       : object.material;
@@ -139,7 +192,7 @@ export function createCollectibleInstanceGeometry(
     }
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     for (const attribute of Object.keys(geometry.attributes)) {
-      if (!["position", "normal", "uv", "color"].includes(attribute)) {
+      if (!["position", "normal", "color"].includes(attribute)) {
         geometry.deleteAttribute(attribute);
       }
     }
@@ -148,37 +201,17 @@ export function createCollectibleInstanceGeometry(
   });
   if (parts.length === 0) {
     disposeBuiltVisual(visual);
-    const traced = traceSilhouetteGeometry(curio);
-    const color = new THREE.Color(curio.color);
-    const colors = new Float32Array(
-      traced.getAttribute("position").count * 3,
+    throw new TypeError(
+      `Collectible ${curio.id} has no authored LOD geometry`,
     );
-    for (let index = 0; index < colors.length; index += 3) {
-      colors[index] = color.r;
-      colors[index + 1] = color.g;
-      colors[index + 2] = color.b;
-    }
-    traced.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    traced.computeBoundingSphere();
-    return traced;
   }
   const merged = mergeGeometries(parts, false);
   parts.forEach((geometry) => geometry.dispose());
   disposeBuiltVisual(visual);
   if (!merged) {
-    const traced = traceSilhouetteGeometry(curio);
-    const color = new THREE.Color(curio.color);
-    const colors = new Float32Array(
-      traced.getAttribute("position").count * 3,
+    throw new TypeError(
+      `Collectible ${curio.id} could not merge its authored LOD geometry`,
     );
-    for (let index = 0; index < colors.length; index += 3) {
-      colors[index] = color.r;
-      colors[index + 1] = color.g;
-      colors[index + 2] = color.b;
-    }
-    traced.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    traced.computeBoundingSphere();
-    return traced;
   }
   merged.computeBoundingSphere();
   return merged;
@@ -190,8 +223,11 @@ export function createCollectibleLodPool(
   buildVisual: BuildVisual,
 ) {
   const families = new Map<string, LodFamily>();
+  const badgeTextures = createCollectibleBadgeTextureCache();
+  const badgeGeometry = new THREE.PlaneGeometry(1, 1);
   const badgeDummy = new THREE.Object3D();
   const badgePosition = new THREE.Vector3();
+  let disposed = false;
 
   const addBadge = (family: LodFamily, position: THREE.Vector3) => {
     if (family.badgeCount >= INSTANCES_PER_COLLECTIBLE) return false;
@@ -230,8 +266,8 @@ export function createCollectibleLodPool(
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     scene.add(mesh);
     const badge = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(1, 1),
-      createBadgeMaterial(curio),
+      badgeGeometry,
+      createBadgeMaterial(badgeTextures.textureFor(curio.symbol)),
       INSTANCES_PER_COLLECTIBLE,
     );
     badge.name = `collectible-badge:${curio.id}`;
@@ -294,6 +330,8 @@ export function createCollectibleLodPool(
       return { instances, badges, drawCalls };
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
       families.forEach(({ mesh, badge }) => {
         scene.remove(mesh);
         scene.remove(badge);
@@ -302,18 +340,14 @@ export function createCollectibleLodPool(
           ? mesh.material
           : [mesh.material];
         materials.forEach((material) => material.dispose());
-        badge.geometry.dispose();
         const badgeMaterials = Array.isArray(badge.material)
           ? badge.material
           : [badge.material];
-        badgeMaterials.forEach((material) => {
-          if (material instanceof THREE.MeshBasicMaterial) {
-            material.map?.dispose();
-          }
-          material.dispose();
-        });
+        badgeMaterials.forEach((material) => material.dispose());
       });
       families.clear();
+      badgeGeometry.dispose();
+      badgeTextures.dispose();
     },
   };
 }

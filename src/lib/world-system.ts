@@ -18,6 +18,7 @@ export type WorldKind =
   | "city"
   | "landscape"
   | "planet-surface"
+  | "giant-atmosphere"
   | "stellar-field"
   | "orbital-system"
   | "galaxy-field"
@@ -33,7 +34,8 @@ export type WorldSurface =
   | "interior-floor"
   | "road"
   | "terrain"
-  | "sphere";
+  | "sphere"
+  | "atmosphere";
 
 export type WorldSpec = {
   kind: WorldKind;
@@ -74,7 +76,7 @@ export const WORLD_SPECS: Readonly<Record<string, WorldSpec>> = {
   "Regional Map": spec("landscape", "terrain", "planet"),
   "Moon Scale": spec("planet-surface", "sphere", "planet"),
   "Planetary Pantry": spec("planet-surface", "sphere", "planet"),
-  "Giant Worlds": spec("planet-surface", "sphere", "planet"),
+  "Giant Worlds": spec("giant-atmosphere", "atmosphere", "planet"),
   "Stellar Buffet": spec("stellar-field", "none", "cosmic"),
   "System Sweep": spec("orbital-system", "none", "cosmic"),
   "Stellar Neighborhood": spec("stellar-field", "none", "cosmic"),
@@ -251,8 +253,9 @@ export const RESIDENT_PRIOR_LAYER_DEPTH = MAX_RESIDENT_LAYERS - 1;
 
 /**
  * Turns the camera lens into a continuous semantic scale without touching
- * journey progress. A 2× pullback reveals one larger authored layer; a 2×
- * push-in resolves one smaller layer. Residency remains clamped to the atlas.
+ * journey progress. Pushing in resolves earlier, smaller layers; pulling back
+ * changes the optical framing but can never reveal an unreached larger layer.
+ * Residency remains clamped between the atlas origin and the active layer.
  */
 export function semanticViewScale(
   activeLayer: number,
@@ -263,12 +266,13 @@ export function semanticViewScale(
   if (count === 0) return 0;
   const safeLens =
     Number.isFinite(lens) && lens > 0 ? Math.max(1 / 256, lens) : 1;
+  const active = Math.max(
+    0,
+    Math.min(count - 1, Math.trunc(Number.isFinite(activeLayer) ? activeLayer : 0)),
+  );
   return Math.max(
     0,
-    Math.min(
-      count - 1,
-      Math.max(0, activeLayer) + Math.log2(safeLens),
-    ),
+    Math.min(active, active + Math.log2(safeLens)),
   );
 }
 
@@ -342,10 +346,8 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
   balanced: {
-    // Modern phones boot into balanced; they deserve 60fps submission while
-    // the draw/triangle budgets stay at the cooler balanced ceiling. Devices
-    // that cannot reach it simply render fewer frames — the battery demotion
-    // threshold (<24fps) is unchanged.
+    // Standard compact mode uses this fixed detail ceiling; frame pacing lives
+    // in the explicit performance profile rather than changing this tier.
     targetFps: 60,
     maxDrawCalls: 120,
     maxTriangles: 300_000,
@@ -356,7 +358,10 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
   },
   battery: {
     targetFps: 30,
-    maxDrawCalls: 80,
+    // Keep enough headroom for every authored environment and retained
+    // substrate. Battery savings come from pacing, DPR, shadows, triangles,
+    // and rich-object limits—not by hiding whole world layers.
+    maxDrawCalls: 120,
     maxTriangles: 180_000,
     maxRichObjects: 32,
     maxInstances: 1_500,

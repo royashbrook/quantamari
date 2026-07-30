@@ -1,12 +1,26 @@
-# GitHub deployment workflow
+# Deployment
 
-Quantamari is a browser-only static PWA. GitHub is the normal release path:
+Quantamari is a browser-only static PWA served from
+[quantamari.royashbrook.com](https://quantamari.royashbrook.com/). The
+[`royashbrook/quantamari`](https://github.com/royashbrook/quantamari)
+repository is the production source of truth.
 
-- **GitHub** (`royashbrook/quarkatamari`) is the source of truth.
-- Every verified production-affecting push to GitHub `main` automatically
-  deploys production; Markdown-only pushes do not run the workflow.
-- Branch pushes and pull requests run the same static, unit, and browser
+## Release contract
+
+- Every branch push runs the commit-message guard. Pull requests run the
+  static, unit, artifact, Chromium, WebKit, iPhone, and offline-recovery
   contracts without deploying.
+- Every production-affecting push to `main` runs the same verification and
+  automatically deploys the verified `dist/client` artifact. Markdown-only
+  pushes intentionally skip the deployment workflow.
+- The deploy job publishes the exact artifact produced by the verify job with
+  Wrangler. It does not rebuild the application after verification.
+- Production is served at the domain root. The canonical game URL is `/`, the
+  install manifest and service worker are root-scoped, and recovery lives at
+  `/rescue`.
+- After deployment, CI waits for `/_app/version.json` to report the pushed
+  commit, then uses headless Chromium to prove that the production service
+  worker controls the app and that both `/` and `/rescue` work offline.
 
 ## One-time setup
 
@@ -14,40 +28,42 @@ From a trusted local clone with GitHub authentication:
 
 ```bash
 git remote -v
-git remote add origin https://github.com/royashbrook/quarkatamari.git
+git remote set-url origin https://github.com/royashbrook/quantamari.git
 ```
 
-Do not replace a working GitHub remote merely to match the example name.
+Use `git remote add origin …` only for a clone that does not already have an
+`origin`. GitHub redirects the historical repository URL after a rename, but
+existing trusted clones should still adopt the canonical URL explicitly.
+
+The repository needs a `CLOUDFLARE_API_TOKEN` Actions secret with permission to
+deploy the Worker. The Worker name, account, static-asset rules, and custom
+domain are versioned in `wrangler.jsonc`; do not recreate them manually in the
+Cloudflare dashboard.
 
 ## Normal release
 
-1. Work on a branch and run `npm run test:all`.
-2. Commit the exact reviewed source state.
-3. Fast-forward `main` to that commit and push `main` to GitHub.
-4. GitHub runs the Node, static artifact, Chromium renderer, WebKit/iPhone
-   recovery, and offline tests.
-5. After they pass, the workflow asks `royashbrook.com` to build the exact
-   verified Quantamari commit and rejects a mismatched or missing artifact.
-6. Verify the public URL, manifest, service worker, and current release marker.
+1. Work on an issue-linked branch. Every commit message must include its
+   GitHub issue number.
+2. Run `npm run test:all`.
+3. Merge the reviewed branch to `main` and push. Never force-push.
+4. Let `.github/workflows/deploy-site.yml` verify and deploy the exact commit.
+5. Confirm the workflow's production PWA smoke passes before creating the
+   release tag.
 
-For the v2 cutover, merge the backward-compatible
-`royashbrook.com` branch `codex/quarkatamari-v2-integration` first. It preserves
-the v1 path rewrite, copies v2 content-hashed chunks byte-for-byte, verifies
-independent scheduled builds, and gives immutable chunks long-lived browser
-caching. Then merge `codex/v2-sveltekit`.
+For a manual production re-run of an already reviewed `main` commit, use the
+workflow's `workflow_dispatch` entry. Do not publish a separate manual build:
+the normal workflow preserves build provenance and performs the production
+offline checks.
 
-Never force-push. Tags are pushed only when deliberately created as a release
-checkpoint.
+## Recovery and rollback
 
-Release-cutover state belongs in GitHub issues rather than a repository backlog.
-The v2 cutover is tracked in
-[quarkatamari#6](https://github.com/royashbrook/quarkatamari/issues/6).
-
-## Recovery
-
-- Open `/quarkatamari/rescue.html` before clearing browser data. It can export
-  and validate the local save, then clear only Quantamari app files.
-- Roll back by reverting the release commit on GitHub `main`; `v1.0.0` is the
-  checkpoint immediately before the v2 framework rewrite.
+- Open [the save rescue page](https://quantamari.royashbrook.com/rescue) before
+  clearing browser data. It can export and validate the local save, then remove
+  only Quantamari app files.
+- Roll back by reverting the release commit on GitHub `main`. Do not use
+  `--force`, `reset --hard`, or delete `main`.
 - If local and GitHub history diverge, fetch and reconcile on a temporary
-  branch. Do not use `--force`, `reset --hard`, or delete `main`.
+  branch.
+- Old shared-site URLs and worker tombstones are owned by the public-site
+  repository. Keep those handoff files in place while legacy installations
+  may still exist.

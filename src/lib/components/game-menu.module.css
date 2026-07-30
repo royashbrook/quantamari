@@ -188,6 +188,13 @@
   color: #25577a;
 }
 
+.choices .performanceChoice[aria-checked="true"] {
+  border-color: #4a7794;
+  background: #e9f8ff;
+  box-shadow: 0 3px 0 #4a7794;
+  color: #25577a;
+}
+
 .choices .resetChoice {
   grid-column: 1 / -1;
   background: #fff3f0;
