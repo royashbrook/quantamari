@@ -28,10 +28,12 @@ From a trusted local clone with GitHub authentication:
 
 ```bash
 git remote -v
-git remote add origin https://github.com/royashbrook/quantamari.git
+git remote set-url origin https://github.com/royashbrook/quantamari.git
 ```
 
-Do not replace a working GitHub remote merely to match the example name.
+Use `git remote add origin …` only for a clone that does not already have an
+`origin`. GitHub redirects the historical repository URL after a rename, but
+existing trusted clones should still adopt the canonical URL explicitly.
 
 The repository needs a `CLOUDFLARE_API_TOKEN` Actions secret with permission to
 deploy the Worker. The Worker name, account, static-asset rules, and custom
