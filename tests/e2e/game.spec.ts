@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 
-const appPath = "/quarkatamari/";
+const appPath = "/";
 
 type PerformanceSnapshot = {
   phases: Record<
@@ -229,7 +229,7 @@ async function seedMultiEraMash(page: Page) {
   });
 }
 
-test("boots the static game at its production subpath", async ({ page }) => {
+test("boots the static game at its production root", async ({ page }) => {
   const pageErrors: Error[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
   await page.addInitScript(() => {
@@ -250,7 +250,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v3\.0\.0 · /);
+  await expect(buildStamp).toContainText(/^v3\.0\.1 · /);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
@@ -264,7 +264,7 @@ test("boots the static game at its production subpath", async ({ page }) => {
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
     "href",
-    "/quarkatamari/rescue.html",
+    "/rescue",
   );
   await expect(menu.getByRole("link", { name: "Save rescue" })).toHaveAttribute(
     "rel",

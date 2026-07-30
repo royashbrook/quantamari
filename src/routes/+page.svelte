@@ -929,9 +929,18 @@
     content="A browser-only rolling game from the theory below known physics to the fiction beyond the observable universe."
   />
   <meta name="application-name" content="Quantamari" />
+  <link rel="canonical" href="https://quantamari.royashbrook.com/" />
+  <meta property="og:title" content="Quantamari — The Scale of Everything" />
+  <meta
+    property="og:description"
+    content="Roll from the theory below known physics to the fiction beyond the observable universe."
+  />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://quantamari.royashbrook.com/" />
+  <meta name="twitter:card" content="summary" />
 </svelte:head>
 
-<main class="shell" data-release="v2-sveltekit">
+<main class="shell">
   <div
     bind:this={mount}
     class:started

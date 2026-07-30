@@ -1,6 +1,6 @@
 {
   "name": "quantamari",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -12,6 +12,7 @@
     "prebuild": "node scripts/clean.mjs && node scripts/build-rescue.mjs",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:edge": "wrangler dev --ip 127.0.0.1 --port 4174 --local --log-level none --show-interactive-dev-session false --persist-to tests/results/wrangler-state",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "lint": "npm run check",
     "test": "npm run test:unit",
@@ -33,6 +34,7 @@
     "svelte": "5.56.8",
     "svelte-check": "4.7.3",
     "typescript": "5.9.3",
-    "vite": "8.0.13"
+    "vite": "8.0.13",
+    "wrangler": "4.116.0"
   }
 }

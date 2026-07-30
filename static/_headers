@@ -1,0 +1,37 @@
+/*
+  Content-Security-Policy: base-uri 'none'; frame-ancestors 'none'; object-src 'none'
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+
+# The shell must never be edge- or browser-cached.
+#
+# This is a self-versioning PWA on stable URLs: the built JS and CSS are
+# content-hashed and safe to cache forever, but index.html, the service worker
+# and the manifest are the files that TELL the browser a new version exists. A
+# cached one of those pins a player to yesterday's build, and Cloudflare will
+# serve a stale HIT even with must-revalidate, so no-store is the honest answer.
+#
+# Offline play is unaffected: the service worker precaches into the Cache API,
+# which no-store does not govern.
+/
+  Content-Type: text/html; charset=utf-8
+  Cache-Control: no-store
+/index.html
+  Content-Type: text/html; charset=utf-8
+  Cache-Control: no-store
+/rescue
+  Content-Type: text/html; charset=utf-8
+  Cache-Control: no-store
+/service-worker.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+/_app/version.json
+  Cache-Control: no-cache
+
+# SvelteKit fingerprints these, so they are safe forever. Browser caching also keeps
+# the service worker's install-time addAll from re-downloading a chunk the page just got.
+/_app/immutable/*
+  Cache-Control: public, max-age=31536000, immutable

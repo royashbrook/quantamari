@@ -3,6 +3,7 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const clientRoot = fileURLToPath(new URL("../../dist/client/", import.meta.url));
 const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -26,7 +27,7 @@ async function pathExists(path) {
   }
 }
 
-test("build is a standalone, subpath-safe static PWA", async () => {
+test("build is a standalone root-origin static PWA", async () => {
   assert.equal(await pathExists(resolve(projectRoot, "dist/server")), false);
   assert.equal(await pathExists(resolve(projectRoot, "dist/.openai")), false);
 
@@ -34,12 +35,11 @@ test("build is a standalone, subpath-safe static PWA", async () => {
     await readFile(resolve(clientRoot, "manifest.webmanifest"), "utf8"),
   );
   assert.equal(manifest.display, "standalone");
-  assert.equal(manifest.start_url, "./");
-  assert.equal(manifest.scope, "./");
-  // No explicit id: the spec resolves a relative id against the ORIGIN, not
-  // the manifest URL, so "./" would silently re-identify the installed PWA
-  // as https://host/ instead of the /quarkatamari/ start_url default.
-  assert.equal(manifest.id, undefined);
+  assert.equal(manifest.id, "/");
+  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.scope, "/");
+  assert.equal(manifest.lang, "en");
+  assert.deepEqual(manifest.categories, ["games", "education"]);
   assert.deepEqual(
     manifest.icons.map((icon) => icon.sizes),
     ["192x192", "512x512", "192x192", "512x512"],
@@ -62,6 +62,11 @@ test("build is a standalone, subpath-safe static PWA", async () => {
 
   // Mobile PWA head contract: notch-safe viewport and iOS standalone metas.
   const appHtml = await readFile(resolve(clientRoot, "index.html"), "utf8");
+  const charsetAt = appHtml.indexOf('<meta charset="utf-8"');
+  const firstScriptAt = appHtml.indexOf("<script");
+  assert.ok(charsetAt >= 0 && charsetAt < 1_024);
+  assert.ok(firstScriptAt === -1 || charsetAt < firstScriptAt);
+  assert.doesNotMatch(appHtml, /qm-migrate/);
   assert.match(appHtml, /viewport-fit=cover/);
   assert.match(appHtml, /apple-mobile-web-app-status-bar-style/);
 
@@ -79,7 +84,6 @@ test("build is a standalone, subpath-safe static PWA", async () => {
     buildMetadata.version.endsWith("-dirty") ? "+dirty" : ""
   }`;
   assert.match(html, /<title>Quantamari/);
-  assert.match(html, /data-release="v2-sveltekit"/);
   assert.match(html, /data-testid="build-stamp"/);
   assert.ok(html.includes(`v${packageMetadata.version} · ${buildLabel}`));
   assert.equal(typeof buildMetadata.version, "string");
@@ -99,7 +103,8 @@ test("build is a standalone, subpath-safe static PWA", async () => {
   assert.ok(relativeAssets.some((path) => path.startsWith("./_app/")));
   for (const asset of relativeAssets) {
     assert.equal(
-      await pathExists(resolve(clientRoot, asset)),
+      (await pathExists(resolve(clientRoot, asset))) ||
+        (await pathExists(resolve(clientRoot, `${asset}.html`))),
       true,
       `${asset} must resolve inside the deployable app`,
     );
@@ -139,7 +144,42 @@ test("cold installation caches every deployable code chunk", async () => {
   assert.match(serviceWorker, /request\.mode===`navigate`/);
   assert.match(serviceWorker, /ACTIVATE_UPDATE/);
   assert.match(serviceWorker, /skipWaiting/);
+  assert.doesNotMatch(serviceWorker, /\/quarkatamari\//);
   assert.doesNotMatch(serviceWorker, /clients\.claim/);
+
+  const listeners = new Map();
+  let precache = [];
+  runInNewContext(serviceWorker, {
+    location: { pathname: "/service-worker.js" },
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+    caches: {
+      open: async () => ({
+        addAll: async (assets) => {
+          precache = [...assets];
+        },
+      }),
+      keys: async () => [],
+      delete: async () => true,
+    },
+    AbortController,
+    URL,
+    Response,
+    fetch,
+    setTimeout,
+    clearTimeout,
+  });
+  let installPromise;
+  listeners.get("install")({
+    waitUntil(promise) {
+      installPromise = promise;
+    },
+  });
+  await installPromise;
+  assert.ok(precache.includes("/rescue"));
+  assert.ok(!precache.includes("/_headers"));
+  assert.ok(!precache.includes("/rescue.html"));
 
   const codeAssets = (await filesBelow(clientRoot))
     .filter((path) => /\.(?:css|js)$/.test(path))

@@ -4,7 +4,7 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 function sourceVersion() {
   const explicitVersion =
-    process.env.QUARKATAMARI_REF ?? process.env.APP_VERSION;
+    process.env.QUANTAMARI_REF ?? process.env.APP_VERSION;
   if (explicitVersion) return explicitVersion;
   try {
     return execFileSync(
@@ -17,8 +17,6 @@ function sourceVersion() {
   }
 }
 
-const production = process.env.NODE_ENV === "production";
-
 /** @type {import("@sveltejs/kit").Config} */
 const config = {
   preprocess: vitePreprocess(),
@@ -29,7 +27,7 @@ const config = {
       strict: true,
     }),
     paths: {
-      base: production ? "/quarkatamari" : "",
+      base: "",
       relative: true,
     },
     version: {
