@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 
+import packageJson from "../../package.json";
+
 const appPath = "/";
 
 type PerformanceSnapshot = {
@@ -276,7 +278,7 @@ test("boots the static game at its production root", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(/^v3\.0\.1 · /);
+  await expect(buildStamp).toContainText(`v${packageJson.version} · `);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
