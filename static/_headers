@@ -1,3 +1,10 @@
+/*
+  Content-Security-Policy: base-uri 'none'; frame-ancestors 'none'; object-src 'none'
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+
 # The shell must never be edge- or browser-cached.
 #
 # This is a self-versioning PWA on stable URLs: the built JS and CSS are
@@ -9,8 +16,13 @@
 # Offline play is unaffected: the service worker precaches into the Cache API,
 # which no-store does not govern.
 /
+  Content-Type: text/html; charset=utf-8
   Cache-Control: no-store
 /index.html
+  Content-Type: text/html; charset=utf-8
+  Cache-Control: no-store
+/rescue
+  Content-Type: text/html; charset=utf-8
   Cache-Control: no-store
 /service-worker.js
   Cache-Control: no-cache

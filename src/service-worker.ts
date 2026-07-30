@@ -8,7 +8,20 @@ const worker = globalThis as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAMESPACE = "quarkatamari-";
 const CACHE = `${CACHE_NAMESPACE}v2-${version}`;
 const APP_SHELL = `${base}/`;
-const ASSETS = [...new Set([...build, ...files, ...prerendered, APP_SHELL])];
+const RESCUE_ROUTE = `${base}/rescue`;
+const STATIC_FILES = files.filter((path) => {
+  const fileName = path.slice(path.lastIndexOf("/") + 1);
+  return !fileName.startsWith("_") && !fileName.endsWith(".html");
+});
+const ASSETS = [
+  ...new Set([
+    ...build,
+    ...STATIC_FILES,
+    ...prerendered,
+    APP_SHELL,
+    RESCUE_ROUTE,
+  ]),
+];
 
 worker.addEventListener("install", (event) => {
   event.waitUntil(

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const appPath = "/quarkatamari/";
+const appPath = "/";
 const save = JSON.stringify({
   version: 4,
   mode: "journey",
@@ -31,6 +31,26 @@ test("the built shell hydrates in the target browser", async ({ page }) => {
   await expect(page.locator("#boot-rescue")).toBeHidden();
 });
 
+test("edge routing serves strict root and rescue responses", async ({
+  request,
+}) => {
+  for (const path of ["/", "/rescue"]) {
+    const response = await request.get(path);
+    expect(response.status()).toBe(200);
+    expect(response.headers()["cache-control"]).toContain("no-store");
+    expect(response.headers()["content-type"]).toContain("text/html");
+    expect(response.headers()["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers()["x-frame-options"]).toBe("DENY");
+    expect(response.headers()["content-security-policy"]).toContain(
+      "frame-ancestors 'none'",
+    );
+  }
+
+  expect((await request.get("/not-a-real-quantamari-route")).status()).toBe(
+    404,
+  );
+});
+
 test("the in-game rescue link follows the deployed base path", async ({
   page,
 }) => {
@@ -41,7 +61,7 @@ test("the in-game rescue link follows the deployed base path", async ({
   });
   await page.getByRole("button", { name: "Open game menu" }).click();
   await page.getByRole("link", { name: "Save rescue" }).click();
-  await expect(page).toHaveURL(/\/quarkatamari\/rescue\.html$/);
+  await expect(page).toHaveURL(/\/rescue$/);
   await expect(page.getByRole("heading", { name: "Save rescue" })).toBeVisible();
 });
 
@@ -63,6 +83,40 @@ test("a dead module graph still reaches the installed save", async ({
   await expect(page.locator("#saveBox")).toHaveValue(save);
 });
 
+test("the root worker controls the app and keeps game plus rescue offline", async ({
+  browserName,
+  context,
+  page,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "Chromium provides deterministic offline network emulation",
+  );
+
+  await page.goto(appPath);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();
+  await expect
+    .poll(() =>
+      page.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? ""),
+    )
+    .toMatch(/\/service-worker\.js$/);
+
+  await context.setOffline(true);
+  try {
+    await page.goto("/rescue");
+    await expect(
+      page.getByRole("heading", { name: "Save rescue" }),
+    ).toBeVisible();
+    await page.goto(appPath);
+    await expect(
+      page.getByRole("heading", { name: /You are not a ball/ }),
+    ).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
 test("rescue is self-contained and rejects a structurally invalid save", async ({
   context,
   page,
@@ -72,12 +126,12 @@ test("rescue is self-contained and rejects a structurally invalid save", async (
   }, save);
   const extraRequests: string[] = [];
   page.on("request", (request) => {
-    if (!request.url().includes("/rescue.html")) {
+    if (new URL(request.url()).pathname !== "/rescue") {
       extraRequests.push(request.url());
     }
   });
 
-  await page.goto(`${appPath}rescue.html`);
+  await page.goto(`${appPath}rescue`);
   await expect(page.locator("#status")).toContainText("readable");
   await page.locator("#restoreBox").fill(JSON.stringify({ hello: "universe" }));
   await page.getByRole("button", { name: "Validate and restore" }).click();
@@ -97,7 +151,7 @@ test("repair preserves the save and unrelated same-origin caches", async ({
   await context.addInitScript((raw) => {
     localStorage.setItem("everything-roll-save-v4", raw);
   }, save);
-  await page.goto(`${appPath}rescue.html`);
+  await page.goto(`${appPath}rescue`);
   await page.evaluate(async () => {
     await caches.open("quarkatamari-v2-stale");
     await caches.open("another-project-cache");

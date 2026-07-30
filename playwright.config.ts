@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const appUrl = "http://127.0.0.1:4174/quarkatamari/";
+const appUrl = "http://127.0.0.1:4174/";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -16,9 +16,12 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "npm run preview -- --host 127.0.0.1 --port 4174",
+    command: "npm run preview:edge",
     url: appUrl,
     reuseExistingServer: false,
+    env: {
+      WRANGLER_LOG_PATH: "tests/results/wrangler.log",
+    },
   },
   projects: [
     {

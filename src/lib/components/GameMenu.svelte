@@ -166,7 +166,7 @@
               <small>Visit every known and unknown layer</small>
             </span>
           </button>
-          <a href={`${base}/rescue.html`} rel="external">
+          <a href={`${base}/rescue`} rel="external">
             <span class={styles.icon} aria-hidden="true">+</span>
             <span>
               <b>Save rescue</b>

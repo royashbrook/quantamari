@@ -25,6 +25,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      QUANTAMARI_REF: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -34,6 +36,16 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:all
+      - name: verify release provenance
+        run: |
+          grep -Fq "$GITHUB_SHA" dist/client/_app/version.json
+      - name: upload verified deploy artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: quantamari-site-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/client
+          if-no-files-found: error
+          retention-days: 1
       - name: upload performance + e2e results
         if: always()
         uses: actions/upload-artifact@v7
@@ -56,7 +68,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - name: download verified deploy artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: quantamari-site-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/client
       # serve-at-root means these live at the top of the output now, not under a
       # subpath. checking them here keeps a silent structural change from shipping.
       - name: sanity-check the built output
@@ -64,8 +80,9 @@ jobs:
           test -f dist/client/index.html
           test -f dist/client/_headers
           test -f dist/client/manifest.webmanifest
-          grep -q 'qm-migrate' dist/client/index.html   # the save handoff catcher
+          grep -Fq "$GITHUB_SHA" dist/client/_app/version.json
           find dist/client/_app -name '*.map' -print -quit | grep -q .
+          npm run test:artifact
       - name: deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -74,4 +91,19 @@ jobs:
             echo "CLOUDFLARE_API_TOKEN is not set. add the repo secret to enable deploys."
             exit 1
           fi
-          npx wrangler deploy
+          npx --no-install wrangler deploy
+      - name: verify the deployed commit
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS https://quantamari.royashbrook.com/_app/version.json |
+              grep -Fq "$GITHUB_SHA"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "quantamari.royashbrook.com did not publish $GITHUB_SHA"
+          exit 1
+      - name: install production smoke browser
+        run: npx playwright install --with-deps chromium
+      - name: prove the deployed PWA installs and works offline
+        run: node scripts/smoke-live-pwa.mjs "$GITHUB_SHA"

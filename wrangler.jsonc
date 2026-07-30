@@ -1,4 +1,5 @@
 {
+  "$schema": "./node_modules/wrangler/config-schema.json",
   // Quantamari on its own origin, served as Cloudflare Workers static assets.
   //
   // It used to live at royashbrook.com/quarkatamari, pulled in and built by the SITE's
@@ -13,9 +14,11 @@
   "name": "quantamari",
   // not a secret, and inlining it lets CI deploy without an account picker
   "account_id": "b13c1cf2483bdad430b91ae25126e984",
-  "compatibility_date": "2026-06-15",
+  "compatibility_date": "2026-07-30",
   "assets": {
-    "directory": "./dist/client"
+    "directory": "./dist/client",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
   },
   // custom_domain provisions the DNS record and the cert, so the hostname is
   // declared here rather than clicked into a dashboard and forgotten.
