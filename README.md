@@ -1,11 +1,11 @@
 # Quantamari
 
-Quantamari (formerly Quarkatamari — the repository and deploy path keep the
-historical name) is an untimed, browser-based 3D rolling game about the scale
-of everything. Begin with a deliberately speculative visualization near the
-edge of known physics, roll through particles, atoms, cells, dust, rooms,
-planets, and galaxies, then continue forever: completing the fictional beyond
-folds the journey back into a fresh quantum foam as a new cycle.
+[Quantamari](https://quantamari.royashbrook.com/) is an untimed, browser-based
+3D rolling game about the scale of everything. Begin with a deliberately
+speculative visualization near the edge of known physics, roll through
+particles, atoms, cells, dust, rooms, planets, and galaxies, then continue
+forever: completing the fictional beyond folds the journey back into a fresh
+quantum foam as a new cycle.
 
 The current release contains 34 scale layers and 220 collectible identities.
 The default Long Game pace is forty times the Learning Tour pace; switching
@@ -52,12 +52,14 @@ safe areas. All gameplay and persistence stay in the browser.
 - Every named collectible has a stable-ID model signature, motion personality,
   synthesized three-note pickup voice, Field Guide portrait, reality-based form
   note, fact, confidence label, and authoritative scale/topic reference.
-- Rendering adapts pickup density, pixel ratio, and shadows from measured frame
-  rate. Only three semantic layers remain resident; the immediate prior layer is
-  instanced, distant pickups retain authored silhouettes in per-specimen
-  instanced families, nearby simplified specimens retain screen-stable
-  character badges, rich models have a hard budget, and Three.js stays
-  lazy-loaded. See
+- Rendering uses a fixed, player-selected profile instead of changing the world
+  from frame-rate samples. Standard is the default; Battery Optimized is an
+  explicit persistent choice that lowers frame rate and GPU detail without
+  removing semantic population or whole environment layers. Only three
+  semantic layers remain resident; the immediate prior layer is instanced,
+  distant pickups retain authored silhouettes in per-specimen instanced
+  families, nearby simplified specimens retain screen-stable character badges,
+  rich models have a hard budget, and Three.js stays lazy-loaded. See
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - The native game menu pauses simulation without changing journey state. Reset
   requires confirmation and removes only Quantamari's browser save keys.
@@ -191,7 +193,7 @@ Important code:
 - `src/lib/save-data.ts` — reorder-safe v4 saves and v2/v3 migrations
 - `src/lib/components/FieldGuide.svelte` — animated collection history
 - `src/lib/components/GameMenu.svelte` — pause, About, sound, and safe reset
-- `src/service-worker.ts` — generated, subpath-safe offline runtime
+- `src/service-worker.ts` — generated, root-scoped offline runtime
 - `src/rescue.template.html` — dependency-free installed-save recovery hatch
 - `tests/unit`, `tests/artifact`, and `tests/e2e` — Node, build, and browser
   contracts
@@ -200,7 +202,7 @@ The app is SvelteKit with `adapter-static`: `npm run build` emits only
 `dist/client`, and all gameplay and persistence remain in the browser. Three.js
 is lazy-loaded after the welcome screen. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Releases and mirrors
+## Releases
 
 GitHub `main` is the production source of truth. Every production-affecting push
 to `main` automatically verifies and deploys the static PWA; documentation-only
@@ -211,30 +213,31 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 The `v15.0.0` tag preserves the final time/band version, `v1.0.0` is the
 rollback point before the breaking SvelteKit rewrite, and `v2.0.0` marks that
 rewrite in production. The v2.1 performance work is tracked in
-[issue #8](https://github.com/royashbrook/quarkatamari/issues/8); v2.2 adds the
+[issue #8](https://github.com/royashbrook/quantamari/issues/8); v2.2 adds the
 pause, reset, and About menu tracked in
-[issue #20](https://github.com/royashbrook/quarkatamari/issues/20), and v2.2.1
+[issue #20](https://github.com/royashbrook/quantamari/issues/20), and v2.2.1
 adopts Roy's shared maker mark under
-[issue #22](https://github.com/royashbrook/quarkatamari/issues/22). v2.2.2 adds
+[issue #22](https://github.com/royashbrook/quantamari/issues/22). v2.2.2 adds
 the standalone rescue hatch, legacy-worker cleanup, safe update handoff,
 production sourcemaps, and WebKit recovery coverage under
-[issue #24](https://github.com/royashbrook/quarkatamari/issues/24). v2.3 splits
+[issue #24](https://github.com/royashbrook/quantamari/issues/24). v2.3 splits
 runtime assets and audio into owned modules, moves collectible content to
 validated JSON, and replaces generic non-rich pickups with authored instanced
-silhouettes under [issues #25](https://github.com/royashbrook/quarkatamari/issues/25)
-and [#28](https://github.com/royashbrook/quarkatamari/issues/28).
+silhouettes under [issues #25](https://github.com/royashbrook/quantamari/issues/25)
+and [#28](https://github.com/royashbrook/quantamari/issues/28).
 v2.3.1 surfaces waiting PWA builds in a persistent update banner and checks for
 fresh builds while the game remains open under
-[issue #30](https://github.com/royashbrook/quarkatamari/issues/30).
+[issue #30](https://github.com/royashbrook/quantamari/issues/30).
 v2.4 bounds desktop and ultrawide world framing, prioritizes nearby authored
 pickup detail, and rebuilds the nearest prior-layer rug from recognizable
 low-detail catalog models under
-[issue #32](https://github.com/royashbrook/quarkatamari/issues/32).
+[issue #32](https://github.com/royashbrook/quantamari/issues/32).
 v3.0 rebrands the game as Quantamari, makes the PWA mobile-first
 (pointer-id-safe drag steering, pinch-to-zoom lens, hold-to-surge, safe-area
 HUD, compact fact card, dedicated maskable icons), targets 60 fps on the
 balanced tier, moves service-worker cache writes off the critical path, and
 folds the completed journey back into a fresh quantum foam as an eternal
-cycle under [issue #34](https://github.com/royashbrook/quarkatamari/issues/34).
-The deploy path, save keys, and cache namespace deliberately keep the
-historical quarkatamari names so installed PWAs and saves survive the rebrand.
+cycle under [issue #34](https://github.com/royashbrook/quantamari/issues/34).
+Legacy save keys, cache names, and browser test hooks deliberately retain their
+historical `quarkatamari` identifiers so existing installed copies can update
+and repair themselves without abandoning local progress.

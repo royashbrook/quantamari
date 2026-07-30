@@ -1,7 +1,7 @@
-// Permanent tombstone for Quarkatamari's pre-SvelteKit worker.
+// Permanent tombstone for Quantamari's pre-SvelteKit worker.
 //
 // Older versions registered ./sw.js. Returning 404 here can leave that worker
-// alive with obsolete files, so the old path now removes only Quarkatamari
+// alive with obsolete files, so the old path now removes only Quantamari
 // caches, unregisters itself, and reloads its own clients into the current app.
 // Keep this file for as long as an old installed copy might exist.
 

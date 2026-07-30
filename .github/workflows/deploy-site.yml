@@ -1,9 +1,8 @@
 name: verify + deploy quantamari.royashbrook.com
 
-# The game deploys ITSELF now. It used to rebuild royashbrook.com, whose build cloned
-# this repo and shipped the result at /quarkatamari. That made two unrelated projects
-# share a release: the site had to redeploy for a game change, and a game that failed
-# to build could hold up the site. Its own origin ends both.
+# The game deploys itself. Its former shared-site subpath made two unrelated projects
+# share a release: the content site had to redeploy for a game change, and a game that
+# failed to build could hold up the site. Its own origin ends both.
 on:
   push:
     branches:

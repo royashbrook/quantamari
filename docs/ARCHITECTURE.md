@@ -1,4 +1,4 @@
-# V2 architecture
+# Quantamari architecture
 
 Quantamari is a static browser game. SvelteKit prerenders the shell, Vite
 bundles it, and `adapter-static` emits `dist/client`. There is no application
@@ -47,12 +47,12 @@ autosave/pagehide writes, removes only the three Quantamari save generations,
 broadcasts a reset generation to every open same-origin game instance, and
 reloads the same static route.
 
-## V2.1 performance contract
+## Performance contract
 
 Collectible population is descriptor-first. The runtime reconciles a
 deterministic queue without creating Three.js resources, then promotes at most
-three entries per animation frame, checking the active quality tier's 2 ms work
-budget between promotions while always permitting one so population cannot
+three entries per animation frame, checking the 2 ms work budget between
+promotions while always permitting one so population cannot
 stall. A first-time visual-template build ends that frame's promotion work.
 Cached template bounds remove per-spawn scene traversals. New objects bloom for
 800 ms and remain non-colliding until fully visible. Only the first population
@@ -73,14 +73,15 @@ into points and substrate texture rather than duplicate pickup draws. Generic
 meshes remain overflow protection only and are asserted to stay unused for
 normal catalogued populations. Transmission is disabled in battery mode so
 physical materials cannot add a hidden extra pass.
-Automatic quality is downgrade-only for the lifetime of a renderer. Semantic
-world and viewport changes do not unlock promotion. A downgrade rebuilds world
-instances once at the lower authored density; excess peripheral pickups shrink
-out individually until the lower population is reached. The promotion lock
-prevents either representation from being rebuilt in a five-second loop.
+Performance profile is an explicit player preference, persisted independently
+from journey progress. Standard selects fixed wide or compact pacing, DPR, and
+rendering budgets; Battery Optimized uses its fixed cooler settings. Nothing
+samples frame rate to promote or demote the profile, so the renderer cannot
+rebuild its world in a five-second feedback loop. Both profiles keep the same
+semantic pickup population, environment, substrate, and attached identities.
 Projected rich/simple LOD uses hysteresis, and attached identities stay rich
-until their whole mash is genuinely too small on screen. Battery mode uses the
-same mash records through one instanced proxy draw.
+until their whole mash is genuinely too small on screen. Battery Optimized uses
+the same mash records through one instanced proxy draw.
 
 Long Game and Learning Tour share one logical layer-advance path. Long Game
 keeps camera distance proportional to the physical radius and rebases both
@@ -95,8 +96,8 @@ Camera framing is mobile-first without letterboxing. Portrait devices keep a
 56-degree vertical field of view; wider canvases derive their vertical field of
 view from a 58-degree horizontal play aperture. Desktop and ultrawide windows
 therefore reveal a bounded amount of world instead of increasing the population
-pressure with every extra pixel. Quality-tier population budgets provide a
-second hard ceiling.
+pressure with every extra pixel. A fixed compact/wide population budget provides
+a second hard ceiling; switching performance profile does not change it.
 
 Performance diagnostics are opt-in and never update Svelte state. Browser tests
 sample frame interval, CPU frame work, simulation, population, pickup LOD,
@@ -106,11 +107,11 @@ Scale Lab layer 20 and waits for at least 120 frames. Absolute timing is
 diagnostic because CI uses SwiftShader; real-device traces remain the authority
 for FPS.
 
-The existing quality budgets also pace active frame submission to 60 or 30 fps,
-with a 30 fps idle ceiling. An absolute deadline preserves those
-keeps common 60/120 Hz displays aligned and avoids cumulative drift or
-catch-up bursts on other refresh rates after a
-suspended tab.
+The profile settings also pace frame submission: Standard targets 60 fps wide
+or 30 fps compact, with 30/24 fps idle ceilings; Battery Optimized targets
+30 fps active and 15 fps idle. An absolute deadline keeps common 60/120 Hz
+displays aligned and avoids cumulative drift or catch-up bursts on other
+refresh rates after a suspended tab.
 
 Environment and substrate replacement remain atomic. In the measured complex
 baseline their rebuilds stayed below 4 ms and 3 ms respectively, while the large
