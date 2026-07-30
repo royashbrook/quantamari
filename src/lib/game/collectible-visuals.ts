@@ -5,6 +5,7 @@ import {
   type QualityTier,
 } from "../game-rules";
 import type { Curio } from "../scale-data";
+import { collectibleVisualHandlerFor } from "./collectible-visual-contract";
 
 function pseudo(seed: number) {
   const value = Math.sin(seed * 9283.312 + 77.13) * 43758.5453;
@@ -99,10 +100,10 @@ export function createCollectibleVisualFactory({
     );
     const dark = createMaterial("#261b38");
     const pale = createMaterial("#f6f2e8");
-    const shape = curio.shape;
     const form = curio.visualForm;
+    const handler = collectibleVisualHandlerFor(form);
 
-    if (form === "nuclear-cluster") {
+    if (handler === "nuclear-cluster") {
       const nucleons: [number, number, number][] = [
         [-0.32, 0.2, 0.05],
         [0.3, 0.2, -0.08],
@@ -127,7 +128,7 @@ export function createCollectibleVisualFactory({
           [0, 0, 0],
         );
       }
-    } else if (form === "string") {
+    } else if (handler === "string") {
       const stringCurve = new THREE.CatmullRomCurve3(
         Array.from({ length: 11 }, (_, point) => {
           const x = (point - 5) * 0.16;
@@ -154,7 +155,7 @@ export function createCollectibleVisualFactory({
           ),
         );
       }
-    } else if (form === "double-helix") {
+    } else if (handler === "double-helix") {
       const helixPoints = (offset: number) =>
         Array.from({ length: 25 }, (_, point) => {
           const angle = (point / 24) * Math.PI * 4 + offset;
@@ -189,7 +190,7 @@ export function createCollectibleVisualFactory({
           [0, -angle, 0],
         );
       }
-    } else if (form === "protein") {
+    } else if (handler === "protein") {
       addPart(
         group,
         new THREE.TorusKnotGeometry(0.43, 0.12, 72, 10, 2, 3),
@@ -212,7 +213,7 @@ export function createCollectibleVisualFactory({
           ),
         );
       }
-    } else if (form === "crystal") {
+    } else if (handler === "crystal") {
       addPart(
         group,
         new THREE.BoxGeometry(0.94, 0.94, 0.94),
@@ -231,7 +232,7 @@ export function createCollectibleVisualFactory({
           [0, 0, 0.12],
         );
       }
-    } else if (form === "seed") {
+    } else if (handler === "seed") {
       if (name.includes("lentil")) {
         addPart(
           group,
@@ -260,7 +261,7 @@ export function createCollectibleVisualFactory({
           [0, 0, Math.PI / 2],
         );
       }
-    } else if (form === "bead") {
+    } else if (handler === "bead") {
       addPart(
         group,
         new THREE.SphereGeometry(0.62, 26, 18),
@@ -275,7 +276,7 @@ export function createCollectibleVisualFactory({
           [-0.25, 0.27, 0.45],
         );
       }
-    } else if (form === "park") {
+    } else if (handler === "park") {
       addPart(
         group,
         new THREE.BoxGeometry(1.5, 0.14, 1.18),
@@ -309,7 +310,7 @@ export function createCollectibleVisualFactory({
           [1, 0.86, 1],
         );
       });
-    } else if (shape === "bubble") {
+    } else if (handler === "bubble") {
       const bubbleMaterial = new THREE.MeshPhysicalMaterial({
         color: curio.color,
         emissive: curio.color,
@@ -329,7 +330,7 @@ export function createCollectibleVisualFactory({
           [0.42, -0.26, -0.28],
         );
       }
-    } else if (shape === "spark") {
+    } else if (handler === "spark") {
       const sparkGeometry =
         variant % 2 === 0
           ? new THREE.OctahedronGeometry(0.72, 1)
@@ -339,7 +340,7 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.OctahedronGeometry(0.2, 0), accent, [0.58, 0.26, 0.28]);
         addPart(group, new THREE.OctahedronGeometry(0.13, 0), pale, [-0.52, -0.3, -0.22]);
       }
-    } else if (shape === "quark") {
+    } else if (handler === "quark") {
       if (name.includes("pair")) {
         addPart(group, new THREE.SphereGeometry(0.38, 22, 16), material, [-0.36, 0, 0]);
         addPart(group, new THREE.SphereGeometry(0.38, 22, 16), accent, [0.36, 0, 0]);
@@ -372,7 +373,7 @@ export function createCollectibleVisualFactory({
           );
         }
       }
-    } else if (shape === "hadron") {
+    } else if (handler === "hadron") {
       const meson =
         name.includes("pion") ||
         name.includes("kaon") ||
@@ -406,7 +407,7 @@ export function createCollectibleVisualFactory({
           meson ? [0.55, 0.2, 0] : [0, 0, 0],
         );
       }
-    } else if (shape === "atom") {
+    } else if (handler === "atom") {
       const atomicNumbers: Record<string, number> = {
         hydrogen: 1,
         helium: 2,
@@ -473,7 +474,7 @@ export function createCollectibleVisualFactory({
           );
         }
       }
-    } else if (form === "antibody") {
+    } else if (handler === "antibody") {
       addPart(
         group,
         new THREE.CapsuleGeometry(0.11, 0.72, 5, 12),
@@ -496,7 +497,7 @@ export function createCollectibleVisualFactory({
           [side * 0.56, 0.63, 0],
         );
       });
-    } else if (shape === "molecule") {
+    } else if (handler === "molecule") {
       const atomPositions: [number, number, number][] =
         name.includes("water")
           ? [[0, 0, 0], [0.48, 0.3, 0], [-0.48, 0.3, 0]]
@@ -526,7 +527,7 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.CapsuleGeometry(0.08, 0.9, 4, 8), accent, [0, -0.52, 0.1], [1, 1, 1], [0.15, 0.2, 0]);
         addPart(group, new THREE.CapsuleGeometry(0.08, 0.9, 4, 8), material, [0.22, -0.52, -0.1], [1, 1, 1], [-0.1, -0.2, 0.08]);
       }
-    } else if (form === "bacteriophage") {
+    } else if (handler === "bacteriophage") {
       addPart(
         group,
         new THREE.IcosahedronGeometry(0.46, 2),
@@ -550,7 +551,7 @@ export function createCollectibleVisualFactory({
           [Math.sin(angle) * 0.7, 0, Math.cos(angle) * 0.7],
         );
       }
-    } else if (shape === "virus") {
+    } else if (handler === "virus") {
       addPart(
         group,
         form === "virus-enveloped"
@@ -568,7 +569,7 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.ConeGeometry(0.08, 0.3, 6), accent, [0, 0, 0.72], [1, 1, 1], [Math.PI / 2, 0, 0]);
         addPart(group, new THREE.ConeGeometry(0.08, 0.3, 6), accent, [0, 0, -0.72], [1, 1, 1], [-Math.PI / 2, 0, 0]);
       }
-    } else if (form === "tardigrade") {
+    } else if (handler === "tardigrade") {
       for (let segment = 0; segment < 4; segment += 1) {
         const x = (segment - 1.5) * 0.34;
         addPart(
@@ -595,7 +596,7 @@ export function createCollectibleVisualFactory({
         pale,
         [0.72, 0.08, 0],
       );
-    } else if (form === "pollen") {
+    } else if (handler === "pollen") {
       addPart(
         group,
         new THREE.IcosahedronGeometry(0.55, 3),
@@ -614,7 +615,7 @@ export function createCollectibleVisualFactory({
           [0, 0, theta - Math.PI / 2],
         );
       }
-    } else if (form === "diatom") {
+    } else if (handler === "diatom") {
       addPart(
         group,
         new THREE.CapsuleGeometry(0.38, 0.72, 7, 16),
@@ -633,7 +634,7 @@ export function createCollectibleVisualFactory({
           [0, Math.PI / 2, 0],
         );
       }
-    } else if (form === "ciliate") {
+    } else if (handler === "ciliate") {
       addPart(
         group,
         new THREE.CapsuleGeometry(0.38, 0.86, 8, 18),
@@ -653,7 +654,7 @@ export function createCollectibleVisualFactory({
           [0, 0, angle],
         );
       }
-    } else if (form === "mite") {
+    } else if (handler === "mite") {
       addPart(
         group,
         new THREE.SphereGeometry(0.48, 20, 14),
@@ -673,7 +674,7 @@ export function createCollectibleVisualFactory({
           [0, 0, side * (0.72 + row * 0.08)],
         );
       }
-    } else if (form === "worm") {
+    } else if (handler === "worm") {
       for (let segment = 0; segment < 6; segment += 1) {
         const x = (segment - 2.5) * 0.22;
         addPart(
@@ -684,7 +685,7 @@ export function createCollectibleVisualFactory({
           [1.2, 0.72, 0.72],
         );
       }
-    } else if (shape === "cell") {
+    } else if (handler === "cell") {
       const membrane = new THREE.MeshPhysicalMaterial({
         color: curio.color,
         transparent: true,
@@ -747,12 +748,12 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.CapsuleGeometry(0.07, 0.24, 3, 8), accent, [-0.26, -0.2, 0.25], [1, 1, 1], [0.5, 0.2, 0.8]);
         addPart(group, new THREE.SphereGeometry(0.075, 9, 7), pale, [0.3, 0.28, -0.25]);
       }
-    } else if (shape === "fiber") {
+    } else if (handler === "fiber") {
       addPart(group, new THREE.CapsuleGeometry(0.18, 1.25, 5, 12), material, [0, 0, 0], [1, 1, 1], [0.2, 0.2, 1.08]);
       if (rich) {
         addPart(group, new THREE.CapsuleGeometry(0.1, 0.9, 4, 10), accent, [0.08, 0.02, 0.08], [1, 1, 1], [1.04, -0.35, 0.18]);
       }
-    } else if (shape === "dust") {
+    } else if (handler === "dust") {
       const dustGeometry =
         variant % 2 === 0
           ? new THREE.DodecahedronGeometry(0.62, 1)
@@ -762,18 +763,18 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.TetrahedronGeometry(0.2, 0), accent, [0.46, 0.12, -0.18]);
         addPart(group, new THREE.DodecahedronGeometry(0.13, 0), pale, [-0.38, -0.2, 0.25]);
       }
-    } else if (shape === "stone" || shape === "mountain") {
+    } else if (handler === "stone" || handler === "landform") {
       const rockGeometry =
         variant % 2 === 0
           ? new THREE.DodecahedronGeometry(0.66, 1)
           : new THREE.IcosahedronGeometry(0.68, 1);
-      addPart(group, rockGeometry, material, [0, 0, 0], shape === "mountain" ? [1.1, 1.5, 0.9] : [1, 0.72, 0.86]);
-      if (rich && shape === "mountain") {
+      addPart(group, rockGeometry, material, [0, 0, 0], handler === "landform" ? [1.1, 1.5, 0.9] : [1, 0.72, 0.86]);
+      if (rich && handler === "landform") {
         addPart(group, new THREE.ConeGeometry(0.36, 0.38, 5), pale, [0, 0.72, 0], [1, 1, 0.86]);
       } else if (rich) {
         addPart(group, new THREE.DodecahedronGeometry(0.23, 0), accent, [0.44, -0.18, 0.15]);
       }
-    } else if (form === "pencil") {
+    } else if (handler === "pencil") {
       addPart(
         group,
         new THREE.CylinderGeometry(0.13, 0.13, 1.25, 6),
@@ -798,7 +799,7 @@ export function createCollectibleVisualFactory({
         [1, 1, 1],
         [0, 0, Math.PI / 2],
       );
-    } else if (form === "mug") {
+    } else if (handler === "mug") {
       addPart(
         group,
         new THREE.CylinderGeometry(0.46, 0.4, 0.72, 22),
@@ -819,7 +820,7 @@ export function createCollectibleVisualFactory({
         dark,
         [0, 0.37, 0],
       );
-    } else if (form === "book") {
+    } else if (handler === "book") {
       addPart(
         group,
         new THREE.BoxGeometry(1.2, 0.24, 0.82),
@@ -844,7 +845,7 @@ export function createCollectibleVisualFactory({
         [1, 1, 1],
         [0.04, 0.12, -0.04],
       );
-    } else if (form === "spoon") {
+    } else if (handler === "spoon") {
       addPart(
         group,
         new THREE.CapsuleGeometry(0.07, 0.9, 4, 10),
@@ -860,7 +861,7 @@ export function createCollectibleVisualFactory({
         [0.58, 0, 0],
         [1.25, 0.28, 0.78],
       );
-    } else if (form === "coin") {
+    } else if (handler === "coin") {
       addPart(
         group,
         new THREE.CylinderGeometry(0.54, 0.54, 0.12, 28),
@@ -875,7 +876,7 @@ export function createCollectibleVisualFactory({
         accent,
         [0, 0, 0.07],
       );
-    } else if (form === "key") {
+    } else if (handler === "key") {
       addPart(
         group,
         new THREE.TorusGeometry(0.3, 0.11, 8, 22),
@@ -896,7 +897,7 @@ export function createCollectibleVisualFactory({
           [x, -0.15, 0],
         ),
       );
-    } else if (form === "die") {
+    } else if (handler === "die") {
       addPart(
         group,
         new THREE.BoxGeometry(0.92, 0.92, 0.92),
@@ -915,7 +916,7 @@ export function createCollectibleVisualFactory({
           ),
         ),
       );
-    } else if (form === "guitar") {
+    } else if (handler === "guitar") {
       addPart(
         group,
         new THREE.SphereGeometry(0.42, 20, 14),
@@ -938,7 +939,7 @@ export function createCollectibleVisualFactory({
         [1, 1, 1],
         [0, 0, -0.3],
       );
-    } else if (form === "table") {
+    } else if (handler === "table") {
       addPart(
         group,
         new THREE.BoxGeometry(1.35, 0.16, 0.9),
@@ -955,7 +956,7 @@ export function createCollectibleVisualFactory({
           ),
         ),
       );
-    } else if (form === "screen") {
+    } else if (handler === "screen") {
       addPart(
         group,
         new THREE.BoxGeometry(1.25, 0.78, 0.16),
@@ -980,7 +981,7 @@ export function createCollectibleVisualFactory({
         accent,
         [0, -0.58, 0],
       );
-    } else if (form === "potted-plant") {
+    } else if (handler === "potted-plant") {
       addPart(
         group,
         new THREE.CylinderGeometry(0.3, 0.46, 0.58, 16),
@@ -997,7 +998,7 @@ export function createCollectibleVisualFactory({
           [0, 0, x * 1.4],
         ),
       );
-    } else if (form === "bed") {
+    } else if (handler === "bed") {
       addPart(
         group,
         new THREE.BoxGeometry(1.45, 0.32, 0.92),
@@ -1016,7 +1017,7 @@ export function createCollectibleVisualFactory({
         accent,
         [-0.68, 0.27, 0],
       );
-    } else if (form === "appliance") {
+    } else if (handler === "appliance") {
       addPart(
         group,
         new THREE.BoxGeometry(0.94, 1.35, 0.82),
@@ -1035,7 +1036,7 @@ export function createCollectibleVisualFactory({
         dark,
         [0.29, 0.49, 0.46],
       );
-    } else if (form === "bathtub") {
+    } else if (handler === "bathtub") {
       addPart(
         group,
         new THREE.CapsuleGeometry(0.42, 0.72, 8, 18),
@@ -1060,7 +1061,7 @@ export function createCollectibleVisualFactory({
         [1, 1, 1],
         [Math.PI / 2, 0, 0],
       );
-    } else if (form === "tree") {
+    } else if (handler === "tree") {
       addPart(
         group,
         new THREE.CylinderGeometry(0.13, 0.2, 1.05, 10),
@@ -1079,7 +1080,7 @@ export function createCollectibleVisualFactory({
           position as [number, number, number],
         ),
       );
-    } else if (form === "pool") {
+    } else if (handler === "pool") {
       addPart(
         group,
         new THREE.CylinderGeometry(0.72, 0.76, 0.24, 28),
@@ -1092,7 +1093,7 @@ export function createCollectibleVisualFactory({
         createMaterial("#64d8e8", true),
         [0, 0.14, 0],
       );
-    } else if (form === "train") {
+    } else if (handler === "train") {
       addPart(
         group,
         new THREE.BoxGeometry(1.55, 0.68, 0.66),
@@ -1119,7 +1120,7 @@ export function createCollectibleVisualFactory({
           ),
         ),
       );
-    } else if (form === "button") {
+    } else if (handler === "button") {
       addPart(group, new THREE.CylinderGeometry(0.58, 0.58, 0.16, 28), material, [0, 0, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
       [
         [-0.18, 0.09, 0.17],
@@ -1129,30 +1130,30 @@ export function createCollectibleVisualFactory({
       ].forEach((position) =>
         addPart(group, new THREE.CylinderGeometry(0.055, 0.055, 0.19, 10), dark, position as [number, number, number], [1, 1, 1], [Math.PI / 2, 0, 0]),
       );
-    } else if (form === "brick") {
+    } else if (handler === "brick") {
       addPart(group, new THREE.BoxGeometry(1.2, 0.48, 0.72), material, [0, 0, 0]);
       [-0.4, 0, 0.4].forEach((x) =>
         [-0.22, 0.22].forEach((z) =>
           addPart(group, new THREE.CylinderGeometry(0.12, 0.12, 0.14, 14), accent, [x, 0.31, z]),
         ),
       );
-    } else if (form === "bottle-cap") {
+    } else if (handler === "bottle-cap") {
       addPart(group, new THREE.CylinderGeometry(0.58, 0.62, 0.3, 24), material, [0, 0, 0]);
       addPart(group, new THREE.CylinderGeometry(0.42, 0.42, 0.06, 24), pale, [0, 0.18, 0]);
       for (let ridge = 0; ridge < 12; ridge += 1) {
         const angle = (ridge / 12) * Math.PI * 2;
         addPart(group, new THREE.BoxGeometry(0.08, 0.28, 0.12), accent, [Math.cos(angle) * 0.61, 0, Math.sin(angle) * 0.61], [1, 1, 1], [0, -angle, 0]);
       }
-    } else if (form === "shoe") {
+    } else if (handler === "shoe") {
       addPart(group, new THREE.CapsuleGeometry(0.32, 0.82, 6, 14), material, [0.05, -0.08, 0], [1, 0.68, 1.2], [0.1, 0.1, Math.PI / 2]);
       addPart(group, new THREE.BoxGeometry(0.66, 0.5, 0.62), accent, [0.25, 0.2, 0]);
       addPart(group, new THREE.BoxGeometry(1.25, 0.09, 0.68), pale, [0, -0.35, 0]);
-    } else if (form === "lamp") {
+    } else if (handler === "lamp") {
       addPart(group, new THREE.CylinderGeometry(0.3, 0.42, 0.12, 20), dark, [0, -0.7, 0]);
       addPart(group, new THREE.CylinderGeometry(0.055, 0.055, 1.35, 10), material, [0, 0, 0]);
       addPart(group, new THREE.ConeGeometry(0.5, 0.72, 20, 1, true), accent, [0, 0.85, 0]);
       addPart(group, new THREE.SphereGeometry(0.12, 12, 9), pale, [0, 0.65, 0]);
-    } else if (form === "couch") {
+    } else if (handler === "couch") {
       addPart(group, new THREE.BoxGeometry(1.45, 0.48, 0.68), material, [0, -0.12, 0]);
       addPart(group, new THREE.BoxGeometry(1.45, 0.7, 0.22), accent, [0, 0.38, 0.3]);
       [-0.66, 0.66].forEach((x) =>
@@ -1160,13 +1161,13 @@ export function createCollectibleVisualFactory({
       );
       addPart(group, new THREE.BoxGeometry(0.62, 0.12, 0.58), pale, [-0.33, 0.17, -0.03]);
       addPart(group, new THREE.BoxGeometry(0.62, 0.12, 0.58), pale, [0.33, 0.17, -0.03]);
-    } else if (form === "bicycle") {
+    } else if (handler === "bicycle") {
       [-0.54, 0.54].forEach((x) =>
         addPart(group, new THREE.TorusGeometry(0.34, 0.055, 8, 28), dark, [x, -0.22, 0], [1, 1, 1], [0, 0, 0]),
       );
       addPart(group, new THREE.TorusGeometry(0.36, 0.045, 7, 20), material, [0, 0.03, 0], [1, 0.72, 1], [0, 0, 0]);
       addPart(group, new THREE.CapsuleGeometry(0.045, 0.74, 3, 8), accent, [0.28, 0.18, 0], [1, 1, 1], [0, 0, -0.76]);
-    } else if (shape === "chair") {
+    } else if (handler === "chair") {
       addPart(group, new THREE.BoxGeometry(0.95, 0.16, 0.82), material, [0, 0, 0]);
       addPart(group, new THREE.BoxGeometry(0.95, 1.05, 0.15), material, [0, 0.48, 0.35]);
       [-0.36, 0.36].forEach((x) => [-0.28, 0.28].forEach((z) => addPart(group, new THREE.BoxGeometry(0.13, 0.7, 0.13), dark, [x, -0.4, z])));
@@ -1175,7 +1176,7 @@ export function createCollectibleVisualFactory({
           addPart(group, new THREE.BoxGeometry(0.12, 0.12, 0.82), accent, [x, 0.18, 0]),
         );
       }
-    } else if (form === "motorcycle") {
+    } else if (handler === "motorcycle") {
       [-0.54, 0.54].forEach((x) =>
         addPart(
           group,
@@ -1199,7 +1200,7 @@ export function createCollectibleVisualFactory({
         [1, 1, 1],
         [0, 0, -0.68],
       );
-    } else if (form === "sailboat") {
+    } else if (handler === "sailboat") {
       addPart(
         group,
         new THREE.CapsuleGeometry(0.3, 1.05, 6, 16),
@@ -1222,7 +1223,7 @@ export function createCollectibleVisualFactory({
         [1, 1, 0.12],
         [0, 0, -0.05],
       );
-    } else if (shape === "car") {
+    } else if (handler === "vehicle") {
       addPart(group, new THREE.BoxGeometry(1.45, 0.46, 0.72), material, [0, 0, 0]);
       addPart(group, new THREE.BoxGeometry(0.75, 0.38, 0.67), pale, [-0.1, 0.38, 0]);
       [-0.48, 0.48].forEach((x) => [-0.39, 0.39].forEach((z) => addPart(group, new THREE.CylinderGeometry(0.18, 0.18, 0.12, 16), dark, [x, -0.27, z], [1, 1, 1], [Math.PI / 2, 0, 0])));
@@ -1231,7 +1232,7 @@ export function createCollectibleVisualFactory({
           addPart(group, new THREE.SphereGeometry(0.09, 10, 8), accent, [-0.72, 0.02, z]),
         );
       }
-    } else if (form === "bridge") {
+    } else if (handler === "bridge") {
       addPart(
         group,
         new THREE.BoxGeometry(1.65, 0.18, 0.52),
@@ -1255,7 +1256,7 @@ export function createCollectibleVisualFactory({
         );
       });
     } else if (
-      form === "tower"
+      handler === "tower"
     ) {
       addPart(
         group,
@@ -1279,7 +1280,7 @@ export function createCollectibleVisualFactory({
         accent,
         [0, 1.02, 0],
       );
-    } else if (form === "doorway") {
+    } else if (handler === "doorway") {
       [-0.48, 0.48].forEach((x) =>
         addPart(
           group,
@@ -1294,7 +1295,7 @@ export function createCollectibleVisualFactory({
         accent,
         [0, 0.72, 0],
       );
-    } else if (shape === "house") {
+    } else if (handler === "house") {
       if (name.includes("water tower")) {
         addPart(group, new THREE.SphereGeometry(0.58, 24, 16), material, [0, 0.45, 0], [1.05, 0.82, 1.05]);
         [-0.34, 0.34].forEach((x) =>
@@ -1323,7 +1324,7 @@ export function createCollectibleVisualFactory({
           );
         }
       }
-    } else if (shape === "planet") {
+    } else if (handler === "world") {
       const irregular = name.includes("small moon") || name.includes("rogue");
       addPart(
         group,
@@ -1344,13 +1345,13 @@ export function createCollectibleVisualFactory({
       } else if (rich) {
         addPart(group, new THREE.SphereGeometry(0.11 + variant * 0.015, 12, 9), accent, [0.84, 0.3, -0.16]);
       }
-    } else if (shape === "star") {
+    } else if (handler === "star") {
       addPart(group, new THREE.IcosahedronGeometry(0.72, 3), material, [0, 0, 0]);
       addPart(group, new THREE.SphereGeometry(0.96, 20, 14), new THREE.MeshBasicMaterial({ color: curio.color, transparent: true, opacity: 0.12, side: THREE.BackSide }), [0, 0, 0]);
       if (rich) {
         addPart(group, new THREE.TorusGeometry(0.86, 0.025, 6, 30), accent, [0, 0, 0], [1, 0.62, 1], [0.4, 0.2, 0]);
       }
-    } else if (shape === "system") {
+    } else if (handler === "system") {
       addPart(group, new THREE.SphereGeometry(0.2, 16, 12), material, [0, 0, 0]);
       [0.45, 0.72, 0.98].forEach((radius, index) => {
         addPart(group, new THREE.TorusGeometry(radius, 0.018, 5, 42), pale, [0, 0, 0], [1, 0.35 + index * 0.12, 1], [0.3 * index, 0.15, 0]);
@@ -1359,7 +1360,7 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.SphereGeometry(0.1, 10, 8), accent, [0.56, 0.04, 0.16]);
         addPart(group, new THREE.SphereGeometry(0.075, 9, 7), material, [-0.78, -0.05, -0.12]);
       }
-    } else if (shape === "galaxy") {
+    } else if (handler === "galaxy") {
       const irregular = name.includes("irregular") || name.includes("cluster") || name.includes("group");
       addPart(group, new THREE.SphereGeometry(name.includes("active") ? 0.26 : 0.18, 16, 12), name.includes("active") ? accent : pale, [0, 0, 0]);
       if (irregular) {
@@ -1388,13 +1389,13 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.SphereGeometry(0.07, 9, 7), accent, [0.72, 0.14, 0.2]);
         addPart(group, new THREE.SphereGeometry(0.055, 8, 6), pale, [-0.62, -0.2, -0.28]);
       }
-    } else if (shape === "universe") {
+    } else if (handler === "universe") {
       addPart(group, new THREE.IcosahedronGeometry(0.76, 2), new THREE.MeshBasicMaterial({ color: curio.color, wireframe: true, transparent: true, opacity: 0.72 }), [0, 0, 0]);
       addPart(group, new THREE.SphereGeometry(0.28, 16, 12), material, [0, 0, 0]);
       if (rich) {
         addPart(group, new THREE.TorusGeometry(0.55, 0.035, 7, 30), accent, [0, 0, 0], [1, 0.75, 1], [0.8, 0.3, 0.4]);
       }
-    } else {
+    } else if (handler === "artifact") {
       if (variant === 0) {
         addPart(group, new THREE.BoxGeometry(0.9, 0.72, 0.62), material, [0, 0, 0], [1, 1, 1], [0.15, 0.25, 0.08]);
       } else if (variant === 1) {
@@ -1407,6 +1408,9 @@ export function createCollectibleVisualFactory({
       if (rich) {
         addPart(group, new THREE.SphereGeometry(0.16, 12, 9), accent, [0.36, 0.3, 0.28]);
       }
+    } else {
+      const unhandledForm: never = handler;
+      throw new TypeError(`Unhandled collectible visual form: ${unhandledForm}`);
     }
     if (rich) {
       const signatureGeometry = (
