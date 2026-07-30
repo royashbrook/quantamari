@@ -1,10 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 
-import packageJson from "../../package.json";
 import { DESKTOP_SEMANTIC_PICKUP_TARGET } from "../../src/lib/game/spawn-policy";
 
 const appPath = "/";
+const appVersion = (
+  JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as { version: string }
+).version;
 
 type PerformanceSnapshot = {
   phases: Record<
@@ -279,7 +284,7 @@ test("boots the static game at its production root", async ({ page }) => {
     page.getByRole("heading", { name: /You are not a ball/ }),
   ).toBeVisible();
   const buildStamp = page.getByTestId("build-stamp");
-  await expect(buildStamp).toContainText(`v${packageJson.version} · `);
+  await expect(buildStamp).toContainText(`v${appVersion} · `);
   await expect(buildStamp).toBeVisible();
   await expect(page.getByRole("button", { name: "Long game" })).toHaveAttribute(
     "aria-pressed",
