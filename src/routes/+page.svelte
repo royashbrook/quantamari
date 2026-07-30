@@ -43,6 +43,7 @@
   import { createGameAudio } from "$lib/game/audio";
   import type {
     FactCard,
+    FactKind,
     GameState,
     HudState,
     MutableRef,
@@ -55,6 +56,18 @@
     buildVersion.endsWith("-dirty") ? "+dirty" : ""
   }`;
   const RESET_GENERATION_KEY = "everything-roll-reset-generation";
+  const PICKUP_FACT_DURATION_MS = 5_500;
+  const PICKUP_FACT_COOLDOWN_MS = 2_500;
+  const ROLL_KEYS = new Set([
+    "w",
+    "a",
+    "s",
+    "d",
+    "arrowup",
+    "arrowdown",
+    "arrowleft",
+    "arrowright",
+  ]);
 
   const showAtlasRef: MutableRef<boolean> = { current: false };
   const showGuideRef: MutableRef<boolean> = { current: false };
@@ -137,6 +150,11 @@
   );
   let toastVisible = $state(false);
   let toastTimer: number | null = null;
+  let factVisible = $state(false);
+  let factTimer: number | null = null;
+  let factBurstCount = $state(0);
+  let pickupAnnouncement = $state("");
+  let factCooldownUntil = 0;
   let lastFact = $state<FactCard>({
     name: "Spacetime fluctuation",
     fact: ERAS[0].lesson,
@@ -168,6 +186,7 @@
   let resetGeneration: string | null = null;
 
   function updateToast(message: string) {
+    hideFact(true);
     toast = message;
     toastVisible = true;
     if (toastTimer !== null) window.clearTimeout(toastTimer);
@@ -183,12 +202,47 @@
       toastTimer = null;
     }
   }
-  function updateLastFact(fact: FactCard) {
+  function hideFact(startCooldown = false) {
+    const wasVisible = factVisible;
+    factVisible = false;
+    factBurstCount = 0;
+    pickupAnnouncement = "";
+    if (factTimer !== null) {
+      window.clearTimeout(factTimer);
+      factTimer = null;
+    }
+    if (startCooldown && wasVisible) {
+      factCooldownUntil = Date.now() + PICKUP_FACT_COOLDOWN_MS;
+    }
+  }
+  function updateLastFact(fact: FactCard, kind: FactKind) {
     lastFact = fact;
     hasFact = true;
-    // A pickup fact is the richer form of the same event. Showing both it and
-    // a toast creates a wall of duplicate status UI on a phone.
+    if (kind !== "pickup") return;
+    if (
+      !factVisible &&
+      (toastVisible || Date.now() < factCooldownUntil)
+    ) {
+      return;
+    }
+
+    // A pickup fact owns one bounded bottom-HUD window. Later pickups update
+    // that window and its burst count without extending the original deadline,
+    // so a dense field can never replace journey progress forever.
     hideToast();
+    const startsBurst = !factVisible;
+    factBurstCount = startsBurst ? 1 : factBurstCount + 1;
+    if (startsBurst) pickupAnnouncement = `Rolled up ${fact.name}.`;
+    factVisible = true;
+    if (factTimer === null) {
+      factTimer = window.setTimeout(() => {
+        factVisible = false;
+        factBurstCount = 0;
+        pickupAnnouncement = "";
+        factTimer = null;
+        factCooldownUntil = Date.now() + PICKUP_FACT_COOLDOWN_MS;
+      }, PICKUP_FACT_DURATION_MS);
+    }
   }
   function updateCollection(entries: CollectionEntry[]) {
     collection = entries;
@@ -437,12 +491,14 @@
     childOpenedFromMenu = null;
     menuOpener = null;
     showAtlas = false;
-    updateToast(`Scale Lab: ${ERAS[index].name}. Journey progress is paused.`);
-    updateLastFact({
-      name: ERAS[index].name,
-      fact: ERAS[index].lesson,
-      source: ERAS[index].sources[0],
-    });
+    updateLastFact(
+      {
+        name: ERAS[index].name,
+        fact: ERAS[index].lesson,
+        source: ERAS[index].sources[0],
+      },
+      "lab",
+    );
   }
 
   function returnToJourney() {
@@ -762,21 +818,22 @@
         return;
       }
       if (modalOpenRef.current || interactive) return;
-      keysRef.current[key] = true;
-      if (
-        ["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(
-          key,
-        )
-      ) {
+      if (!gameRef.current.running && [" ", "enter"].includes(key)) {
+        event.preventDefault();
+        begin();
+        return;
+      }
+      if (ROLL_KEYS.has(key)) {
+        keysRef.current[key] = true;
         event.preventDefault();
       }
       if (key === "m") toggleSound();
       if (key === "i") openAtlas();
       if (key === "g") openGuide();
-      if (!gameRef.current.running && [" ", "enter"].includes(key)) begin();
     };
     const onUp = (event: KeyboardEvent) => {
-      keysRef.current[event.key.toLowerCase()] = false;
+      const key = event.key.toLowerCase();
+      if (ROLL_KEYS.has(key)) keysRef.current[key] = false;
     };
     const clearInput = () => {
       keysRef.current = {};
@@ -843,6 +900,7 @@
 
   onDestroy(() => {
     hideToast();
+    hideFact();
     closeAudio();
   });
 
@@ -956,10 +1014,6 @@
     if (event.pointerId === steeringPointerId) stopSteering();
   }
 
-  function surgePress(active: boolean) {
-    keysRef.current[" "] = active;
-  }
-
   function wheelLens(event: WheelEvent) {
     if (!started || modalOpenRef.current) return;
     event.preventDefault();
@@ -1033,7 +1087,7 @@
     class:awaiting-start={!started}
     class:empty-origin={started && hud.era === 0}
     class:lab-active={labEra !== null}
-    class:has-update={updateReady || updateApplying}
+    class:has-bottom-notice={toastVisible || factVisible}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
@@ -1127,92 +1181,123 @@
       </div>
     {/if}
 
-    <section class="scale-card hud">
-      <div class="kicker">
-        <span>{era.name}</span>
-        <span class={`confidence ${confidenceClass(era.confidence)}`}>
-          {era.confidence}
-        </span>
-      </div>
-      <div class="scale">{scale}</div>
-      <div class="quip">{era.quip}</div>
-      <div class="track">
-        <i style={`width: ${Math.max(1.5, hud.progress * 100)}%`}></i>
-      </div>
-      <div class="meta">
-        <span>
-          {labEra === null ? `Next: ${nextEra.name}` : "Scale Lab specimen"}
-        </span>
-        <span>
-          {labEra === null ? `${(hud.progress * 100).toFixed(2)}%` : "PREVIEW"}
-        </span>
-      </div>
-      <div
-        class="lens-control"
-        aria-label="Free scale lens"
-        title="Optical zoom also selects which earlier layer is resolved as the non-interactive fabric underfoot; it never changes journey progress."
-      >
-        <button
-          type="button"
-          onclick={() => adjustLens(0.82)}
-          aria-label="Zoom camera in"
-        >
-          −
-        </button>
-        <span>
-          {formatLens(hud.lens)}× lens ·
-          {semanticFoundation
-            ? `${semanticFoundation.name} fabric`
-            : "no prior fabric"}
-        </span>
-        <button
-          type="button"
-          onclick={() => adjustLens(1.22)}
-          aria-label="Zoom camera out"
-        >
-          +
-        </button>
-      </div>
-    </section>
-
-    <aside class="stats hud" aria-label="Run totals">
-      <div title="Things collected">
-        <b>{hud.picked.toLocaleString()}</b>
-        <small>
-          <span class="wide-label">things collected</span>
-          <span class="compact-label">finds</span>
-        </small>
-      </div>
-      <i></i>
-      <div title="Layers underfoot">
-        <b>{journeyIndex}</b>
-        <small>
-          <span class="wide-label">layers underfoot</span>
-          <span class="compact-label">layers</span>
-        </small>
-      </div>
-      <i></i>
-      <div title="Scale shifts">
-        <b>{hud.zooms}</b>
-        <small>
-          <span class="wide-label">scale shifts</span>
-          <span class="compact-label">shifts</span>
-        </small>
-      </div>
-      {#if hud.cycles > 0}
-        <i></i>
-        <div class="cycle-stat">
-          <b>♻ {hud.cycles + 1}</b>
-          <small>cycle</small>
+    <div class="journey-dock hud" aria-label="Journey status">
+      <section class="scale-card hud" aria-label="Scale progress">
+        <div class="kicker">
+          <span>{era.name}</span>
+          <span class={`confidence ${confidenceClass(era.confidence)}`}>
+            {era.confidence}
+          </span>
         </div>
-      {/if}
-    </aside>
+        <div class="scale">
+          <small class="mobile-current">
+            {era.name} · {era.confidence}
+          </small>
+          <span>{scale}</span>
+        </div>
+        <div class="quip">{era.quip}</div>
+        <div class="track">
+          <i style={`--progress: ${Math.max(0.015, hud.progress)}`}></i>
+        </div>
+        <div class="meta">
+          <span class="frontier">
+            <small>{labEra === null ? "Next frontier" : "Scale Lab"}</small>
+            <b>{labEra === null ? nextEra.name : "Specimen preview"}</b>
+          </span>
+          <span class="progress-value">
+            {labEra === null
+              ? `${(hud.progress * 100).toFixed(2)}%`
+              : "PREVIEW"}
+          </span>
+        </div>
+        <div
+          class="lens-control"
+          aria-label="Free scale lens"
+          title="Optical zoom also selects which earlier layer is resolved as the non-interactive fabric underfoot; it never changes journey progress."
+        >
+          <button
+            type="button"
+            onclick={() => adjustLens(0.82)}
+            aria-label="Zoom camera in"
+          >
+            −
+          </button>
+          <span>
+            {formatLens(hud.lens)}× lens ·
+            {semanticFoundation
+              ? `${semanticFoundation.name} fabric`
+              : "no prior fabric"}
+          </span>
+          <button
+            type="button"
+            onclick={() => adjustLens(1.22)}
+            aria-label="Zoom camera out"
+          >
+            +
+          </button>
+        </div>
+      </section>
 
-    {#if (hasFact || labEra !== null) && !toastVisible}
-      <aside class="fact-card hud">
-        <div class="fact-kicker">WHAT YOU JUST ROLLED UP</div>
+      <aside class="stats hud" aria-label="Run totals">
+        <div title="Things collected">
+          <b>{hud.picked.toLocaleString()}</b>
+          <small>
+            <span class="wide-label">things collected</span>
+            <span class="compact-label">finds</span>
+          </small>
+        </div>
+        <i></i>
+        <div title="Layers underfoot">
+          <b>{journeyIndex}</b>
+          <small>
+            <span class="wide-label">layers underfoot</span>
+            <span class="compact-label">layers</span>
+          </small>
+        </div>
+        <i></i>
+        <div title="Scale shifts">
+          <b>{hud.zooms}</b>
+          <small>
+            <span class="wide-label">scale shifts</span>
+            <span class="compact-label">shifts</span>
+          </small>
+        </div>
+        {#if hud.cycles > 0}
+          <i></i>
+          <div class="cycle-stat">
+            <b>♻ {hud.cycles + 1}</b>
+            <small>cycle</small>
+          </div>
+        {/if}
+      </aside>
+
+      {#if !touchTipSeen && !hasFact}
+        <div class="touch-tip">◎ drag to roll · pinch to zoom</div>
+      {/if}
+    </div>
+
+    {#if factVisible || labEra !== null}
+      <aside
+        class="fact-card hud"
+      >
+        <div
+          class="find-token"
+          aria-hidden="true"
+          style={`--find-color: ${lastFact.color ?? "#ff7dd0"}`}
+        >
+          {lastFact.symbol ?? "✦"}
+        </div>
+        <div class="fact-kicker">
+          <span>{labEra === null ? "ROLLED UP" : "SCALE LAB SPECIMEN"}</span>
+          {#if factVisible && factBurstCount > 1}
+            <b>+{factBurstCount - 1} more</b>
+          {/if}
+        </div>
         <h2>{lastFact.name}</h2>
         <p>{lastFact.fact}</p>
+        <span class="fact-citation">
+          {lastFact.source.organization} · {lastFact.source.label}
+        </span>
         <div class="fact-actions">
           <a
             class="fact-source"
@@ -1231,6 +1316,16 @@
           </button>
         </div>
       </aside>
+      {#if factVisible}
+        <p
+          class="pickup-announcement"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {pickupAnnouncement}
+        </p>
+      {/if}
     {/if}
 
     {#if toastVisible}
@@ -1242,14 +1337,10 @@
 
     <div class="controls hud">
       <span><kbd>WASD</kbd> / arrows to roll</span>
-      <span><kbd>SPACE</kbd> to surge</span>
       <span><kbd>I</kbd> science</span>
       <span><kbd>G</kbd> field guide</span>
       <span><kbd>ESC</kbd> menu</span>
     </div>
-    {#if !touchTipSeen && !hasFact && !toastVisible}
-      <div class="touch-tip hud">◎ drag anywhere to roll · pinch to zoom</div>
-    {/if}
 
     {#if joystickVisual.active}
       <div class="joy" aria-hidden="true">
@@ -1262,24 +1353,6 @@
           style={`left: ${joyThumb.x}px; top: ${joyThumb.y}px`}
         ></i>
       </div>
-    {/if}
-
-    {#if started}
-      <button
-        class="surge-button hud"
-        type="button"
-        aria-label="Hold to surge"
-        onpointerdown={(event) => {
-          event.preventDefault();
-          surgePress(true);
-        }}
-        onpointerup={() => surgePress(false)}
-        onpointerleave={() => surgePress(false)}
-        onpointercancel={() => surgePress(false)}
-        oncontextmenu={(event) => event.preventDefault()}
-      >
-        ✦ surge
-      </button>
     {/if}
 
     {#if !started}

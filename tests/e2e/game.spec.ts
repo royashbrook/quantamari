@@ -947,7 +947,7 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   await enablePerformanceDiagnostics(page);
   await begin(page);
   await expect(
-    page.getByText("◎ drag anywhere to roll · pinch to zoom"),
+    page.getByText("◎ drag to roll · pinch to zoom"),
   ).toBeVisible();
   await expect(page.locator(".fact-card")).toHaveCount(0);
   await page.getByRole("button", { name: "Open game menu" }).click();
@@ -994,50 +994,32 @@ test.describe("real touch input", () => {
     viewport: { width: 390, height: 844 },
   });
 
-  test("touch drag steers with a visible joystick, pinch drives the lens, surge button shows", async ({
+  test("the passive bottom dock lets touch drag steer and pinch drive the lens", async ({
     page,
   }) => {
     test.setTimeout(60_000);
     await enablePerformanceDiagnostics(page);
     await begin(page);
-    const surge = page.locator(".surge-button");
-    await expect(surge).toBeVisible();
-    // The button carries the hud class; a regression to the .hud
-    // pointer-events:none rule would leave it visible but dead.
+    await expect(page.locator(".surge-button")).toHaveCount(0);
+    const dock = page.locator(".journey-dock");
+    await expect(dock).toBeVisible();
     expect(
-      await surge.evaluate((el) => getComputedStyle(el).pointerEvents),
-    ).toBe("auto");
+      await dock.evaluate((element) => getComputedStyle(element).pointerEvents),
+    ).toBe("none");
 
     const cdp = await page.context().newCDPSession(page);
-    // Pressing surge must not fall through to the canvas and start steering.
-    const surgeBox = await surge.boundingBox();
-    expect(surgeBox).not.toBeNull();
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchStart",
-      touchPoints: [
-        {
-          x: surgeBox!.x + surgeBox!.width / 2,
-          y: surgeBox!.y + surgeBox!.height / 2,
-        },
-      ],
-    });
-    await expect(page.locator(".joy-thumb")).toBeHidden();
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchEnd",
-      touchPoints: [],
-    });
     const startPosition = (await readPerformanceDiagnostics(page))?.runtime
       .player ?? { x: 0, z: 0 };
 
     await cdp.send("Input.dispatchTouchEvent", {
       type: "touchStart",
-      touchPoints: [{ x: 195, y: 500 }],
+      touchPoints: [{ x: 195, y: 800 }],
     });
     try {
       for (let step = 1; step <= 5; step += 1) {
         await cdp.send("Input.dispatchTouchEvent", {
           type: "touchMove",
-          touchPoints: [{ x: 195 + step * 18, y: 500 }],
+          touchPoints: [{ x: 195 + step * 18, y: 800 }],
         });
       }
       await expect(page.locator(".joy-thumb")).toBeVisible();
@@ -1072,8 +1054,8 @@ test.describe("real touch input", () => {
     await cdp.send("Input.dispatchTouchEvent", {
       type: "touchStart",
       touchPoints: [
-        { x: 170, y: 470, id: 0 },
-        { x: 220, y: 530, id: 1 },
+        { x: 170, y: 790, id: 0 },
+        { x: 220, y: 790, id: 1 },
       ],
     });
     try {
@@ -1081,8 +1063,8 @@ test.describe("real touch input", () => {
         await cdp.send("Input.dispatchTouchEvent", {
           type: "touchMove",
           touchPoints: [
-            { x: 170 - step * 12, y: 470 - step * 12, id: 0 },
-            { x: 220 + step * 12, y: 530 + step * 12, id: 1 },
+            { x: 170 - step * 12, y: 790, id: 0 },
+            { x: 220 + step * 12, y: 790, id: 1 },
           ],
         });
       }

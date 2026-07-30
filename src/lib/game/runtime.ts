@@ -186,17 +186,6 @@ const GAMEPLAY_BULK_FACTORS: Record<Curio["shape"], number> = {
   universe: 0.5,
 };
 
-const PICKUP_QUIPS = [
-  "plop! permanent passenger",
-  "squished into the friendship ball",
-  "yoinked for science",
-  "now 100% part of the situation",
-  "welcome aboard, tiny thing",
-  "stuck forever—adorable",
-  "the mash says nom",
-  "rolled up with excellent manners",
-];
-
 const MAX_PICKUP_PROMOTIONS_PER_FRAME = 3;
 const PICKUP_ENTRANCE_MS = 800;
 const PICKUP_RETIRE_MS = 600;
@@ -263,7 +252,11 @@ export type FactCard = {
   name: string;
   fact: string;
   source: ScienceSource;
+  symbol?: string;
+  color?: string;
 };
+
+export type FactKind = "pickup" | "era" | "lab";
 
 export type RuntimeBindings = {
   gameRef: MutableRef<GameState>;
@@ -281,7 +274,7 @@ export type RuntimeBindings = {
   labEra: number | null;
   performanceProfile: PerformanceProfile;
   setToast: (message: string) => void;
-  setLastFact: (fact: FactCard) => void;
+  setLastFact: (fact: FactCard, kind: FactKind) => void;
   setCollection: (entries: CollectionEntry[]) => void;
   setHud: (hud: HudState) => void;
   ping: (pitch?: number, fanfare?: boolean) => void;
@@ -2312,11 +2305,14 @@ export function mountGame(
       setToast(
         `ZOOMING OUT! ${activeEra.name} opens into ${WORLD_NAMES[activeWorldKind] ?? environmentNames[environmentMode]}.`,
       );
-      setLastFact({
-        name: activeEra.name,
-        fact: activeEra.lesson,
-        source: activeEra.sources[0],
-      });
+      setLastFact(
+        {
+          name: activeEra.name,
+          fact: activeEra.lesson,
+          source: activeEra.sources[0],
+        },
+        "era",
+      );
       ping(360 + index * 18, true);
     }
   };
@@ -3288,20 +3284,17 @@ export function mountGame(
     if (isCurrentScale) {
       game.radius = radiusForLayerProgress(game.progress);
     }
-    const contributionLabel =
-      gameplayBulkFactor >= 1
-        ? "chunky gameplay bulk"
-        : gameplayBulkFactor < 0.35
-          ? "light gameplay bulk"
-          : "gameplay bulk";
     if (isCurrentScale) {
-      const pickupQuip = PICKUP_QUIPS[game.picked % PICKUP_QUIPS.length];
-      setToast(`${pickup.curio.name}: ${pickupQuip} · ${contributionLabel}.`);
-      setLastFact({
-        name: pickup.curio.name,
-        fact: pickup.curio.fact,
-        source: pickup.curio.source ?? activeEra.sources[0],
-      });
+      setLastFact(
+        {
+          name: pickup.curio.name,
+          fact: pickup.curio.fact,
+          source: pickup.curio.source ?? activeEra.sources[0],
+          symbol: pickup.curio.symbol,
+          color: pickup.curio.color,
+        },
+        "pickup",
+      );
       playPickupSound(pickup.curio, pickup.sourceEra);
       faceReactionUntil = now + 240;
       ballFaceMaterial.map = chompFaceTexture;
@@ -3653,6 +3646,7 @@ export function mountGame(
   }
 
   let last = performance.now();
+  let lastBlockerContactAt = Number.NEGATIVE_INFINITY;
   let nextFrameDeadline = last;
   let framePacingIdle = true;
   let frame = 0;
@@ -3763,8 +3757,7 @@ export function mountGame(
       keys.arrowup ||
       keys.arrowdown ||
       keys.arrowleft ||
-      keys.arrowright ||
-      keys[" "];
+      keys.arrowright;
     const nextFramePacingIdle =
       scaleTransitionStarted < 0 &&
       !pendingLayerAdvance &&
@@ -3838,15 +3831,14 @@ export function mountGame(
       if (length > 0.05) {
         inputX /= Math.max(1, length);
         inputZ /= Math.max(1, length);
-        const boost = keysRef.current[" "] ? 1.26 : 1;
-        game.vx += inputX * 17.8125 * boost * dt;
-        game.vz += inputZ * 17.8125 * boost * dt;
+        game.vx += inputX * 17.8125 * dt;
+        game.vz += inputZ * 17.8125 * dt;
       }
       const drag = Math.pow(0.09, dt);
       game.vx *= drag;
       game.vz *= drag;
       const speed = Math.hypot(game.vx, game.vz);
-      const maxSpeed = keysRef.current[" "] ? 12.1875 : 9.75;
+      const maxSpeed = 9.75;
       if (speed > maxSpeed) {
         game.vx = (game.vx / speed) * maxSpeed;
         game.vz = (game.vz / speed) * maxSpeed;
@@ -3943,7 +3935,12 @@ export function mountGame(
             game.z = collision.z;
             game.vx = collision.vx;
             game.vz = collision.vz;
-            if (now / 1000 - game.lastPickup > 0.8) {
+            const newBlockerEncounter = now - lastBlockerContactAt > 1_000;
+            lastBlockerContactAt = now;
+            if (
+              newBlockerEncounter &&
+              now / 1000 - game.lastPickup > 0.8
+            ) {
               setToast(`Oof! ${pickup.curio.name} is still too chunky. Snack smaller first.`);
             }
           }

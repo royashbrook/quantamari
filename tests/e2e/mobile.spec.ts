@@ -37,53 +37,85 @@ async function closeGeometry(locator: Locator) {
   });
 }
 
-test("iPhone gameplay leaves the world dominant in portrait and landscape", async ({
+async function collectCurrentPickup(page: Page) {
+  let pickedName: string | null = null;
+  await expect
+    .poll(
+      async () => {
+        pickedName = await page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                __QUARKATAMARI_PERFORMANCE__?: {
+                  collectCurrentPickup: () => string | null;
+                };
+              }
+            ).__QUARKATAMARI_PERFORMANCE__?.collectCurrentPickup() ?? null,
+        );
+        return pickedName;
+      },
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  return pickedName!;
+}
+
+test("iPhone gameplay uses one passive bottom dock across browser and PWA-sized viewports", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(75_000);
   await startLearningTour(page);
 
   await expect(page.locator(".fact-card")).toHaveCount(0);
   await expect(page.locator(".toast")).toHaveCount(0);
-  await expect(page.locator(".atlas-trigger")).toBeHidden();
-  await expect(
-    page.getByRole("button", { name: "Open rolled-up field guide" }),
-  ).toBeVisible();
+  await expect(page.locator(".surge-button")).toHaveCount(0);
+  await expect(page.locator(".quick-action").first()).toBeHidden();
+  await expect(page.locator(".quick-action").last()).toBeHidden();
   await expect(page.getByRole("button", { name: "Open game menu" })).toBeVisible();
 
   for (const viewport of [
-    { name: "portrait", width: 420, height: 719 },
-    { name: "landscape", width: 794, height: 370 },
+    { name: "small portrait", width: 375, height: 812 },
+    { name: "browser portrait", width: 420, height: 719 },
+    { name: "standalone-sized portrait", width: 420, height: 912 },
+    { name: "browser landscape", width: 794, height: 370 },
+    { name: "standalone-sized Air landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
 
     const layout = await page.evaluate(() => {
       const visualWidth = window.visualViewport?.width ?? window.innerWidth;
       const visualHeight = window.visualViewport?.height ?? window.innerHeight;
+      const isVisible = (element: HTMLElement) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number(style.opacity) > 0 &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
       const visibleRects = [
         ".brand",
         ".actions button",
-        ".scale-card",
-        ".stats",
+        ".journey-dock",
         ".fact-card",
         ".toast",
-        ".touch-tip",
-        ".surge-button",
+        ".lab-banner",
       ].flatMap((selector) =>
         [...document.querySelectorAll<HTMLElement>(selector)]
-          .filter((element) => {
-            const style = getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
-            return (
-              style.display !== "none" &&
-              style.visibility !== "hidden" &&
-              Number(style.opacity) > 0 &&
-              rect.width > 0 &&
-              rect.height > 0
-            );
-          })
+          .filter(isVisible)
           .map((element) => element.getBoundingClientRect()),
       );
+      const bottomSurfaces = [
+        ...document.querySelectorAll<HTMLElement>(
+          ".journey-dock, .fact-card, .toast, .lab-banner",
+        ),
+      ].filter(isVisible);
+      const topActions = [
+        ...document.querySelectorAll<HTMLElement>(".actions button"),
+      ].filter(isVisible);
       const sample = 4;
       let covered = 0;
       for (let y = 0; y < visualHeight; y += sample) {
@@ -106,9 +138,10 @@ test("iPhone gameplay leaves the world dominant in portrait and landscape", asyn
       const shell = rectFor(".shell");
       const world = rectFor(".world");
       const canvas = rectFor(".three-canvas");
-      const scaleCard = rectFor(".scale-card");
-      const stats = rectFor(".stats");
-      const surge = rectFor(".surge-button");
+      const dock = rectFor(".journey-dock");
+      const dockStyle = getComputedStyle(
+        document.querySelector<HTMLElement>(".journey-dock")!,
+      );
       return {
         visualWidth,
         visualHeight,
@@ -116,11 +149,20 @@ test("iPhone gameplay leaves the world dominant in portrait and landscape", asyn
         shellBottom: shell?.bottom ?? 0,
         worldBottom: world?.bottom ?? 0,
         canvasBottom: canvas?.bottom ?? 0,
-        scaleHeight: scaleCard?.height ?? Number.POSITIVE_INFINITY,
-        statsWidth: stats?.width ?? Number.POSITIVE_INFINITY,
-        statsHeight: stats?.height ?? Number.POSITIVE_INFINITY,
-        surgeBottom: surge?.bottom ?? 0,
-        surgeTop: surge?.top ?? 0,
+        dockBottom: dock?.bottom ?? 0,
+        dockHeight: dock?.height ?? Number.POSITIVE_INFINITY,
+        dockWidth: dock?.width ?? 0,
+        dockBackdrop: dockStyle.backdropFilter,
+        dockPointerEvents: dockStyle.pointerEvents,
+        bottomSurfaceCount: bottomSurfaces.length,
+        topActionCount: topActions.length,
+        tipInsideDock:
+          document.querySelector(".touch-tip")?.parentElement?.classList.contains(
+            "journey-dock",
+          ) ?? false,
+        tipVisible: document.querySelector<HTMLElement>(".touch-tip")
+          ? isVisible(document.querySelector<HTMLElement>(".touch-tip")!)
+          : false,
         centerHasHud: document
           .elementsFromPoint(visualWidth / 2, visualHeight / 2)
           .some((element) => element.classList.contains("hud")),
@@ -130,128 +172,271 @@ test("iPhone gameplay leaves the world dominant in portrait and landscape", asyn
     expect(layout.shellBottom, viewport.name).toBeCloseTo(layout.visualHeight, 0);
     expect(layout.worldBottom, viewport.name).toBeCloseTo(layout.visualHeight, 0);
     expect(layout.canvasBottom, viewport.name).toBeCloseTo(layout.visualHeight, 0);
-    expect(layout.coverage, viewport.name).toBeLessThan(0.3);
-    expect(layout.scaleHeight, viewport.name).toBeLessThanOrEqual(72);
-    expect(layout.statsWidth, viewport.name).toBeLessThan(250);
-    expect(layout.statsHeight, viewport.name).toBeLessThanOrEqual(52);
-    expect(layout.surgeBottom, viewport.name).toBeLessThanOrEqual(
+    expect(layout.dockBottom, viewport.name).toBeLessThanOrEqual(
       layout.visualHeight,
     );
-    expect(layout.surgeTop, viewport.name).toBeGreaterThan(
-      layout.visualHeight - 80,
+    expect(layout.dockBottom, viewport.name).toBeGreaterThan(
+      layout.visualHeight - 20,
     );
+    expect(layout.dockWidth, viewport.name).toBeGreaterThanOrEqual(
+      layout.visualWidth - 24,
+    );
+    expect(layout.dockHeight, viewport.name).toBeLessThanOrEqual(
+      viewport.height <= 500 ? 64 : 90,
+    );
+    expect(layout.coverage, viewport.name).toBeLessThan(0.23);
+    expect(layout.bottomSurfaceCount, viewport.name).toBe(1);
+    expect(layout.topActionCount, viewport.name).toBe(1);
+    expect(layout.dockBackdrop, viewport.name).toBe("none");
+    expect(layout.dockPointerEvents, viewport.name).toBe("none");
+    expect(layout.tipInsideDock, viewport.name).toBe(true);
+    expect(layout.tipVisible, viewport.name).toBe(viewport.height > 500);
     expect(layout.centerHasHud, viewport.name).toBe(false);
   }
 
-  await page.setViewportSize({ width: 420, height: 719 });
-  let pickedName: string | null = null;
-  await expect
-    .poll(
-      async () => {
-        pickedName = await page.evaluate(
-          () =>
-            (
-              window as typeof window & {
-                __QUARKATAMARI_PERFORMANCE__?: {
-                  collectCurrentPickup: () => string | null;
-                };
-              }
-            ).__QUARKATAMARI_PERFORMANCE__?.collectCurrentPickup() ?? null,
-        );
-        return pickedName;
-      },
-      { timeout: 15_000 },
-    )
-    .not.toBeNull();
-  await expect(page.locator(".fact-card")).toBeVisible();
-  await expect(page.locator(".fact-card h2")).toHaveText(pickedName!);
-  await expect(page.locator(".toast")).toHaveCount(0);
-  await expect(page.locator(".touch-tip")).toHaveCount(0);
-  const bottomSlots = await page.evaluate(() => {
-    const fact = document.querySelector(".fact-card")?.getBoundingClientRect();
-    const stats = document.querySelector(".stats")?.getBoundingClientRect();
+  await page.setViewportSize({ width: 420, height: 912 });
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty("--safe-top", "59px");
+    document.documentElement.style.setProperty("--safe-right", "0px");
+    document.documentElement.style.setProperty("--safe-bottom", "34px");
+    document.documentElement.style.setProperty("--safe-left", "0px");
+  });
+  const safeAreaLayout = await page.evaluate(() => {
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const dock = document.querySelector(".journey-dock")?.getBoundingClientRect();
+    const brand = document.querySelector(".brand")?.getBoundingClientRect();
+    const menu = document
+      .querySelector("[aria-label='Open game menu']")
+      ?.getBoundingClientRect();
     return {
-      factBottom: fact?.bottom ?? 0,
-      statsTop: stats?.top ?? 0,
+      viewportHeight,
+      dockBottom: dock?.bottom ?? 0,
+      brandTop: brand?.top ?? 0,
+      menuTop: menu?.top ?? 0,
     };
   });
-  expect(bottomSlots.factBottom).toBeLessThanOrEqual(bottomSlots.statsTop);
+  expect(safeAreaLayout.dockBottom).toBeCloseTo(
+    safeAreaLayout.viewportHeight - 44,
+    0,
+  );
+  expect(safeAreaLayout.brandTop).toBeGreaterThanOrEqual(59);
+  expect(safeAreaLayout.menuTop).toBeGreaterThanOrEqual(59);
+  await page.evaluate(() => {
+    for (const property of [
+      "--safe-top",
+      "--safe-right",
+      "--safe-bottom",
+      "--safe-left",
+    ]) {
+      document.documentElement.style.removeProperty(property);
+    }
+  });
+
+  await page.setViewportSize({ width: 420, height: 719 });
+  const pickedNames = [
+    await collectCurrentPickup(page),
+    await collectCurrentPickup(page),
+    await collectCurrentPickup(page),
+  ];
+
+  const fact = page.locator(".fact-card");
+  await expect(fact).toBeVisible();
+  await expect(fact.locator("h2")).toHaveText(pickedNames.at(-1)!);
+  await expect(fact.locator("p")).not.toHaveText("");
+  await expect(fact.getByText("+2 more")).toBeVisible();
+  await expect(page.locator(".journey-dock")).toBeHidden();
+  await expect(page.locator(".toast")).toHaveCount(0);
+  const pickupAnnouncement = page.locator(".pickup-announcement");
+  await expect(pickupAnnouncement).toHaveAttribute("role", "status");
+  await expect(pickupAnnouncement).toHaveAttribute("aria-live", "polite");
+  await expect(pickupAnnouncement).toHaveText(
+    `Rolled up ${pickedNames[0]}.`,
+  );
+  expect(await fact.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe(
+    "none",
+  );
+  expect(
+    await fact.locator("a, button").evaluateAll((elements) =>
+      elements.filter((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && rect.width > 0 && rect.height > 0;
+      }).length,
+    ),
+  ).toBe(0);
+
+  for (const viewport of [
+    { name: "standalone-sized portrait", width: 420, height: 912 },
+    { name: "browser landscape", width: 794, height: 370 },
+    { name: "standalone-sized Air landscape", width: 912, height: 420 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const factLayout = await page.evaluate(() => {
+      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const card = document.querySelector<HTMLElement>(".fact-card")!;
+      const rect = card.getBoundingClientRect();
+      const style = getComputedStyle(card);
+      const visibleBottomSurfaces = [
+        ...document.querySelectorAll<HTMLElement>(
+          ".journey-dock, .fact-card, .toast, .lab-banner",
+        ),
+      ].filter((element) => {
+        const elementStyle = getComputedStyle(element);
+        const elementRect = element.getBoundingClientRect();
+        return (
+          elementStyle.display !== "none" &&
+          elementStyle.visibility !== "hidden" &&
+          Number(elementStyle.opacity) > 0 &&
+          elementRect.width > 0 &&
+          elementRect.height > 0
+        );
+      });
+      return {
+        inside:
+          rect.left >= 0 &&
+          rect.top >= 0 &&
+          rect.right <= viewportWidth &&
+          rect.bottom <= viewportHeight,
+        height: rect.height,
+        bottomSurfaceCount: visibleBottomSurfaces.length,
+        backgroundColor: style.backgroundColor,
+      };
+    });
+    expect(factLayout.inside, viewport.name).toBe(true);
+    expect(factLayout.height, viewport.name).toBeLessThanOrEqual(
+      viewport.height <= 500 ? 66 : 96,
+    );
+    expect(factLayout.bottomSurfaceCount, viewport.name).toBe(1);
+    expect(factLayout.backgroundColor, viewport.name).toContain("0.88");
+  }
+
+  await page.waitForTimeout(3_600);
+  const delayedPickup = await collectCurrentPickup(page);
+  await expect(fact.locator("h2")).toHaveText(delayedPickup);
+  await expect(fact.getByText("+3 more")).toBeVisible();
+  await expect(pickupAnnouncement).toHaveText(
+    `Rolled up ${pickedNames[0]}.`,
+  );
+  await expect(fact).toHaveCount(0, { timeout: 2_600 });
+  await expect(page.locator(".journey-dock")).toBeVisible();
+  const cooldownPickup = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            collectCurrentPickup: () => string | null;
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__?.collectCurrentPickup() ?? null,
+  );
+  expect(cooldownPickup).not.toBeNull();
+  await expect(fact).toHaveCount(0);
+  await expect(page.locator(".journey-dock")).toBeVisible();
 });
 
-test("iPhone dialogs never autofocus a zooming input and always keep an exit", async ({
+test("iPhone menu routes keep Field Guide and Scale Lab exits visible", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(75_000);
   await startLearningTour(page);
 
-  const guideTrigger = page.getByRole("button", {
-    name: "Open rolled-up field guide",
-  });
-  await guideTrigger.click();
-  const guide = page.getByRole("dialog", {
-    name: "Your rolled-up field guide",
-  });
-  const guideClose = guide.getByRole("button", { name: "Close field guide" });
-  const search = guide.getByRole("searchbox", {
-    name: "Find a rolled-up thing",
-  });
-  await expect(guide).toBeVisible();
-  await expect(guideClose).toBeFocused();
-  await expect(search).not.toBeFocused();
-  expect(
-    Number.parseFloat(await search.evaluate((input) => getComputedStyle(input).fontSize)),
-  ).toBeGreaterThanOrEqual(16);
-  const portraitGuideClose = await closeGeometry(guideClose);
-  expect(portraitGuideClose.width).toBeGreaterThanOrEqual(44);
-  expect(portraitGuideClose.height).toBeGreaterThanOrEqual(44);
-  expect(portraitGuideClose.inside).toBe(true);
-  await search.focus();
-  expect((await closeGeometry(guideClose)).inside).toBe(true);
-  await guideClose.click();
-  await expect(guide).toBeHidden();
-  await expect(guideTrigger).toBeFocused();
+  for (const viewport of [
+    { name: "portrait", width: 420, height: 719 },
+    { name: "standalone-sized Air landscape", width: 912, height: 420 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: "Open game menu" }).click();
+    const menu = page.getByRole("dialog", { name: "Game menu" });
+    const menuClose = menu.getByRole("button", { name: "Resume game" });
+    await expect(menu).toBeVisible();
+    const menuCloseBox = await closeGeometry(menuClose);
+    expect(menuCloseBox.width, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(menuCloseBox.height, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(menuCloseBox.inside, viewport.name).toBe(true);
 
-  await page.setViewportSize({ width: 794, height: 370 });
-  await guideTrigger.click();
-  await expect(guide).toBeVisible();
-  await expect(guideClose).toBeFocused();
-  await expect(search).not.toBeFocused();
-  expect(
-    Number.parseFloat(
-      await search.evaluate((input) => getComputedStyle(input).fontSize),
-    ),
-  ).toBeGreaterThanOrEqual(16);
-  const landscapeGuideClose = await closeGeometry(guideClose);
-  expect(landscapeGuideClose.width).toBeGreaterThanOrEqual(44);
-  expect(landscapeGuideClose.height).toBeGreaterThanOrEqual(44);
-  expect(landscapeGuideClose.inside).toBe(true);
-  await guideClose.click();
+    await menu.getByRole("button", { name: "Field guide" }).click();
+    const guide = page.getByRole("dialog", {
+      name: "Your rolled-up field guide",
+    });
+    const guideClose = guide.getByRole("button", { name: "Close field guide" });
+    const search = guide.getByRole("searchbox", {
+      name: "Find a rolled-up thing",
+    });
+    await expect(guide).toBeVisible();
+    await expect(guideClose).toBeFocused();
+    await expect(search).not.toBeFocused();
+    expect(
+      Number.parseFloat(
+        await search.evaluate((input) => getComputedStyle(input).fontSize),
+      ),
+      viewport.name,
+    ).toBeGreaterThanOrEqual(16);
+    const guideCloseBox = await closeGeometry(guideClose);
+    expect(guideCloseBox.width, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(guideCloseBox.height, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(guideCloseBox.inside, viewport.name).toBe(true);
+    await search.focus();
+    expect((await closeGeometry(guideClose)).inside, viewport.name).toBe(true);
+    await guideClose.click();
+    await expect(guide).toBeHidden();
+    await expect(menu).toBeVisible();
 
-  await page.getByRole("button", { name: "Open game menu" }).click();
-  const menu = page.getByRole("dialog", { name: "Game menu" });
-  const menuClose = menu.getByRole("button", { name: "Resume game" });
-  await expect(menu).toBeVisible();
-  const menuCloseGeometry = await closeGeometry(menuClose);
-  expect(menuCloseGeometry.width).toBeGreaterThanOrEqual(44);
-  expect(menuCloseGeometry.height).toBeGreaterThanOrEqual(44);
-  expect(menuCloseGeometry.inside).toBe(true);
+    await menu.getByRole("button", { name: "Scale & science" }).click();
+    const atlas = page.getByRole("dialog", { name: "Scale and science atlas" });
+    const atlasClose = atlas.getByRole("button", { name: "Close atlas" });
+    await expect(atlas).toBeVisible();
+    const atlasCloseBox = await closeGeometry(atlasClose);
+    expect(atlasCloseBox.width, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(atlasCloseBox.height, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(atlasCloseBox.inside, viewport.name).toBe(true);
+    await atlasClose.click();
+    await expect(atlas).toBeHidden();
+    await expect(menu).toBeVisible();
 
-  await menu.getByRole("button", { name: "Scale & science" }).click();
-  const atlas = page.getByRole("dialog", { name: "Scale and science atlas" });
-  const atlasClose = atlas.getByRole("button", { name: "Close atlas" });
-  await expect(atlas).toBeVisible();
-  const atlasCloseGeometry = await closeGeometry(atlasClose);
-  expect(atlasCloseGeometry.width).toBeGreaterThanOrEqual(44);
-  expect(atlasCloseGeometry.height).toBeGreaterThanOrEqual(44);
-  expect(atlasCloseGeometry.inside).toBe(true);
-  await atlasClose.click();
-  await expect(atlas).toBeHidden();
-  await expect(menu).toBeVisible();
-  await menuClose.click();
-  await expect(menu).toBeHidden();
+    await menu.getByRole("button", { name: "Scale & science" }).click();
+    await expect(atlas).toBeVisible();
+    await atlas.getByRole("button", { name: "Preview in 3D" }).click();
+    const labBanner = page.locator(".lab-banner");
+    const returnButton = page.getByRole("button", {
+      name: "Return to journey",
+    });
+    await expect(labBanner).toBeVisible();
+    await expect(page.locator(".journey-dock")).toBeHidden();
+    await expect(page.locator(".fact-card")).toBeHidden();
+    const returnBox = await closeGeometry(returnButton);
+    expect(returnBox.width, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(returnBox.height, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(returnBox.inside, viewport.name).toBe(true);
+    const labBottomSurfaces = await page.evaluate(
+      () =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            ".journey-dock, .fact-card, .toast, .lab-banner",
+          ),
+        ].filter((element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number(style.opacity) > 0 &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        }).length,
+    );
+    expect(labBottomSurfaces, viewport.name).toBe(1);
+    await returnButton.click();
+    await expect(labBanner).toBeHidden();
+    await expect(page.locator(".toast")).toBeVisible();
+    await expect(page.locator(".journey-dock")).toBeHidden();
+    await expect(page.locator(".toast")).toHaveCount(0, { timeout: 5_000 });
+    await expect(page.locator(".journey-dock")).toBeVisible();
+  }
 });
 
-test("iPhone update notice replaces the scale card instead of stacking", async ({
+test("iPhone update notice stays persistent without replacing the bottom dock", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -283,14 +468,41 @@ test("iPhone update notice replaces the scale card instead of stacking", async (
 
   const banner = page.getByRole("status", { name: "Update ready" });
   await expect(banner).toBeVisible();
-  await expect(page.locator(".scale-card")).toBeHidden();
+  await expect(page.locator(".journey-dock")).toBeVisible();
   for (const viewport of [
-    { width: 420, height: 719 },
-    { width: 794, height: 370 },
+    { name: "browser portrait", width: 420, height: 719 },
+    { name: "standalone-sized portrait", width: 420, height: 912 },
+    { name: "browser landscape", width: 794, height: 370 },
+    { name: "standalone-sized Air landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
     const geometry = await closeGeometry(banner);
-    expect(geometry.inside).toBe(true);
-    expect(geometry.width).toBeLessThanOrEqual(360);
+    expect(geometry.inside, viewport.name).toBe(true);
+    expect(geometry.width, viewport.name).toBeLessThanOrEqual(360);
+    const updateButton = banner.getByRole("button", { name: "Update now" });
+    const updateButtonBox = await closeGeometry(updateButton);
+    expect(updateButtonBox.width, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(updateButtonBox.height, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(updateButtonBox.inside, viewport.name).toBe(true);
+    const slots = await page.evaluate(() => {
+      const notice = document
+        .querySelector(".update-banner")
+        ?.getBoundingClientRect();
+      const dock = document.querySelector(".journey-dock")?.getBoundingClientRect();
+      return {
+        noticeBottom: notice?.bottom ?? Number.POSITIVE_INFINITY,
+        dockTop: dock?.top ?? 0,
+      };
+    });
+    expect(slots.noticeBottom, viewport.name).toBeLessThan(slots.dockTop);
   }
+
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  const menu = page.getByRole("dialog", { name: "Game menu" });
+  await expect(menu).toBeVisible();
+  await expect(banner).toBeVisible();
+  await menu.getByRole("button", { name: "Resume game" }).click();
+  await expect(menu).toBeHidden();
+  await page.waitForTimeout(5_700);
+  await expect(banner).toBeVisible();
 });
