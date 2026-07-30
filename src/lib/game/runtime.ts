@@ -21,7 +21,6 @@ import {
   nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
-  pickupBudget,
   pixelRatioCap,
   progressAfterPickup,
   qualityTierForFps,
@@ -64,6 +63,12 @@ import {
 } from "./collectible-lod";
 import { createCollectibleMarkerFactory } from "./collectible-markers";
 import { createCollectibleVisualFactory } from "./collectible-visuals";
+import {
+  pickupPopulationPlan,
+  pickupSourceEraForSpawn,
+  pickupSpawnPlacement,
+  type PickupSpawnPhase,
+} from "./spawn-policy";
 import { createSpawnQueue } from "./spawn-queue";
 
 type Pickup = {
@@ -2660,27 +2665,27 @@ export function mountGame(
   };
   const spawnPickup = (
     seed: number,
+    sequence: number,
     bornAt: number,
-    outerRing: boolean,
-    forcedSourceEra?: number,
+    phase: PickupSpawnPhase,
   ) => {
-    const bandRoll = pseudo(seed + 97);
-    let chosenEra =
-      bandRoll > 0.84 && activeIndex < ERAS.length - 1
-        ? activeIndex + 1
-        : activeIndex;
-    const obstacleLimit = reducedWorldDetail() ? 3 : 5;
-    if (
-      chosenEra > activeIndex &&
-      pickups.filter((pickup) => pickup.sourceEra > activeIndex).length >=
-        obstacleLimit
-    ) {
-      chosenEra = activeIndex;
-    }
-    const sourceEra = Math.max(
-      0,
-      Math.min(ERAS.length - 1, forcedSourceEra ?? chosenEra),
+    const populationPlan = pickupPopulationPlan(
+      width,
+      coarsePointer,
+      activeIndex,
+      ERAS.length,
     );
+    const sourceEra = pickupSourceEraForSpawn({
+      sequence,
+      activeEra: activeIndex,
+      eraCount: ERAS.length,
+      activeBlockers: pickups.filter(
+        (pickup) =>
+          pickup.sourceEra > activeIndex &&
+          pickup.retireStartedAt === null,
+      ).length,
+      plan: populationPlan,
+    });
     const levelDelta = sourceEra - activeIndex;
     const source = ERAS[sourceEra];
     const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
@@ -2738,6 +2743,7 @@ export function mountGame(
     let bestClearance = Number.NEGATIVE_INFINITY;
     let bestOffscreen = false;
     const attempts = big ? 36 : 18;
+    const outerRing = phase === "refill";
     const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
     const chunkSize = worldChunkSize(activeWorldKind);
     const sceneryClearanceAt = (x: number, z: number) => {
@@ -2762,17 +2768,25 @@ export function mountGame(
       );
     };
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const placement = pickupSpawnPlacement({
+        seed,
+        sequence,
+        attempt,
+        phase,
+        oversized: big,
+        playerX: game.x,
+        playerZ: game.z,
+        velocityX: game.vx,
+        velocityZ: game.vz,
+        plan: populationPlan,
+      });
       const candidateRadius = big
         ? Math.max(
+            placement.radius,
             game.radius + visualRadius + 3.2,
-            (outerRing ? 30 : 8) +
-              pseudo(seed + game.id * 7 + attempt * 31) *
-                (outerRing ? 16 : 36),
           )
-        : outerRing
-          ? 30 + pseudo(seed + game.id * 7 + attempt * 31) * 16
-          : 4.6 + pseudo(seed + game.id * 7) * 24;
-      const candidateAngle = pseudo(seed + 13 + attempt * 19) * Math.PI * 2;
+        : placement.radius;
+      const candidateAngle = placement.angle;
       const candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
       const candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
       const pickupClearance = big
@@ -2853,12 +2867,13 @@ export function mountGame(
     return { spawned: true, builtTemplate };
   };
 
-  const activePickupBudget = () => {
-    const base = pickupBudget(width, qualityTier, coarsePointer);
-    if (activeIndex === 0) return Math.max(12, Math.floor(base * 0.1));
-    if (activeIndex <= 3) return Math.floor(base * 0.55);
-    return base;
-  };
+  const activePickupBudget = () =>
+    pickupPopulationPlan(
+      width,
+      coarsePointer,
+      activeIndex,
+      ERAS.length,
+    ).total;
   const activeScalePickupCount = () =>
     pickups.filter(
       (pickup) =>
@@ -2929,10 +2944,11 @@ export function mountGame(
     const startedAt = phaseStart();
     const { maxChunkWorkMs } = worldPerformanceBudget(qualityTier);
     pickupSpawnQueue.drain(
-      ({ seed }) => {
-        const outerRing = initialQueuedPickups === 0;
+      ({ seed, sequence }) => {
+        const phase: PickupSpawnPhase =
+          initialQueuedPickups === 0 ? "refill" : "initial";
         if (initialQueuedPickups > 0) initialQueuedPickups -= 1;
-        const result = spawnPickup(seed, now, outerRing);
+        const result = spawnPickup(seed, sequence, now, phase);
         if (result.spawned) {
           spawnedLastFrame += 1;
           totalSpawned += 1;
@@ -3052,7 +3068,7 @@ export function mountGame(
         if (child instanceof THREE.Sprite) child.visible = sourceEra >= nextIndex;
       });
     });
-    if (wrapped) needsInnerSpawnRing = true;
+    needsInnerSpawnRing = true;
     resetPickupQueue();
     reconcilePickupQueue();
 
@@ -3847,6 +3863,7 @@ export function mountGame(
           if (child instanceof THREE.Sprite) child.visible = sourceEra >= activeIndex;
         });
       });
+      needsInnerSpawnRing = true;
       resetPickupQueue();
       reconcilePickupQueue();
     }

@@ -1,5 +1,6 @@
 export type SpawnDescriptor = Readonly<{
   seed: number;
+  sequence: number;
 }>;
 
 type DrainLimits = {
@@ -31,6 +32,7 @@ export function createSpawnQueue(initialSeed = 0) {
       while (descriptors.length < desired) {
         descriptors.push({
           seed: (seedBase + Math.imul(sequence, SEED_STEP)) >>> 0,
+          sequence,
         });
         sequence += 1;
       }
