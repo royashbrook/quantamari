@@ -46,6 +46,6 @@ export function performanceProfileSettings(
     idleTargetFps: compact ? 24 : 30,
     pixelRatioCap: compact ? 1.25 : 1.5,
     antialias: true,
-    shadows: true,
+    shadows: !compact,
   };
 }

@@ -10,6 +10,20 @@ const appVersion = (
     readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
   ) as { version: string }
 ).version;
+const mashStressCatalog = (
+  JSON.parse(
+    readFileSync(
+      new URL("../../src/lib/data/scale-catalog.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Array<{ id: string; curios: Array<{ id: string }> }>
+).flatMap((era) =>
+  era.curios.map((curio) => ({
+    eraId: era.id,
+    curioId: `${era.id}/${curio.id}`,
+  })),
+);
+const MAX_VISIBLE_MASH_PIECES = 32;
 
 type PerformanceSnapshot = {
   phases: Record<
@@ -61,6 +75,8 @@ type PerformanceSnapshot = {
       genericPickups: number;
       attachments: number;
       proxyPieces: number;
+      proxyFamilies: number;
+      richMashDrawCalls: number;
       visibleAttachments: number;
       attachmentProxyActive: boolean;
       attachmentScale: number;
@@ -96,6 +112,7 @@ type PerformanceSnapshot = {
     };
     drawBudget: {
       base: number;
+      pipelineReserve: number;
       richBudget: number;
       richUsed: number;
       environmentSuppressed: boolean;
@@ -225,6 +242,47 @@ async function seedAttachedFoam(page: Page) {
       }),
     );
   });
+}
+
+async function seedDenseDistinctMash(page: Page, count = 90) {
+  const specimens = mashStressCatalog.slice(0, count);
+  const eraId = specimens.at(-1)?.eraId ?? "theory-playground";
+  await page.addInitScript(({ savedEraId, savedSpecimens }) => {
+    const mash = savedSpecimens.map((specimen, index) => {
+      const angle = index * Math.PI * (3 - Math.sqrt(5));
+      const radius = 0.62 + (index % 3) * 0.06;
+      return {
+        eraId: specimen.eraId,
+        curioId: specimen.curioId,
+        position: [
+          Math.cos(angle) * radius,
+          ((index % 5) - 2) * 0.08,
+          Math.sin(angle) * radius,
+        ],
+        rotation: [index * 0.13, index * 0.21, index * 0.08],
+        scale: [0.18, 0.18, 0.18],
+        mergedInside: true,
+      };
+    });
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: savedEraId,
+        progress: 0,
+        picked: mash.length,
+        unitemizedPicked: mash.length,
+        x: 0,
+        z: 0,
+        zooms: 0,
+        cycles: 0,
+        sound: false,
+        mash,
+        collection: [],
+      }),
+    );
+  }, { savedEraId: eraId, savedSpecimens: specimens });
 }
 
 async function seedMultiEraMash(page: Page) {
@@ -437,6 +495,7 @@ test("performance profile changes only by explicit persisted choice", async ({
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
+  await seedDenseDistinctMash(page);
   await begin(page);
 
   await expect
@@ -452,7 +511,18 @@ test("performance profile changes only by explicit persisted choice", async ({
     targetFps: 30,
     idleTargetFps: 24,
     pixelRatioCap: 1.25,
+    shadows: false,
   });
+  expect(standard?.runtime.representations.attachments).toBeLessThanOrEqual(6);
+  expect(standard?.runtime.representations.richMashDrawCalls).toBeLessThanOrEqual(
+    18,
+  );
+  expect(standard?.runtime.representations.proxyFamilies).toBeGreaterThan(20);
+  expect(
+    (standard?.runtime.representations.attachments ?? 0) +
+      (standard?.runtime.representations.proxyPieces ?? 0),
+  ).toBe(MAX_VISIBLE_MASH_PIECES);
+  expect(standard?.runtime.representations.genericPickups).toBe(0);
   const semanticPopulation = standard?.runtime.pickups.target;
   const standardWorldGeneration = standard?.runtime.worldGeneration;
   await page.waitForTimeout(5_500);
@@ -464,6 +534,28 @@ test("performance profile changes only by explicit persisted choice", async ({
   expect(afterStandardMeasurement?.runtime.worldGeneration).toBe(
     standardWorldGeneration,
   );
+  expect(afterStandardMeasurement?.runtime.drawCalls).toBeLessThanOrEqual(
+    afterStandardMeasurement?.runtime.budget.maxDrawCalls ?? 0,
+  );
+  await page.keyboard.down("ArrowUp");
+  try {
+    await page.waitForTimeout(500);
+    for (let sample = 0; sample < 6; sample += 1) {
+      const moving = await readPerformanceDiagnostics(page);
+      expect(
+        moving?.runtime.drawCalls,
+        `moving compact Standard sample ${sample} exceeded its draw-call budget`,
+      ).toBeLessThanOrEqual(moving?.runtime.budget.maxDrawCalls ?? 0);
+      await page.waitForTimeout(250);
+    }
+  } finally {
+    await page.keyboard.up("ArrowUp");
+  }
+  const afterStandardMovement = await readPerformanceDiagnostics(page);
+  expect(
+    (afterStandardMovement?.runtime.representations.attachments ?? 0) +
+      (afterStandardMovement?.runtime.representations.proxyPieces ?? 0),
+  ).toBe(MAX_VISIBLE_MASH_PIECES);
 
   await page.getByRole("button", { name: "Open game menu" }).click();
   const profileSwitch = page.getByRole("switch", {
@@ -487,6 +579,18 @@ test("performance profile changes only by explicit persisted choice", async ({
     pixelRatioCap: 1,
     shadows: false,
   });
+  expect(battery?.runtime.representations.attachments).toBeLessThanOrEqual(4);
+  expect(battery?.runtime.representations.richMashDrawCalls).toBeLessThanOrEqual(
+    12,
+  );
+  expect(
+    (battery?.runtime.representations.attachments ?? 0) +
+      (battery?.runtime.representations.proxyPieces ?? 0),
+  ).toBe(MAX_VISIBLE_MASH_PIECES);
+  expect(battery?.runtime.representations.proxyFamilies).toBeGreaterThan(20);
+  expect(battery?.runtime.representations.proxyFamilies).toBeLessThanOrEqual(
+    battery?.runtime.representations.proxyPieces ?? 0,
+  );
   expect(battery?.runtime.pickups.target).toBe(semanticPopulation);
 
   await page.getByRole("button", { name: "Resume rolling" }).click();
@@ -740,26 +844,27 @@ test("multi-era rich and proxy mash pieces survive a save reload", async ({
   await seedMultiEraMash(page);
   await begin(page);
 
-  const expectedRepresentations = {
-    era: 3,
-    attachments: 3,
-    proxyPieces: 1,
-  };
   await expect
     .poll(
       async () => {
         const snapshot = await readPerformanceDiagnostics(page);
         return snapshot
-          ? {
-              era: snapshot.runtime.era,
-              attachments: snapshot.runtime.representations.attachments,
-              proxyPieces: snapshot.runtime.representations.proxyPieces,
-            }
-          : null;
+          ? snapshot.runtime.representations.attachments +
+              snapshot.runtime.representations.proxyPieces
+          : 0;
       },
       { timeout: 30_000 },
     )
-    .toEqual(expectedRepresentations);
+    .toBe(4);
+  const beforeReload = await readPerformanceDiagnostics(page);
+  const expectedRepresentations = {
+    era: beforeReload?.runtime.era,
+    attachments: beforeReload?.runtime.representations.attachments,
+    proxyPieces: beforeReload?.runtime.representations.proxyPieces,
+  };
+  expect(expectedRepresentations.era).toBe(3);
+  expect(expectedRepresentations.attachments).toBeGreaterThan(0);
+  expect(expectedRepresentations.proxyPieces).toBeGreaterThan(0);
 
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   expect(
@@ -1028,6 +1133,26 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
     });
   const desktop = await readPerformanceDiagnostics(page);
   expect(desktop?.runtime.player.horizontalFov).toBeLessThanOrEqual(58.001);
+  expect(desktop?.runtime.drawCalls).toBeLessThanOrEqual(
+    desktop?.runtime.budget.maxDrawCalls ?? 0,
+  );
+  expect(desktop?.runtime.drawBudget.richUsed).toBeLessThanOrEqual(
+    desktop?.runtime.drawBudget.richBudget ?? 0,
+  );
+  await page.keyboard.down("ArrowUp");
+  try {
+    await page.waitForTimeout(500);
+    for (let sample = 0; sample < 10; sample += 1) {
+      const moving = await readPerformanceDiagnostics(page);
+      expect(
+        moving?.runtime.drawCalls,
+        `moving Standard sample ${sample} exceeded its draw-call budget`,
+      ).toBeLessThanOrEqual(moving?.runtime.budget.maxDrawCalls ?? 0);
+      await page.waitForTimeout(250);
+    }
+  } finally {
+    await page.keyboard.up("ArrowUp");
+  }
 
   await page.setViewportSize({ width: 2560, height: 720 });
   await expect
@@ -1084,7 +1209,8 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   ).toBeGreaterThan(0);
   expect(
     (battery?.runtime.drawBudget.base ?? 0) +
-    (battery?.runtime.drawBudget.richUsed ?? 0) +
+      (battery?.runtime.drawBudget.pipelineReserve ?? 0) +
+      (battery?.runtime.drawBudget.richUsed ?? 0) +
       (battery?.runtime.representations.silhouetteDrawCalls ?? 0) +
       ((battery?.runtime.pickups.active ?? 0) > 0 ? 1 : 0),
   ).toBeLessThanOrEqual(battery?.runtime.budget.maxDrawCalls ?? 0);

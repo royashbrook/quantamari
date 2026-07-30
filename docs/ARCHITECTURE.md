@@ -55,33 +55,45 @@ three entries per animation frame, checking the 2 ms work budget between
 promotions while always permitting one so population cannot
 stall. A first-time visual-template build ends that frame's promotion work.
 Cached template bounds remove per-spawn scene traversals. New objects bloom for
-800 ms and remain non-colliding until fully visible. Only the first population
-uses the inner field; replenishments and post-transition populations enter
-through an outer ring. Distant pickups shrink out before their resources are
-released.
+800 ms and remain non-colliding until more than half bloomed. The first
+population of every fresh layer uses the dense inner field; later
+replenishments enter through an outer ring. Distant pickups shrink out before
+their resources are released.
 
-Battery quality treats `maxDrawCalls` as a hard weighted budget. Each cached
-collectible template records its render-leaf cost, while the live scene is
-counted without pickup roots. Rich pickups are admitted only while their cost
-fits. Admission is spatially stable: nearby and current-layer specimens receive
-the rich slots before distant work, rather than whichever objects happened to
-spawn first. The remainder use one instanced family per visible specimen so
-their authored silhouettes remain recognizable. Screen-stable character badges
-keep active-layer simplified specimens identifiable. The immediate prior layer
-is a sparse rug of exact authored low-detail models; deeper residents collapse
-into points and substrate texture rather than duplicate pickup draws. Generic
-meshes remain overflow protection only and are asserted to stay unused for
-normal catalogued populations. Transmission is disabled in battery mode so
-physical materials cannot add a hidden extra pass.
+Every quality profile treats `maxDrawCalls` as a hard weighted budget. Each
+cached collectible template records its render-leaf cost, while the live scene,
+shadow casters, instanced silhouette families, and a measured renderer-pipeline
+reserve are accounted separately. Rich pickups are admitted only while their
+cost fits. Admission is spatially stable: nearby and current-layer specimens
+receive the rich slots before distant work, rather than whichever objects
+happened to spawn first. The remainder use one instanced family per visible
+specimen so their authored silhouettes remain recognizable. All catalog
+geometry is normalized before merging, and tests require every specimen to
+produce its authored merged silhouette instead of silently falling back to a
+generic shape. Screen-stable character badges keep active-layer simplified
+specimens identifiable. The immediate prior layer is a sparse rug of exact
+authored low-detail models; deeper residents collapse into points and substrate
+texture rather than duplicate pickup draws. One generic instanced mesh remains
+only as unreachable capacity protection for populations above the authored
+limits. Transmission is disabled in battery mode so physical materials cannot
+add a hidden extra pass.
 Performance profile is an explicit player preference, persisted independently
 from journey progress. Standard selects fixed wide or compact pacing, DPR, and
 rendering budgets; Battery Optimized uses its fixed cooler settings. Nothing
 samples frame rate to promote or demote the profile, so the renderer cannot
 rebuild its world in a five-second feedback loop. Both profiles keep the same
 semantic pickup population, environment, substrate, and attached identities.
-Projected rich/simple LOD uses hysteresis, and attached identities stay rich
-until their whole mash is genuinely too small on screen. Battery Optimized uses
-the same mash records through one instanced proxy draw.
+Projected rich/simple LOD uses hysteresis. Save data retains 96 mash records and
+the newest 32 remain visually resident. Of those, the newest 4–8 attached
+identities remain multi-part rich toys; older visible records retain their
+authored silhouettes inside one merged-geometry mesh on the rolling mash.
+Cached source geometries that leave the visible window are disposed, so a long
+and diverse collection cannot grow memory without bound. When the whole mash is
+genuinely too small on screen, the newest toys join that same authored batch.
+Battery Optimized uses the identical records with the smallest rich set. Rich
+attachment admission is limited by both toy count and measured render-leaf
+cost; expensive species therefore collapse to their authored batched
+silhouette before they can break the profile's draw-call ceiling.
 
 Long Game and Learning Tour share one logical layer-advance path. Long Game
 keeps camera distance proportional to the physical radius and rebases both

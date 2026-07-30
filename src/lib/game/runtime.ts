@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
   type Curio,
   ERAS,
@@ -90,6 +91,7 @@ type Pickup = {
   bornAt: number;
   retireStartedAt: number | null;
   wantsRichDetail: boolean;
+  richAdmitted: boolean;
 };
 
 function pseudo(seed: number) {
@@ -107,6 +109,8 @@ const PERIODIC_WORLD_KINDS = new Set<WorldKind>([
   "city",
   "landscape",
 ]);
+const MASH_HISTORY_LIMIT = 96;
+const MAX_VISIBLE_MASH_PIECES = 32;
 
 function worldChunkSize(kind: WorldKind) {
   return kind === "interior" ? 256 : 128;
@@ -483,6 +487,8 @@ export function mountGame(
   let baseSceneDrawCallsDirty = true;
   let richPickupDrawCallBudget = 0;
   let richPickupDrawCalls = 0;
+  const minimumDrawCallPipelineReserve = profileSettings.shadows ? 16 : 4;
+  let unaccountedDrawCallReserve = minimumDrawCallPipelineReserve;
 
   const environmentGroup = new THREE.Group();
   scene.add(environmentGroup);
@@ -2392,18 +2398,23 @@ export function mountGame(
   let pickups: Pickup[] = [];
   const historyEnabled = labEra === null;
   const attachments: THREE.Object3D[] = [];
-  const mashProxyMesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(1, 1),
-    new THREE.MeshToonMaterial({
-      color: "#ffffff",
-      transparent: true,
-      opacity: 0.82,
-    }),
-    96,
+  const mashProxyGeometryCache = new Map<string, THREE.BufferGeometry>();
+  const mashProxyMaterial = new THREE.MeshToonMaterial({
+    color: "#ffffff",
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.82,
+  });
+  const mashProxyMesh = new THREE.Mesh(
+    new THREE.BufferGeometry(),
+    mashProxyMaterial,
   );
-  mashProxyMesh.count = 0;
-  mashProxyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mashProxyMesh.name = "mash-lod:authored-batch";
+  mashProxyMesh.userData.mashProxy = true;
+  mashProxyMesh.visible = false;
   mashProxyMesh.frustumCulled = false;
+  mashProxyMesh.castShadow = false;
+  mashProxyMesh.receiveShadow = false;
   mashGroup.add(mashProxyMesh);
   const mashProxyDummy = new THREE.Object3D();
   const mashProxyRecords: {
@@ -2412,7 +2423,29 @@ export function mountGame(
   }[] = [];
   let mashProxyIncludesRich = false;
   const richMashLimit = () =>
-    qualityTier === "high" ? 24 : qualityTier === "balanced" ? 18 : 12;
+    qualityTier === "high" ? 8 : qualityTier === "balanced" ? 6 : 4;
+  const richMashDrawCallLimit = () =>
+    qualityTier === "high" ? 32 : qualityTier === "balanced" ? 18 : 12;
+  const attachmentDrawCalls = (visual: THREE.Object3D) =>
+    Math.max(1, Number(visual.userData.mashDrawCalls ?? 1));
+  const richMashDrawCalls = () =>
+    attachments.reduce(
+      (total, visual) => total + attachmentDrawCalls(visual),
+      0,
+    );
+  const mashProxyGeometryFor = (curio: Curio) => {
+    const cached = mashProxyGeometryCache.get(curio.id);
+    if (cached) return cached;
+    const geometry = createCollectibleInstanceGeometry(
+      curio,
+      buildVisual,
+      false,
+    );
+    mashProxyGeometryCache.set(curio.id, geometry);
+    return geometry;
+  };
+  let mashProxyPieceCount = 0;
+  let visibleMashProxyFamilyCount = 0;
   const refreshMashProxy = () => {
     const visibleProxyRecords = [
       ...mashProxyRecords,
@@ -2433,22 +2466,54 @@ export function mountGame(
               : [];
           })
         : []),
-    ].slice(-96);
-    visibleProxyRecords.forEach(({ record, color }, index) => {
+    ].slice(-MAX_VISIBLE_MASH_PIECES);
+    const activeGeometryIds = new Set<string>();
+    const activeSpeciesIds = new Set<string>();
+    const transformedParts: THREE.BufferGeometry[] = [];
+    visibleProxyRecords.forEach(({ record }) => {
+      const sourceEra = ERAS.find((era) => era.id === record.eraId);
+      const curio = sourceEra?.curios.find(
+        (candidate) => candidate.id === record.curioId,
+      );
+      if (!curio) return;
+      activeGeometryIds.add(curio.id);
+      activeSpeciesIds.add(curio.id);
       mashProxyDummy.position.set(...record.position);
       mashProxyDummy.rotation.set(...record.rotation);
       const authoredScale = Math.max(...record.scale.map(Math.abs));
       mashProxyDummy.scale.setScalar(mashProxyScale(authoredScale));
       mashProxyDummy.updateMatrix();
-      mashProxyMesh.setMatrixAt(index, mashProxyDummy.matrix);
-      mashProxyMesh.setColorAt(index, new THREE.Color(color));
+      transformedParts.push(
+        mashProxyGeometryFor(curio)
+          .clone()
+          .applyMatrix4(mashProxyDummy.matrix),
+      );
     });
-    mashProxyMesh.count = visibleProxyRecords.length;
-    mashProxyMesh.instanceMatrix.needsUpdate = true;
-    if (mashProxyMesh.instanceColor) {
-      mashProxyMesh.instanceColor.needsUpdate = true;
+    let nextGeometry = new THREE.BufferGeometry();
+    if (transformedParts.length > 0) {
+      const merged = mergeGeometries(transformedParts, false);
+      if (!merged) {
+        transformedParts.forEach((geometry) => geometry.dispose());
+        throw new TypeError("Visible mash silhouettes could not be batched");
+      }
+      merged.computeBoundingSphere();
+      nextGeometry = merged;
     }
-    mashProxyMesh.visible = mashProxyMesh.count > 0;
+    transformedParts.forEach((geometry) => geometry.dispose());
+    mashProxyMesh.geometry.dispose();
+    mashProxyMesh.geometry = nextGeometry;
+    mashProxyPieceCount = transformedParts.length;
+    visibleMashProxyFamilyCount = activeSpeciesIds.size;
+    mashProxyMesh.visible = mashProxyPieceCount > 0;
+    attachments.forEach((visual) => {
+      const record = visual.userData.mashRecord as MashRecordV4 | undefined;
+      if (record) activeGeometryIds.add(record.curioId);
+    });
+    mashProxyGeometryCache.forEach((geometry, curioId) => {
+      if (activeGeometryIds.has(curioId)) return;
+      geometry.dispose();
+      mashProxyGeometryCache.delete(curioId);
+    });
     baseSceneDrawCallsDirty = true;
   };
   const setMashProxyLod = (compact: boolean) => {
@@ -2459,11 +2524,21 @@ export function mountGame(
     });
     refreshMashProxy();
   };
-  const addMashProxy = (record: MashRecordV4, color: string) => {
-    mashProxyRecords.push({ record, color });
-    const proxyLimit = Math.max(0, 96 - richMashLimit());
+  const trimMashProxyRecords = () => {
+    const proxyLimit = Math.max(
+      0,
+      MAX_VISIBLE_MASH_PIECES - attachments.length,
+    );
     while (mashProxyRecords.length > proxyLimit) mashProxyRecords.shift();
-    refreshMashProxy();
+  };
+  const addMashProxy = (
+    record: MashRecordV4,
+    color: string,
+    refresh = true,
+  ) => {
+    mashProxyRecords.push({ record, color });
+    trimMashProxyRecords();
+    if (refresh) refreshMashProxy();
   };
   const popBurstGeometry = new THREE.TorusGeometry(1, 0.1, 6, 28);
   const popBurstMaterial = new THREE.MeshBasicMaterial({
@@ -2570,8 +2645,12 @@ export function mountGame(
     const sourceEraIndex = ERAS.findIndex((era) => era.id === record.eraId);
     return sourceEraIndex >= 0 && sourceEraIndex <= activeIndex;
   });
-  const visibleMashRecords = retainedMashRecords.slice(-96);
-  if (historyEnabled) mashHistoryRef.current = visibleMashRecords;
+  const visibleMashRecords = retainedMashRecords.slice(
+    -MAX_VISIBLE_MASH_PIECES,
+  );
+  if (historyEnabled) {
+    mashHistoryRef.current = retainedMashRecords.slice(-MASH_HISTORY_LIMIT);
+  }
   const residentRichRecords = visibleMashRecords.filter((record) => {
     const sourceEraIndex = ERAS.findIndex((era) => era.id === record.eraId);
     return sourceEraIndex >= Math.max(0, activeIndex - 2);
@@ -2587,7 +2666,7 @@ export function mountGame(
     );
     if (!curio || sourceEraIndex < 0) return;
     if (!restoredRichRecords.has(record)) {
-      addMashProxy(record, curio.color);
+      addMashProxy(record, curio.color, false);
       return;
     }
     const restoredPosition = new THREE.Vector3(...record.position);
@@ -2609,10 +2688,12 @@ export function mountGame(
         number,
       ];
     }
-    const { visual } = makeVisual(curio);
+    const { visual, drawCalls } = makeVisual(curio);
     const restoredMarker = makeMarker(curio.symbol);
     restoredMarker.visible = sourceEraIndex >= activeIndex;
     visual.add(restoredMarker);
+    visual.userData.mashDrawCalls =
+      (drawCalls + 1) * (profileSettings.shadows ? 2 : 1);
     visual.userData.sourceEra = sourceEraIndex;
     visual.position.copy(restoredPosition);
     visual.rotation.set(...record.rotation);
@@ -2647,16 +2728,18 @@ export function mountGame(
   };
 
   const collapseRichMashToBudget = () => {
-    let collapsed = false;
-    while (attachments.length > richMashLimit()) {
+    while (
+      attachments.length > richMashLimit() ||
+      richMashDrawCalls() > richMashDrawCallLimit()
+    ) {
       const oldest = attachments.shift();
       if (!oldest) break;
-      collapsed = true;
       const record = oldest.userData.mashRecord as MashRecordV4 | undefined;
       if (record) {
         addMashProxy(
           record,
           String(oldest.userData.mashColor ?? activeEra.palette[2]),
+          false,
         );
       }
       const stickingIndex = stickingPieces.findIndex(
@@ -2666,8 +2749,11 @@ export function mountGame(
       mashGroup.remove(oldest);
       disposeVisual(oldest);
     }
-    if (collapsed) refreshMashProxy();
+    trimMashProxyRecords();
+    refreshMashProxy();
   };
+  trimMashProxyRecords();
+  collapseRichMashToBudget();
   const collapseDistantMash = (nextIndex: number) => {
     let collapsed = false;
     for (let index = attachments.length - 1; index >= 0; index -= 1) {
@@ -2675,17 +2761,18 @@ export function mountGame(
       const sourceEra = Number(visual.userData.sourceEra ?? nextIndex);
       if (sourceEra >= nextIndex - 2) continue;
       const record = visual.userData.mashRecord as MashRecordV4 | undefined;
+      attachments.splice(index, 1);
       if (record) {
         addMashProxy(
           record,
           String(visual.userData.mashColor ?? activeEra.palette[2]),
+          false,
         );
       }
       const stickingIndex = stickingPieces.findIndex(
         (piece) => piece.visual === visual,
       );
       if (stickingIndex >= 0) stickingPieces.splice(stickingIndex, 1);
-      attachments.splice(index, 1);
       mashGroup.remove(visual);
       disposeVisual(visual);
       collapsed = true;
@@ -2930,6 +3017,7 @@ export function mountGame(
       bornAt,
       retireStartedAt: null,
       wantsRichDetail: false,
+      richAdmitted: false,
     });
     game.id += 1;
     return { spawned: true, builtTemplate };
@@ -3277,9 +3365,12 @@ export function mountGame(
       };
       pickup.visual.userData.mashRecord = mashRecord;
       pickup.visual.userData.mashColor = pickup.curio.color;
+      pickup.visual.userData.mashDrawCalls =
+        pickup.drawCalls +
+        (profileSettings.shadows ? Math.max(0, pickup.drawCalls - 1) : 0);
       if (historyEnabled) {
         mashHistoryRef.current.push(mashRecord);
-        if (mashHistoryRef.current.length > 96) {
+        if (mashHistoryRef.current.length > MASH_HISTORY_LIMIT) {
           mashHistoryRef.current.shift();
         }
       }
@@ -3410,7 +3501,9 @@ export function mountGame(
               silhouetteBadgeInstances,
               genericPickups: farPickupMesh.count,
               attachments: attachments.length,
-              proxyPieces: mashProxyMesh.count,
+              proxyPieces: mashProxyPieceCount,
+              proxyFamilies: visibleMashProxyFamilyCount,
+              richMashDrawCalls: richMashDrawCalls(),
               visibleAttachments: attachments.filter((visual) => visual.visible)
                 .length,
               attachmentProxyActive: mashProxyIncludesRich,
@@ -3459,6 +3552,7 @@ export function mountGame(
             },
             drawBudget: {
               base: baseSceneDrawCalls,
+              pipelineReserve: unaccountedDrawCallReserve,
               richBudget: richPickupDrawCallBudget,
               richUsed: richPickupDrawCalls,
               environmentSuppressed: false,
@@ -3564,7 +3658,7 @@ export function mountGame(
     rollGroup.traverse((object) => {
       if (
         !(object instanceof THREE.Mesh) ||
-        object === mashProxyMesh
+        object.userData.mashProxy
       ) {
         return;
       }
@@ -3616,7 +3710,13 @@ export function mountGame(
       const materials = Array.isArray(object.material)
         ? object.material
         : [object.material];
-      drawCalls += materials.filter((material) => material.visible).length;
+      const visibleMaterials = materials.filter(
+        (material) => material.visible,
+      ).length;
+      drawCalls += visibleMaterials;
+      if (renderer.shadowMap.enabled && object.castShadow) {
+        drawCalls += visibleMaterials;
+      }
     });
     return drawCalls;
   };
@@ -4023,33 +4123,30 @@ export function mountGame(
     richPickupDrawCalls = 0;
     richPickupDrawCallBudget = renderBudget.maxDrawCalls;
     collectibleLodPool.beginFrame();
-    if (qualityTier === "battery") {
-      const farPickupReserve = pickups.length > 0 ? 1 : 0;
-      const activeSilhouetteFamilies = new Set(
-        pickups
-          .filter((pickup) => pickup.sourceEra >= activeIndex)
-          .map((pickup) => pickup.curio.id),
-      ).size;
-      const fabricSilhouetteFamilies = new Set(
-        pickups
-          .filter((pickup) => pickup.sourceEra === activeIndex - 1)
-          .map((pickup) => pickup.curio.id),
-      ).size;
-      const silhouetteReserve =
-        activeSilhouetteFamilies * 2 + fabricSilhouetteFamilies;
-      if (baseSceneDrawCallsDirty) {
-        refreshBaseSceneDrawCalls();
-      }
-      richPickupDrawCallBudget = Math.max(
-        0,
-          renderBudget.maxDrawCalls -
-          baseSceneDrawCalls -
-          farPickupReserve -
-          silhouetteReserve,
-      );
-    } else {
-      baseSceneDrawCalls = 0;
+    const farPickupReserve = pickups.length > 0 ? 1 : 0;
+    const activeSilhouetteFamilies = new Set(
+      pickups
+        .filter((pickup) => pickup.sourceEra >= activeIndex)
+        .map((pickup) => pickup.curio.id),
+    ).size;
+    const fabricSilhouetteFamilies = new Set(
+      pickups
+        .filter((pickup) => pickup.sourceEra === activeIndex - 1)
+        .map((pickup) => pickup.curio.id),
+    ).size;
+    const silhouetteReserve =
+      activeSilhouetteFamilies * 2 + fabricSilhouetteFamilies;
+    if (baseSceneDrawCallsDirty) {
+      refreshBaseSceneDrawCalls();
     }
+    richPickupDrawCallBudget = Math.max(
+      0,
+      renderBudget.maxDrawCalls -
+        baseSceneDrawCalls -
+        farPickupReserve -
+        silhouetteReserve -
+        unaccountedDrawCallReserve,
+    );
     let farPickupCount = 0;
     const richPickupBudget = richPickupLimit;
     const pickupDetail = pickups.map((pickup, index) => {
@@ -4099,6 +4196,10 @@ export function mountGame(
           Number(second.pickup.sourceEra === activeIndex) -
           Number(first.pickup.sourceEra === activeIndex);
         if (currentPriority !== 0) return currentPriority;
+        const retainedPriority =
+          Number(second.pickup.richAdmitted) -
+          Number(first.pickup.richAdmitted);
+        if (retainedPriority !== 0) return retainedPriority;
         const distancePriority = first.distance - second.distance;
         if (Math.abs(distancePriority) > 0.001) return distancePriority;
         return first.index - second.index;
@@ -4106,7 +4207,6 @@ export function mountGame(
     for (const { pickup } of richCandidates) {
       if (richPickupSet.size >= richPickupBudget) break;
       if (
-        qualityTier === "battery" &&
         richPickupDrawCalls + pickup.drawCalls > richPickupDrawCallBudget
       ) {
         continue;
@@ -4123,6 +4223,7 @@ export function mountGame(
       projectedLod,
     }) => {
       const useRichVisual = richPickupSet.has(pickup);
+      pickup.richAdmitted = useRichVisual;
       pickup.root.visible = useRichVisual;
       if (pickup.marker) {
         pickup.marker.visible =
@@ -4365,6 +4466,23 @@ export function mountGame(
 
     const renderStartedAt = phaseStart();
     renderer.render(scene, camera);
+    const accountedDrawCalls =
+      baseSceneDrawCalls +
+      richPickupDrawCalls +
+      silhouetteLodDrawCalls +
+      (farPickupCount > 0 ? 1 : 0);
+    const observedUnaccountedDrawCalls = Math.max(
+      0,
+      renderer.info.render.calls - accountedDrawCalls,
+    );
+    unaccountedDrawCallReserve = Math.min(
+      worldPerformanceBudget(qualityTier).maxDrawCalls,
+      Math.max(
+        unaccountedDrawCallReserve,
+        minimumDrawCallPipelineReserve,
+        Math.ceil(observedUnaccountedDrawCalls) + 2,
+      ),
+    );
     phaseEnd("render-submit", renderStartedAt);
     phaseEnd("frame", frameStartedAt);
     frame = requestAnimationFrame(animate);
@@ -4386,6 +4504,8 @@ export function mountGame(
     pickups.forEach((pickup) => removePickup(pickup));
     disposeEnvironment();
     collectibleLodPool.dispose();
+    mashProxyGeometryCache.forEach((geometry) => geometry.dispose());
+    mashProxyGeometryCache.clear();
     substrateGroup.traverse((object) => {
       if (object instanceof THREE.Points) {
         object.geometry.dispose();

@@ -32,7 +32,7 @@ test("performance profiles have deterministic frame and rendering budgets", () =
     idleTargetFps: 24,
     pixelRatioCap: 1.25,
     antialias: true,
-    shadows: true,
+    shadows: false,
   });
   assert.deepEqual(performanceProfileSettings("battery", false), {
     qualityTier: "battery",
