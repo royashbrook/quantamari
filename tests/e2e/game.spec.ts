@@ -492,7 +492,7 @@ test("browser changes survive a page reload", async ({ page }) => {
 test("performance profile changes only by explicit persisted choice", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page);
   await seedDenseDistinctMash(page);
@@ -613,6 +613,11 @@ test("performance profile changes only by explicit persisted choice", async ({
   expect(stored.save.performanceProfile).toBeUndefined();
 
   await page.reload();
+  await page.getByRole("button", { name: "Learning tour" }).click();
+  await page.getByRole("button", { name: "Begin becoming" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
   await page.getByRole("button", { name: "Open game menu" }).click();
   await expect(
     page.getByRole("switch", { name: /Battery Optimized/ }),
