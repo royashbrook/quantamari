@@ -1,0 +1,25 @@
+{
+  // Quantamari on its own origin, served as Cloudflare Workers static assets.
+  //
+  // It used to live at royashbrook.com/quarkatamari, pulled in and built by the SITE's
+  // build. That coupled two unrelated things: a broken game build could hold up the
+  // whole site, and the game's traffic landed in the content site's analytics, where
+  // an app's usage and a blog's usage are not the same measurement. Its own hostname
+  // separates both, and lets the game deploy itself when the game changes.
+  //
+  // Serving at a domain ROOT also deletes the subpath rewriting the old arrangement
+  // needed, including the workaround for basePath dropping index.html under this
+  // toolchain. Root serving has no base to keep in sync with anyone else's config.
+  "name": "quantamari",
+  // not a secret, and inlining it lets CI deploy without an account picker
+  "account_id": "b13c1cf2483bdad430b91ae25126e984",
+  "compatibility_date": "2026-06-15",
+  "assets": {
+    "directory": "./dist/client"
+  },
+  // custom_domain provisions the DNS record and the cert, so the hostname is
+  // declared here rather than clicked into a dashboard and forgotten.
+  "routes": [
+    { "pattern": "quantamari.royashbrook.com", "custom_domain": true }
+  ]
+}
