@@ -263,6 +263,11 @@
     }
   }
 
+  function startMode(mode: GameMode) {
+    chooseMode(mode);
+    begin();
+  }
+
   function toggleSound() {
     const next = !gameRef.current.sound;
     gameRef.current.sound = next;
@@ -1220,48 +1225,60 @@
           <em>Not yet.</em>
         </h1>
         <p class="welcome-lead">
-          Start in a deliberately silly theory playground: foam bubbles,
-          vibrating strings, topology questions, even musical notes. Collect
-          enough of the current layer to grow. At each scale shift, the old
-          world shrinks into the textured field beneath you.
+          Roll up a playful universe from the mystery below known physics to
+          the fiction beyond everything we can see. Choose your pace and start
+          becoming.
         </p>
-        <div class="science-caveat">
-          <b>Scientific honesty:</b> everything in the opening playground is
-          explicitly speculative. “Rolling” before matter exists is a navigation
-          metaphor. Physical footprint alone decides what fits; shape-specific
-          gameplay bulk only tunes growth. Experimental anchoring begins at
-          the particle frontier, named measured particles follow, and metre
-          labels stop when known cosmology does.
-        </div>
-        <div class="mode-picker" role="group" aria-label="Choose game pace">
-          <button
-            type="button"
-            class:selected={gameMode === "journey"}
-            aria-pressed={gameMode === "journey"}
-            onclick={() => chooseMode("journey")}
+        <div class="mode-cards" role="group" aria-label="Choose how to play">
+          <section
+            class="mode-card mode-card-long"
+            aria-labelledby="long-game-title"
           >
-            <b>Long game</b>
-            <span>40× the collecting journey · default</span>
-          </button>
-          <button
-            type="button"
-            class:selected={gameMode === "learning"}
-            aria-pressed={gameMode === "learning"}
-            onclick={() => chooseMode("learning")}
+            <span class="mode-card-mark" aria-hidden="true">∞</span>
+            <div class="mode-card-copy">
+              <span class="mode-card-kicker">THE FULL JOURNEY</span>
+              <h2 id="long-game-title">Long game</h2>
+              <p>A calm, dense 40× collecting journey through every scale.</p>
+            </div>
+            <button
+              class="mode-play"
+              type="button"
+              aria-label="Play Long Game"
+              onclick={() => startMode("journey")}
+            >
+              <span class="mode-button-copy">
+                <span>Play</span><span class="mode-button-detail">long game</span>
+              </span>
+              <b aria-hidden="true">→</b>
+            </button>
+          </section>
+          <section
+            class="mode-card mode-card-tour"
+            aria-labelledby="learning-tour-title"
           >
-            <b>Learning tour</b>
-            <span>See every scale quickly</span>
-          </button>
+            <span class="mode-card-mark" aria-hidden="true">⌁</span>
+            <div class="mode-card-copy">
+              <span class="mode-card-kicker">THE QUICK TOUR</span>
+              <h2 id="learning-tour-title">Learning tour</h2>
+              <p>Meet every layer quickly and watch the scale shifts unfold.</p>
+            </div>
+            <button
+              class="mode-play"
+              type="button"
+              aria-label="Play Learning Tour"
+              onclick={() => startMode("learning")}
+            >
+              <span class="mode-button-copy">
+                <span>Play</span><span class="mode-button-detail">learning tour</span>
+              </span>
+              <b aria-hidden="true">→</b>
+            </button>
+          </section>
         </div>
-        <button class="start" onclick={begin}>
-          <span>Begin becoming</span>
-          <b>→</b>
-        </button>
         <div class="welcome-foot">
           <span>{collectibleCount} UNIQUE SPECIMENS</span><span>•</span>
           <span>{ERAS.length} SCALE LAYERS</span><span>•</span>
-          <span>{scienceSourceCount} AUTHORITATIVE LINKS</span><span>•</span>
-          <span>THEORY ON BOTH ENDS</span>
+          <span>{scienceSourceCount} SOURCES IN THE SCIENCE ATLAS</span>
         </div>
       </section>
     {/if}

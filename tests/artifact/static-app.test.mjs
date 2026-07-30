@@ -89,7 +89,8 @@ test("build is a standalone root-origin static PWA", async () => {
   assert.equal(typeof buildMetadata.version, "string");
   assert.ok(buildMetadata.version.length > 0);
   assert.match(html, /BEGIN WHERE THE MAP RUNS OUT/);
-  assert.match(html, /Begin becoming/);
+  assert.match(html, /aria-label="Play Long Game"/);
+  assert.match(html, /aria-label="Play Learning Tour"/);
   assert.match(html, /made with[\s\S]*class="[^"]*heart[^"]*"/);
   assert.match(html, /href="https:\/\/royashbrook\.com\/agents"/);
   assert.match(html, /href="https:\/\/github\.com\/sponsors\/royashbrook"/);
