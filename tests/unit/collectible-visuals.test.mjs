@@ -81,6 +81,72 @@ test("every catalog visual form has an explicit renderer contract", () => {
   );
 });
 
+test("semantic forms cannot alias misleading generic silhouettes", () => {
+  const dedicatedForms = [
+    "field-ripple",
+    "vesicle",
+    "stadium",
+    "river-system",
+    "forest",
+    "weather-front",
+    "ringed-world",
+    "asteroid",
+    "comet",
+    "dense-star",
+    "orbit-system",
+    "star-cluster",
+    "nebula",
+    "galaxy-cluster",
+    "cosmic-web",
+    "cosmic-void",
+    "horizon",
+    "speculative-reality",
+  ];
+
+  for (const visualForm of dedicatedForms) {
+    assert.equal(
+      collectibleVisualHandlerFor(visualForm),
+      visualForm,
+      `${visualForm} must own a recognizable low-poly silhouette`,
+    );
+  }
+
+  assert.equal(new Set(dedicatedForms.map(collectibleVisualHandlerFor)).size, 18);
+  assert.deepEqual(
+    Object.entries(COLLECTIBLE_VISUAL_HANDLER_BY_FORM)
+      .filter(([, handler]) => handler === "bubble")
+      .map(([visualForm]) => visualForm),
+    ["foam"],
+  );
+  assert.deepEqual(
+    Object.entries(COLLECTIBLE_VISUAL_HANDLER_BY_FORM)
+      .filter(([, handler]) => handler === "stone")
+      .map(([visualForm]) => visualForm),
+    ["grain"],
+  );
+  assert.deepEqual(
+    Object.entries(COLLECTIBLE_VISUAL_HANDLER_BY_FORM)
+      .filter(([, handler]) =>
+        ["landform", "house", "world", "star", "galaxy"].includes(handler),
+      ),
+    [
+      ["house", "house"],
+      ["landform", "landform"],
+      ["world", "world"],
+      ["star", "star"],
+      ["galaxy", "galaxy"],
+    ],
+  );
+  assert.equal(
+    Object.values(COLLECTIBLE_VISUAL_HANDLER_BY_FORM).includes("system"),
+    false,
+  );
+  assert.equal(
+    Object.values(COLLECTIBLE_VISUAL_HANDLER_BY_FORM).includes("universe"),
+    false,
+  );
+});
+
 test("marker assets share bounded non-mipmapped textures", () => {
   const restoreDocument = installFakeCanvasDocument();
   const factory = createCollectibleMarkerFactory();
