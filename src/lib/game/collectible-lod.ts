@@ -127,7 +127,7 @@ export function createCollectibleBadgeTextureCache() {
 function createBadgeMaterial(texture: THREE.CanvasTexture) {
   return new THREE.MeshBasicMaterial({
     map: texture,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     transparent: true,
     alphaTest: 0.08,
     depthTest: false,
@@ -149,22 +149,6 @@ function disposeBuiltVisual(root: THREE.Object3D) {
   materials.forEach((material) => material.dispose());
 }
 
-function traceSilhouetteGeometry(curio: Curio) {
-  switch (curio.shape) {
-    case "quark":
-      return new THREE.TorusKnotGeometry(0.42, 0.1, 28, 6, 2, 3);
-    case "spark":
-      return new THREE.OctahedronGeometry(0.58, 0);
-    case "bubble":
-    case "atom":
-      return new THREE.IcosahedronGeometry(0.54, 1);
-    case "fiber":
-      return new THREE.CapsuleGeometry(0.16, 0.78, 4, 8);
-    default:
-      return new THREE.TorusGeometry(0.42, 0.12, 6, 16);
-  }
-}
-
 /**
  * Converts an authored collectible into one merged, colored model, then
  * instances that model for every distant copy of the same specimen.
@@ -181,7 +165,16 @@ export function createCollectibleInstanceGeometry(
   const parts: THREE.BufferGeometry[] = [];
   visual.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
-    const geometry = object.geometry.clone().applyMatrix4(object.matrixWorld);
+    const transformed = object.geometry
+      .clone()
+      .applyMatrix4(object.matrixWorld);
+    const geometry = transformed.index
+      ? transformed.toNonIndexed()
+      : transformed;
+    if (geometry !== transformed) transformed.dispose();
+    if (!geometry.getAttribute("normal")) {
+      geometry.computeVertexNormals();
+    }
     const material = Array.isArray(object.material)
       ? object.material[0]
       : object.material;
@@ -199,7 +192,7 @@ export function createCollectibleInstanceGeometry(
     }
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     for (const attribute of Object.keys(geometry.attributes)) {
-      if (!["position", "normal", "uv", "color"].includes(attribute)) {
+      if (!["position", "normal", "color"].includes(attribute)) {
         geometry.deleteAttribute(attribute);
       }
     }
@@ -208,37 +201,17 @@ export function createCollectibleInstanceGeometry(
   });
   if (parts.length === 0) {
     disposeBuiltVisual(visual);
-    const traced = traceSilhouetteGeometry(curio);
-    const color = new THREE.Color(curio.color);
-    const colors = new Float32Array(
-      traced.getAttribute("position").count * 3,
+    throw new TypeError(
+      `Collectible ${curio.id} has no authored LOD geometry`,
     );
-    for (let index = 0; index < colors.length; index += 3) {
-      colors[index] = color.r;
-      colors[index + 1] = color.g;
-      colors[index + 2] = color.b;
-    }
-    traced.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    traced.computeBoundingSphere();
-    return traced;
   }
   const merged = mergeGeometries(parts, false);
   parts.forEach((geometry) => geometry.dispose());
   disposeBuiltVisual(visual);
   if (!merged) {
-    const traced = traceSilhouetteGeometry(curio);
-    const color = new THREE.Color(curio.color);
-    const colors = new Float32Array(
-      traced.getAttribute("position").count * 3,
+    throw new TypeError(
+      `Collectible ${curio.id} could not merge its authored LOD geometry`,
     );
-    for (let index = 0; index < colors.length; index += 3) {
-      colors[index] = color.r;
-      colors[index + 1] = color.g;
-      colors[index + 2] = color.b;
-    }
-    traced.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    traced.computeBoundingSphere();
-    return traced;
   }
   merged.computeBoundingSphere();
   return merged;

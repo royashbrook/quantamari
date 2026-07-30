@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import * as THREE from "three";
+import { createServer } from "vite";
 
 import {
   COLLECTIBLE_VISUAL_HANDLER_BY_FORM,
@@ -18,6 +19,7 @@ import {
   COLLECTIBLE_LOD_BADGE_MAX_TEXTURE_BYTES,
   COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE,
   collectibleLodBadgeTextureBytes,
+  createCollectibleInstanceGeometry,
   createCollectibleLodPool,
 } from "../../src/lib/game/collectible-lod.ts";
 import { ERAS, VISUAL_FORMS } from "../../src/lib/scale-data.ts";
@@ -147,6 +149,55 @@ test("semantic forms cannot alias misleading generic silhouettes", () => {
   );
 });
 
+test("all 220 catalog curios produce their authored merged LOD silhouette", async () => {
+  const vite = await createServer({
+    appType: "custom",
+    logLevel: "silent",
+    server: { middlewareMode: true },
+  });
+  try {
+    const { createCollectibleVisualFactory } = await vite.ssrLoadModule(
+      "/src/lib/game/collectible-visuals.ts",
+    );
+    const visualFactory = createCollectibleVisualFactory({
+      isEarly: () => false,
+      getQualityTier: () => "high",
+      sceneryGlow: (color, opacity = 0.45, wireframe = false) =>
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity,
+          wireframe,
+        }),
+    });
+
+    for (const curio of curios) {
+      const geometry = createCollectibleInstanceGeometry(
+        curio,
+        visualFactory.buildVisual,
+        false,
+      );
+      assert.equal(
+        geometry.index,
+        null,
+        `${curio.id} must use normalized non-indexed LOD geometry`,
+      );
+      assert.deepEqual(
+        Object.keys(geometry.attributes).sort(),
+        ["color", "normal", "position"],
+        `${curio.id} must have one merge-compatible attribute contract`,
+      );
+      assert.ok(
+        geometry.getAttribute("position").count > 0,
+        `${curio.id} must keep its authored silhouette`,
+      );
+      geometry.dispose();
+    }
+  } finally {
+    await vite.close();
+  }
+});
+
 test("marker assets share bounded non-mipmapped textures", () => {
   const restoreDocument = installFakeCanvasDocument();
   const factory = createCollectibleMarkerFactory();
@@ -252,6 +303,10 @@ test("all 220 LOD families share catalog-symbol badges with single-owner disposa
     assert.equal(badges.length, 220);
     assert.equal(geometries.size, 1);
     assert.equal(textures.size, 98);
+    assert.ok(
+      badges.every((badge) => badge.material.side === THREE.FrontSide),
+      "camera-facing badges must stay single-pass",
+    );
     assert.deepEqual(
       [...textures]
         .map((texture) => texture.userData.collectibleBadgeSymbol)
