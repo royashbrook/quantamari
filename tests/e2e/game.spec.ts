@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 
 import packageJson from "../../package.json";
+import { DESKTOP_SEMANTIC_PICKUP_TARGET } from "../../src/lib/game/spawn-policy";
 
 const appPath = "/";
 
@@ -1014,8 +1015,8 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
     )
     .toEqual({
       era: 20,
-      target: 160,
-      current: 160,
+      target: DESKTOP_SEMANTIC_PICKUP_TARGET,
+      current: DESKTOP_SEMANTIC_PICKUP_TARGET,
       queued: 0,
       authored: 28,
       generic: 0,
@@ -1031,7 +1032,9 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
     )
     .toBeLessThanOrEqual(58.001);
   const ultrawide = await readPerformanceDiagnostics(page);
-  expect(ultrawide?.runtime.pickups.target).toBe(160);
+  expect(ultrawide?.runtime.pickups.target).toBe(
+    DESKTOP_SEMANTIC_PICKUP_TARGET,
+  );
   expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(0);
 });
 
