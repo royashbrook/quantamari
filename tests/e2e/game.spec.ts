@@ -410,9 +410,10 @@ test("boots the static game at its production root", async ({ page }) => {
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
-  for (const selector of [".scale-card", ".stats", ".fact-card"]) {
+  for (const selector of [".scale-card", ".stats"]) {
     await expect(page.locator(selector)).toHaveCSS("transform", "none");
   }
+  await expect(page.locator(".fact-card")).toHaveCount(0);
 
   const wrongPathResources = await page.evaluate((basePath) =>
     performance
@@ -948,7 +949,7 @@ test("mobile layout keeps pointer steering and the canvas in the viewport", asyn
   await expect(
     page.getByText("◎ drag anywhere to roll · pinch to zoom"),
   ).toBeVisible();
-  await expect(page.locator(".fact-card")).toBeVisible();
+  await expect(page.locator(".fact-card")).toHaveCount(0);
   await page.getByRole("button", { name: "Open game menu" }).click();
   await expect(page.getByRole("dialog", { name: "Game menu" })).toBeVisible();
   expect(
@@ -1192,7 +1193,10 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
   await seedPerformanceProfile(page, "battery");
   await seedAttachedFoam(page);
   await begin(page);
-  await page.getByRole("button", { name: "Open scale and science atlas" }).click();
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await page.getByRole("dialog", { name: "Game menu" })
+    .getByRole("button", { name: "Scale & science" })
+    .click();
   await page.getByLabel("Choose a scale layer").fill("20");
   await page.getByRole("dialog", { name: "Scale and science atlas" })
     .getByRole("button", { name: "Preview in 3D" })

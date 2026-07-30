@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
+      content="width=device-width, initial-scale=1"
     />
     <meta name="theme-color" content="#07041d" />
     <meta name="color-scheme" content="dark" />
@@ -70,6 +70,12 @@
     </style>
   </head>
   <body data-sveltekit-preload-data="hover">
+    <!--
+      Keep viewport-fit=cover out of this file. In an installed iPhone PWA it
+      pins the 844pt web viewport to the top of a 912pt screen and strands the
+      remaining 68pt below the game. Without it, iOS places that same viewport
+      against the physical bottom edge. CraftRush carried the same scar first.
+    -->
     <div style="display: contents">%sveltekit.body%</div>
     <aside id="boot-rescue" hidden aria-live="assertive">
       <div>

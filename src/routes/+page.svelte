@@ -69,6 +69,7 @@
     vz: number;
     lens: number;
     factCard: FactCard;
+    hadFact: boolean;
   } | null> = { current: null };
   const mashHistoryRef: MutableRef<MashRecordV4[]> = { current: [] };
   const collectionRef: MutableRef<CollectionEntry[]> = { current: [] };
@@ -113,7 +114,9 @@
   let mount = $state<HTMLDivElement | null>(null);
   let atlasDialog = $state<HTMLDialogElement | null>(null);
   let menuButton = $state<HTMLButtonElement | null>(null);
+  let guideButton = $state<HTMLButtonElement | null>(null);
   let atlasOpener: HTMLElement | null = null;
+  let guideOpener: HTMLElement | null = null;
   let menuOpener: HTMLElement | null = null;
   let childOpenedFromMenu: "atlas" | "guide" | null = null;
   let started = $state(false);
@@ -132,11 +135,14 @@
   let toast = $state(
     "Current-scale things stick. Older specks dissolve quietly into mass.",
   );
+  let toastVisible = $state(false);
+  let toastTimer: number | null = null;
   let lastFact = $state<FactCard>({
     name: "Spacetime fluctuation",
     fact: ERAS[0].lesson,
     source: ERAS[0].curios[0].source ?? ERAS[0].sources[0],
   });
+  let hasFact = $state(false);
   let joystickVisual = $state({
     active: false,
     originX: 0,
@@ -163,9 +169,26 @@
 
   function updateToast(message: string) {
     toast = message;
+    toastVisible = true;
+    if (toastTimer !== null) window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+      toastVisible = false;
+      toastTimer = null;
+    }, 4_000);
+  }
+  function hideToast() {
+    toastVisible = false;
+    if (toastTimer !== null) {
+      window.clearTimeout(toastTimer);
+      toastTimer = null;
+    }
   }
   function updateLastFact(fact: FactCard) {
     lastFact = fact;
+    hasFact = true;
+    // A pickup fact is the richer form of the same event. Showing both it and
+    // a toast creates a wall of duplicate status UI on a phone.
+    hideToast();
   }
   function updateCollection(entries: CollectionEntry[]) {
     collection = entries;
@@ -228,10 +251,11 @@
     gameRef.current.mode = mode;
     gameMode = mode;
     if (gameRef.current.running) {
-      toast =
+      updateToast(
         mode === "journey"
           ? "Long game pace selected. Your progress stays exactly where it is."
-          : "Learning tour selected. Same world, much faster scale shifts.";
+          : "Learning tour selected. Same world, much faster scale shifts.",
+      );
     }
   }
 
@@ -254,10 +278,7 @@
   function begin() {
     gameRef.current.running = true;
     started = true;
-    toast =
-      gameRef.current.mode === "journey"
-        ? "Long journey begun. You are not quite matter yet—go roll up uncertainty."
-        : "Learning tour begun. Roll up a quick path through every scale.";
+    hideToast();
     if (gameRef.current.sound) {
       resumeAudio();
     }
@@ -281,15 +302,17 @@
     try {
       localStorage.setItem(PERFORMANCE_PROFILE_STORAGE_KEY, next);
     } catch {
-      toast =
-        "This browser blocked device settings. The current graphics profile is unchanged.";
+      updateToast(
+        "This browser blocked device settings. The current graphics profile is unchanged.",
+      );
       return;
     }
     performanceProfile = next;
-    toast =
+    updateToast(
       next === "battery"
         ? "Battery Optimized is on: cooler rendering, same universe."
-        : "Standard graphics restored: stable detail with no automatic switching.";
+        : "Standard graphics restored: stable detail with no automatic switching.",
+    );
   }
 
   function activeElement() {
@@ -300,6 +323,7 @@
 
   function openMenu() {
     menuOpener = activeElement();
+    guideOpener = null;
     childOpenedFromMenu = null;
     showAtlas = false;
     showGuide = false;
@@ -317,7 +341,15 @@
     });
   }
 
-  function openGuide() {
+  function openGuide(event?: Event) {
+    const requestedOpener =
+      event?.currentTarget instanceof HTMLElement
+        ? event.currentTarget
+        : activeElement();
+    guideOpener =
+      requestedOpener && requestedOpener !== document.body
+        ? requestedOpener
+        : guideButton;
     childOpenedFromMenu = null;
     showAtlas = false;
     showGuide = true;
@@ -325,10 +357,16 @@
 
   function closeGuide() {
     const returnToMenu = childOpenedFromMenu === "guide";
+    const opener = guideOpener;
+    guideOpener = null;
     showGuide = false;
     if (returnToMenu) {
       childOpenedFromMenu = null;
       showMenu = true;
+    } else {
+      void tick().then(() => {
+        window.requestAnimationFrame(() => opener?.focus({ preventScroll: true }));
+      });
     }
   }
 
@@ -349,6 +387,7 @@
   }
 
   function openGuideFromMenu() {
+    guideOpener = null;
     childOpenedFromMenu = "guide";
     showMenu = false;
     showAtlas = false;
@@ -390,6 +429,7 @@
       vz: game.vz,
       lens: game.lens,
       factCard: lastFact,
+      hadFact: hasFact,
     };
     game.running = true;
     started = true;
@@ -397,25 +437,26 @@
     childOpenedFromMenu = null;
     menuOpener = null;
     showAtlas = false;
-    toast = `Scale Lab: ${ERAS[index].name}. Journey progress is paused.`;
-    lastFact = {
+    updateToast(`Scale Lab: ${ERAS[index].name}. Journey progress is paused.`);
+    updateLastFact({
       name: ERAS[index].name,
       fact: ERAS[index].lesson,
       source: ERAS[index].sources[0],
-    };
+    });
   }
 
   function returnToJourney() {
     const snapshot = labReturnRef.current;
     if (snapshot) {
-      const { factCard, ...journeyState } = snapshot;
+      const { factCard, hadFact, ...journeyState } = snapshot;
       Object.assign(gameRef.current, journeyState);
       hud = { ...hud, lens: snapshot.lens };
       lastFact = factCard;
+      hasFact = hadFact;
     }
     labReturnRef.current = null;
     labEra = null;
-    toast = "Journey restored exactly where you left it.";
+    updateToast("Journey restored exactly where you left it.");
   }
 
   function persistSnapshot() {
@@ -458,7 +499,7 @@
     } catch {
       if (!saveStatus.errorReported) {
         saveStatus.errorReported = true;
-        toast = "This browser blocked local saves. The current run still works.";
+        updateToast("This browser blocked local saves. The current run still works.");
       }
     }
   }
@@ -469,7 +510,7 @@
     persistSnapshot();
     updateReady = false;
     updateApplying = true;
-    toast = "Saving this universe and opening the new build…";
+    updateToast("Saving this universe and opening the new build…");
     const reloadWhenActive = () => {
       if (worker.state !== "activated") return;
       worker.removeEventListener("statechange", reloadWhenActive);
@@ -639,7 +680,7 @@
       );
     } catch {
       saveStatus.errorReported = true;
-      toast = "This browser blocked local saves. The current run still works.";
+      updateToast("This browser blocked local saves. The current run still works.");
       return;
     }
     if (!loaded) return;
@@ -791,7 +832,7 @@
       .catch((error) => {
         if (cancelled) return;
         gameRef.current.running = false;
-        toast = "The game code could not start. Reload to try again.";
+        updateToast("The game code could not start. Reload to try again.");
         console.error("Quantamari runtime boot failed", error);
       });
     return () => {
@@ -800,7 +841,10 @@
     };
   });
 
-  onDestroy(closeAudio);
+  onDestroy(() => {
+    hideToast();
+    closeAudio();
+  });
 
   // One finger steers through joystickRef; a second finger converts the
   // gesture into a pinch that drives the free lens. Pointer ids are tracked
@@ -989,6 +1033,7 @@
     class:awaiting-start={!started}
     class:empty-origin={started && hud.era === 0}
     class:lab-active={labEra !== null}
+    class:has-update={updateReady || updateApplying}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
@@ -1025,14 +1070,15 @@
       </div>
       <div class="actions">
         <button
-          class="quick-action"
+          bind:this={guideButton}
+          class="quick-action field-guide-trigger"
           aria-label="Open rolled-up field guide"
           onclick={openGuide}
         >
           <span aria-hidden="true">✦</span> <span>Field guide</span>
         </button>
         <button
-          class="quick-action"
+          class="quick-action atlas-trigger"
           onclick={openAtlas}
           aria-label="Open scale and science atlas"
         >
@@ -1129,15 +1175,30 @@
       </div>
     </section>
 
-    <aside class="stats hud">
-      <div>
+    <aside class="stats hud" aria-label="Run totals">
+      <div title="Things collected">
         <b>{hud.picked.toLocaleString()}</b>
-        <small>things collected</small>
+        <small>
+          <span class="wide-label">things collected</span>
+          <span class="compact-label">finds</span>
+        </small>
       </div>
       <i></i>
-      <div><b>{journeyIndex}</b><small>layers underfoot</small></div>
+      <div title="Layers underfoot">
+        <b>{journeyIndex}</b>
+        <small>
+          <span class="wide-label">layers underfoot</span>
+          <span class="compact-label">layers</span>
+        </small>
+      </div>
       <i></i>
-      <div><b>{hud.zooms}</b><small>scale shifts</small></div>
+      <div title="Scale shifts">
+        <b>{hud.zooms}</b>
+        <small>
+          <span class="wide-label">scale shifts</span>
+          <span class="compact-label">shifts</span>
+        </small>
+      </div>
       {#if hud.cycles > 0}
         <i></i>
         <div class="cycle-stat">
@@ -1147,32 +1208,37 @@
       {/if}
     </aside>
 
-    <aside class="fact-card hud">
-      <div class="fact-kicker">WHAT YOU JUST ROLLED UP</div>
-      <h2>{lastFact.name}</h2>
-      <p>{lastFact.fact}</p>
-      <div class="fact-actions">
-        <a
-          class="fact-source"
-          href={lastFact.source.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {lastFact.source.organization} · {lastFact.source.label} ↗
-        </a>
-        <button
-          type="button"
-          onclick={openGuide}
-        >
-          See every find
-        </button>
-      </div>
-    </aside>
+    {#if (hasFact || labEra !== null) && !toastVisible}
+      <aside class="fact-card hud">
+        <div class="fact-kicker">WHAT YOU JUST ROLLED UP</div>
+        <h2>{lastFact.name}</h2>
+        <p>{lastFact.fact}</p>
+        <div class="fact-actions">
+          <a
+            class="fact-source"
+            href={lastFact.source.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {lastFact.source.organization} · {lastFact.source.label} ↗
+          </a>
+          <button
+            type="button"
+            onclick={openGuide}
+          >
+            <span class="wide-label">See every find</span>
+            <span class="compact-label">Guide</span>
+          </button>
+        </div>
+      </aside>
+    {/if}
 
-    <div class="toast hud" role="status" aria-live="polite">
-      <span>✦</span>
-      <span class="toast-text">{toast}</span>
-    </div>
+    {#if toastVisible}
+      <div class="toast hud" role="status" aria-live="polite">
+        <span>✦</span>
+        <span class="toast-text">{toast}</span>
+      </div>
+    {/if}
 
     <div class="controls hud">
       <span><kbd>WASD</kbd> / arrows to roll</span>
@@ -1181,7 +1247,7 @@
       <span><kbd>G</kbd> field guide</span>
       <span><kbd>ESC</kbd> menu</span>
     </div>
-    {#if !touchTipSeen}
+    {#if !touchTipSeen && !hasFact && !toastVisible}
       <div class="touch-tip hud">◎ drag anywhere to roll · pinch to zoom</div>
     {/if}
 

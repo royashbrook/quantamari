@@ -45,7 +45,11 @@ export default defineConfig({
     },
     {
       name: "iphone-air",
-      testMatch: ["**/recovery.spec.ts", "**/welcome.spec.ts"],
+      testMatch: [
+        "**/mobile.spec.ts",
+        "**/recovery.spec.ts",
+        "**/welcome.spec.ts",
+      ],
       use: devices["iPhone Air"],
     },
   ],
