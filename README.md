@@ -238,6 +238,18 @@ HUD, compact fact card, dedicated maskable icons), targets 60 fps on the
 balanced tier, moves service-worker cache writes off the critical path, and
 folds the completed journey back into a fresh quantum foam as an eternal
 cycle under [issue #34](https://github.com/royashbrook/quantamari/issues/34).
+v3.0.1 completes the root-subdomain PWA cutover with exact-artifact deployment,
+offline production proof, and scoped retirement of the old path workers under
+[issue #36](https://github.com/royashbrook/quantamari/issues/36).
+v3.1 keeps Long Game dense without changing its 40× progression, replaces
+automatic quality switching with persistent Standard and Battery Optimized
+profiles, bounds rendering work, gives every catalog form an intentional
+silhouette, prevents the free lens from revealing unearned scale layers, and
+turns Giant Worlds into an atmospheric cloud-top scene under
+[issues #10](https://github.com/royashbrook/quantamari/issues/10),
+[#11](https://github.com/royashbrook/quantamari/issues/11),
+[#28](https://github.com/royashbrook/quantamari/issues/28), and
+[#32](https://github.com/royashbrook/quantamari/issues/32).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.
