@@ -54,6 +54,33 @@ type PerformanceSnapshot = {
     };
     worldGeneration: number;
     transitionActive: boolean;
+    backgroundDepth: {
+      reducedMotion: boolean;
+      environmentRate: number;
+      environmentYaw: number;
+      environmentPitch: number;
+      environmentChildren: number;
+      nearRate: number;
+      nearYaw: number;
+      nearPitch: number;
+      nearChildren: number;
+      midRate: number;
+      midYaw: number;
+      midPitch: number;
+      midChildren: number;
+      farRate: number;
+      farYaw: number;
+      farPitch: number;
+      farChildren: number;
+      foundationNearestRate: number;
+      foundationNearestYaw: number;
+      foundationNearestPitch: number;
+      foundationNearestChildren: number;
+      foundationCompressedRate: number;
+      foundationCompressedYaw: number;
+      foundationCompressedPitch: number;
+      foundationCompressedChildren: number;
+    };
     pickups: {
       active: number;
       current: number;
@@ -1188,6 +1215,241 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
     DESKTOP_SEMANTIC_PICKUP_TARGET,
   );
   expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(520);
+});
+
+test("volumetric background bands move at distinct depths while rolling", async ({
+  page,
+}) => {
+  test.setTimeout(70_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "balanced");
+  await begin(page);
+  const selected = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (eraIndex: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(2);
+  });
+  expect(selected).toBe(2);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            presentation: snapshot.runtime.world.foundationPresentation,
+            queued: snapshot.runtime.pickups.queued,
+          }
+        : null;
+    })
+    .toEqual({ era: 2, presentation: "field", queued: 0 });
+
+  const before = await readPerformanceDiagnostics(page);
+  expect(before).not.toBeNull();
+  expect(before?.runtime.backgroundDepth.nearChildren).toBeGreaterThan(0);
+  expect(before?.runtime.backgroundDepth.midChildren).toBeGreaterThan(0);
+  expect(before?.runtime.backgroundDepth.farChildren).toBeGreaterThan(0);
+  expect(
+    before?.runtime.backgroundDepth.foundationNearestChildren,
+  ).toBeGreaterThan(0);
+  expect(
+    before?.runtime.backgroundDepth.foundationCompressedChildren,
+  ).toBeGreaterThan(0);
+  expect(before?.runtime.backgroundDepth.nearRate).toBeGreaterThan(
+    before?.runtime.backgroundDepth.midRate ?? Number.POSITIVE_INFINITY,
+  );
+  expect(before?.runtime.backgroundDepth.midRate).toBeGreaterThan(
+    before?.runtime.backgroundDepth.farRate ?? Number.POSITIVE_INFINITY,
+  );
+  expect(
+    before?.runtime.backgroundDepth.foundationNearestRate,
+  ).toBeGreaterThan(
+    before?.runtime.backgroundDepth.foundationCompressedRate ??
+      Number.POSITIVE_INFINITY,
+  );
+
+  const startZ = before?.runtime.player.z ?? 0;
+  await page.keyboard.down("ArrowUp");
+  try {
+    await expect
+      .poll(async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Math.abs((snapshot?.runtime.player.z ?? startZ) - startZ);
+      })
+      .toBeGreaterThan(4);
+  } finally {
+    await page.keyboard.up("ArrowUp");
+  }
+  const after = await readPerformanceDiagnostics(page);
+  expect(after).not.toBeNull();
+  const angleDelta = (next = 0, previous = 0) =>
+    Math.abs(Math.atan2(Math.sin(next - previous), Math.cos(next - previous)));
+  const nearTravel = angleDelta(
+    after?.runtime.backgroundDepth.nearPitch,
+    before?.runtime.backgroundDepth.nearPitch,
+  );
+  const midTravel = angleDelta(
+    after?.runtime.backgroundDepth.midPitch,
+    before?.runtime.backgroundDepth.midPitch,
+  );
+  const farTravel = angleDelta(
+    after?.runtime.backgroundDepth.farPitch,
+    before?.runtime.backgroundDepth.farPitch,
+  );
+  const foundationNearestTravel = angleDelta(
+    after?.runtime.backgroundDepth.foundationNearestPitch,
+    before?.runtime.backgroundDepth.foundationNearestPitch,
+  );
+  const foundationCompressedTravel = angleDelta(
+    after?.runtime.backgroundDepth.foundationCompressedPitch,
+    before?.runtime.backgroundDepth.foundationCompressedPitch,
+  );
+
+  expect(nearTravel).toBeGreaterThan(midTravel);
+  expect(midTravel).toBeGreaterThan(farTravel);
+  expect(nearTravel).toBeGreaterThan(0.0045);
+  expect(midTravel).toBeGreaterThan(0.0022);
+  expect(farTravel).toBeGreaterThan(0.001);
+  expect(nearTravel).toBeLessThan(0.05);
+  expect(midTravel).toBeLessThan(0.03);
+  expect(farTravel).toBeLessThan(0.015);
+  expect(foundationNearestTravel).toBeGreaterThan(
+    foundationCompressedTravel,
+  );
+  expect(foundationCompressedTravel).toBeGreaterThan(0);
+  expect(after?.runtime.worldGeneration).toBe(before?.runtime.worldGeneration);
+  expect(after?.runtime.drawCalls).toBeLessThanOrEqual(
+    after?.runtime.budget.maxDrawCalls ?? 0,
+  );
+  expect(after?.runtime.triangles).toBeLessThanOrEqual(
+    after?.runtime.budget.maxTriangles ?? 0,
+  );
+
+  const microscopicSelected = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (eraIndex: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(5);
+  });
+  expect(microscopicSelected).toBe(5);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            physicalRate: snapshot.runtime.backgroundDepth.environmentRate,
+            nearChildren: snapshot.runtime.backgroundDepth.nearChildren,
+            queued: snapshot.runtime.pickups.queued,
+          }
+        : null;
+    })
+    .toEqual({
+      era: 5,
+      physicalRate: 0,
+      nearChildren: expect.any(Number),
+      queued: 0,
+    });
+  const microscopicBefore = await readPerformanceDiagnostics(page);
+  expect(
+    microscopicBefore?.runtime.backgroundDepth.nearChildren,
+  ).toBeGreaterThan(0);
+  const microscopicStartZ = microscopicBefore?.runtime.player.z ?? 0;
+  await page.keyboard.down("ArrowUp");
+  try {
+    await expect
+      .poll(async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Math.abs(
+          (snapshot?.runtime.player.z ?? microscopicStartZ) -
+            microscopicStartZ,
+        );
+      })
+      .toBeGreaterThan(3);
+  } finally {
+    await page.keyboard.up("ArrowUp");
+  }
+  const microscopicAfter = await readPerformanceDiagnostics(page);
+  expect(
+    angleDelta(
+      microscopicAfter?.runtime.backgroundDepth.nearPitch,
+      microscopicBefore?.runtime.backgroundDepth.nearPitch,
+    ),
+  ).toBeGreaterThan(0);
+  expect(microscopicAfter?.runtime.worldGeneration).toBe(
+    microscopicBefore?.runtime.worldGeneration,
+  );
+});
+
+test("reduced motion keeps backdrop depth styling without parallax", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await enablePerformanceDiagnostics(page, "balanced");
+  await begin(page);
+  const selected = await page.evaluate(() => {
+    const debugWindow = window as typeof window & {
+      __QUARKATAMARI_PERFORMANCE__?: {
+        previewEra: (eraIndex: number) => number;
+      };
+    };
+    return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(2);
+  });
+  expect(selected).toBe(2);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      const depth = snapshot?.runtime.backgroundDepth;
+      return depth
+        ? {
+            era: snapshot.runtime.era,
+            queued: snapshot.runtime.pickups.queued,
+            reduced: depth.reducedMotion,
+            nearRate: depth.nearRate,
+            midRate: depth.midRate,
+            farRate: depth.farRate,
+            foundationNearestRate: depth.foundationNearestRate,
+            foundationCompressedRate: depth.foundationCompressedRate,
+          }
+        : null;
+    })
+    .toEqual({
+      era: 2,
+      queued: 0,
+      reduced: true,
+      nearRate: 0,
+      midRate: 0,
+      farRate: 0,
+      foundationNearestRate: 0,
+      foundationCompressedRate: 0,
+    });
+  const before = await readPerformanceDiagnostics(page);
+  expect(before?.runtime.backgroundDepth.nearChildren).toBeGreaterThan(0);
+  expect(before?.runtime.backgroundDepth.midChildren).toBeGreaterThan(0);
+  expect(before?.runtime.backgroundDepth.farChildren).toBeGreaterThan(0);
+  const startZ = before?.runtime.player.z ?? 0;
+  await page.keyboard.down("ArrowUp");
+  try {
+    await expect
+      .poll(async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return Math.abs((snapshot?.runtime.player.z ?? startZ) - startZ);
+      })
+      .toBeGreaterThan(3);
+  } finally {
+    await page.keyboard.up("ArrowUp");
+  }
+  const after = await readPerformanceDiagnostics(page);
+  expect(after?.runtime.backgroundDepth.nearPitch).toBe(0);
+  expect(after?.runtime.backgroundDepth.midPitch).toBe(0);
+  expect(after?.runtime.backgroundDepth.farPitch).toBe(0);
+  expect(after?.runtime.backgroundDepth.foundationNearestPitch).toBe(0);
+  expect(after?.runtime.backgroundDepth.foundationCompressedPitch).toBe(0);
 });
 
 test("mobile battery mode enforces its measured draw-call budget", async ({

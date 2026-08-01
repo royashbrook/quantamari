@@ -46,6 +46,11 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   Accumulated origin phase is preserved in saves and Scale Lab returns. Tiny
   central scenery swaps to one box-proxy draw while instanced families remain
   batched.
+- Decorative near, mid, and far backdrop bands derive small angular parallax
+  from that same accumulated origin phase. Only the band roots move each
+  frame; instance matrices and materials remain unchanged. Volumetric prior
+  layers use separate nearest and compressed roots, while surface rugs stay
+  aligned with their periodic world and colliders.
 - Native menu, Field Guide, and Scale Lab dialogs pause the renderer while open.
   The Field Guide remains CSS-only and uses `content-visibility`.
 
