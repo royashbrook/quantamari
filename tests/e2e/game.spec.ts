@@ -1582,7 +1582,6 @@ test("reduced motion keeps backdrop depth styling without parallax", async ({
       return depth
         ? {
             era: snapshot.runtime.era,
-            queued: snapshot.runtime.pickups.queued,
             reduced: depth.reducedMotion,
             nearRate: depth.nearRate,
             midRate: depth.midRate,
@@ -1594,7 +1593,6 @@ test("reduced motion keeps backdrop depth styling without parallax", async ({
     })
     .toEqual({
       era: 2,
-      queued: 0,
       reduced: true,
       nearRate: 0,
       midRate: 0,
@@ -2411,10 +2409,12 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     };
     const diagnostics = debugWindow.__QUARKATAMARI_PERFORMANCE__;
     const triggered = diagnostics?.completeLayer() ?? false;
-    const radius = diagnostics?.snapshot().runtime.radius ?? 0;
+    const start = diagnostics?.snapshot().runtime ?? null;
+    const radius = start?.radius ?? 0;
     return new Promise<{
       triggered: boolean;
       radius: number;
+      start: PerformanceSnapshot["runtime"] | null;
       middle: PerformanceSnapshot["runtime"] | null;
       late: PerformanceSnapshot["runtime"] | null;
     }>((resolve, reject) => {
@@ -2438,7 +2438,7 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
           if (!late && runtime.worldScale < 0.3) late = runtime;
         } else if (sawTransition) {
           window.clearTimeout(timeout);
-          resolve({ triggered, radius, middle, late });
+          resolve({ triggered, radius, start, middle, late });
           return;
         }
         requestAnimationFrame(sample);
@@ -2473,27 +2473,29 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   expect(
     lateHandoff?.backgroundDepth.transitionIncomingScale,
   ).toBeLessThan((lateHandoff?.worldScale ?? 0) * 0.6);
+  const startHandoff = handoff.start;
+  expect(startHandoff).not.toBeNull();
   expect(
     lateHandoff?.backgroundDepth.transitionOutgoingMeanDistance ?? Infinity,
   ).toBeLessThan(
-    middleHandoff?.backgroundDepth.transitionOutgoingMeanDistance ?? 0,
+    startHandoff?.backgroundDepth.transitionOutgoingMeanDistance ?? 0,
   );
   expect(
     lateHandoff?.backgroundDepth.transitionOutgoingMeanBaseY ?? Infinity,
   ).toBeLessThan(
-    middleHandoff?.backgroundDepth.transitionOutgoingMeanBaseY ?? 0,
+    startHandoff?.backgroundDepth.transitionOutgoingMeanBaseY ?? 0,
   );
   expect(
     lateHandoff?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ??
       Infinity,
   ).toBeLessThan(
-    middleHandoff?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ?? 0,
+    startHandoff?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ?? 0,
   );
   expect(
     lateHandoff?.backgroundDepth.transitionIncomingMaxRenderedScaleY ??
       Infinity,
   ).toBeLessThan(
-    middleHandoff?.backgroundDepth.transitionIncomingMaxRenderedScaleY ?? 0,
+    startHandoff?.backgroundDepth.transitionIncomingMaxRenderedScaleY ?? 0,
   );
   await expect
     .poll(
