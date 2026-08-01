@@ -18,6 +18,13 @@ async function waitForInstallLifecycle(page: import("@playwright/test").Page) {
 }
 
 async function expectCoachFitsViewport(coach: Locator) {
+  await coach.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .getAnimations()
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
+  });
   const geometry = await coach.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const viewport = window.visualViewport;
