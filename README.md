@@ -325,6 +325,11 @@ subjects out of repeated rugs, turns the Field Guide into a complete found and
 missing catalog, and derives achievements and scientific collection sets from
 the same stable save records. This work is tracked under
 [issue #56](https://github.com/royashbrook/quantamari/issues/56).
+v3.5.2 makes PWA updates build-aware. A service worker matching the document
+already on screen activates silently; only a genuinely different build shows
+the persistent update action, failed activation returns to a retryable state,
+and a completed document update leaves one concise version toast. This work is
+tracked under [issue #60](https://github.com/royashbrook/quantamari/issues/60).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

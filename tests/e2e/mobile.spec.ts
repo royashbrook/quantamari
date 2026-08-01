@@ -655,16 +655,33 @@ test("iPhone update notice stays persistent without replacing the bottom dock", 
     )
     .toBe(true);
 
-  await page.evaluate(() => {
+  await page.route("**/_app/version.json", async (route) => {
+    await route.fulfill({ json: { version: "future-iphone-build" } });
+  });
+
+  await page.evaluate(async () => {
     const updateWindow = window as typeof window & {
       __QUARKATAMARI_UPDATE_DEBUG__?: {
-        showUpdateReady: (worker: ServiceWorker) => void;
+        considerWaitingWorker: (worker: ServiceWorker) => Promise<void>;
       };
     };
-    updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady({
+    await updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.considerWaitingWorker({
       state: "installed",
+      scriptURL: `${location.origin}/service-worker.js?build=future-iphone-build`,
       addEventListener: () => undefined,
-      postMessage: () => undefined,
+      removeEventListener: () => undefined,
+      postMessage: (
+        message: { type?: string },
+        transfer?: Transferable[],
+      ) => {
+        if (message.type !== "GET_BUILD_VERSION") return;
+        window.setTimeout(() => {
+          (transfer?.[0] as MessagePort | undefined)?.postMessage({
+            type: "BUILD_VERSION",
+            version: "future-iphone-build",
+          });
+        }, 150);
+      },
     } as unknown as ServiceWorker);
   });
 

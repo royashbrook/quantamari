@@ -41,7 +41,7 @@ async function proveProductionPwa() {
       await page.evaluate(
         () => navigator.serviceWorker.controller?.scriptURL ?? "",
       ),
-      /\/service-worker\.js$/,
+      /\/service-worker\.js\?build=.+$/,
     );
 
     const versionResponse = await context.request.get(

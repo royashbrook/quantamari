@@ -70,7 +70,13 @@
     buildVersion.endsWith("-dirty") ? "+dirty" : ""
   }`;
   const RESET_GENERATION_KEY = "everything-roll-reset-generation";
+  const LAST_SEEN_BUILD_KEY = "quantamari-last-seen-build";
   const INSTALL_COACH_REVEAL_DELAY_MS = 900;
+  const WORKER_BUILD_TIMEOUT_MS = 1_000;
+  const WORKER_BUILD_RETRY_DELAY_MS = 1_500;
+  const WORKER_BUILD_RETRY_LIMIT = 2;
+  const DEPLOYED_BUILD_TIMEOUT_MS = 3_500;
+  const UPDATE_ACTIVATION_TIMEOUT_MS = 8_000;
   const PICKUP_FACT_DURATION_MS = 5_500;
   const PICKUP_FACT_COOLDOWN_MS = 2_500;
   const ROLL_KEYS = new Set([
@@ -161,8 +167,9 @@
   let performanceProfile = $state<PerformanceProfile>("standard");
   let collection = $state<CollectionEntry[]>([]);
   let legacyUnitemizedCount = $state(0);
-  let updateReady = $state(false);
-  let updateApplying = $state(false);
+  let updateState = $state<"idle" | "ready" | "applying">("idle");
+  let updateReady = $derived(updateState === "ready");
+  let updateApplying = $derived(updateState === "applying");
   let installKind = $state<InstallPromptKind | null>(null);
   let installAppleTablet = $state(false);
   let installCoachVisible = $state(false);
@@ -210,7 +217,7 @@
     cycles: 0,
   });
   const saveStatus = { errorReported: false };
-  let waitingWorker: ServiceWorker | null = null;
+  let applyWaitingUpdate = () => {};
   let resetInProgress = false;
   let resetGeneration: string | null = null;
 
@@ -732,25 +739,84 @@
     }
   }
 
+  function readWorkerBuild(worker: ServiceWorker) {
+    return new Promise<string | null>((resolve) => {
+      const channel = new MessageChannel();
+      let settled = false;
+      const finish = (value: string | null) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        channel.port1.close();
+        resolve(value);
+      };
+      const timeout = window.setTimeout(
+        () => finish(null),
+        WORKER_BUILD_TIMEOUT_MS,
+      );
+      channel.port1.onmessage = (event) => {
+        const response = event.data as {
+          type?: unknown;
+          version?: unknown;
+        };
+        finish(
+          response?.type === "BUILD_VERSION" &&
+            typeof response.version === "string"
+            ? response.version
+            : null,
+        );
+      };
+      try {
+        worker.postMessage(
+          { type: "GET_BUILD_VERSION" },
+          [channel.port2],
+        );
+      } catch {
+        finish(null);
+      }
+    });
+  }
+
+  async function readDeployedBuild() {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      DEPLOYED_BUILD_TIMEOUT_MS,
+    );
+    try {
+      const response = await fetch(`${base}/_app/version.json`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const metadata = (await response.json()) as { version?: unknown };
+      return typeof metadata.version === "string" ? metadata.version : null;
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   function applyUpdate() {
-    const worker = waitingWorker;
-    if (!worker || updateApplying) return;
-    persistSnapshot();
-    updateReady = false;
-    updateApplying = true;
-    updateToast("Saving this universe and opening the new build…");
-    const reloadWhenActive = () => {
-      if (worker.state !== "activated") return;
-      worker.removeEventListener("statechange", reloadWhenActive);
-      window.location.reload();
-    };
-    worker.addEventListener("statechange", reloadWhenActive);
-    worker.postMessage({ type: "ACTIVATE_UPDATE" });
+    applyWaitingUpdate();
   }
 
   onMount(() => {
     document.documentElement.dataset.quarkatamariReady = "true";
     window.dispatchEvent(new Event("quarkatamari:ready"));
+  });
+
+  onMount(() => {
+    try {
+      const previousBuild = localStorage.getItem(LAST_SEEN_BUILD_KEY);
+      localStorage.setItem(LAST_SEEN_BUILD_KEY, buildVersion);
+      if (previousBuild && previousBuild !== buildVersion) {
+        updateToast(`Quantamari updated to v${appVersion}.`);
+      }
+    } catch {
+      // Build confirmation is optional when storage is unavailable.
+    }
   });
 
   onMount(() => {
@@ -831,12 +897,192 @@
     let disposed = false;
     let registration: ServiceWorkerRegistration | null = null;
     let trackedWorker: ServiceWorker | null = null;
+    let displayedWorker: ServiceWorker | null = null;
+    let displayedWorkerStateListener: (() => void) | null = null;
+    let candidateGeneration = 0;
+    let controllerCheckGeneration = 0;
     let updateCheckInterval = 0;
+    let activationTimer = 0;
+    let identityRetryTimer = 0;
+    let reloadStarted = false;
+    let reloadWhenWorkerActivates: ServiceWorker | null = null;
+
+    const clearActivationTimer = () => {
+      window.clearTimeout(activationTimer);
+      activationTimer = 0;
+    };
+    const clearIdentityRetryTimer = () => {
+      window.clearTimeout(identityRetryTimer);
+      identityRetryTimer = 0;
+    };
+    const detachDisplayedWorker = (expected?: ServiceWorker) => {
+      if (expected && displayedWorker !== expected) return;
+      if (displayedWorker && displayedWorkerStateListener) {
+        displayedWorker.removeEventListener(
+          "statechange",
+          displayedWorkerStateListener,
+        );
+      }
+      displayedWorker = null;
+      displayedWorkerStateListener = null;
+    };
+    const reloadOnce = () => {
+      if (disposed || reloadStarted) return;
+      reloadStarted = true;
+      clearActivationTimer();
+      window.location.reload();
+    };
+    const checkForUpdate = () => {
+      if (disposed || !registration || updateState === "applying") return;
+      void registration.update().catch((error) => {
+        console.warn("Quantamari update check failed", error);
+      });
+    };
+    const recoverUpdate = (worker: ServiceWorker, message: string) => {
+      clearActivationTimer();
+      const retryable =
+        displayedWorker === worker && worker.state === "installed";
+      updateState = retryable ? "ready" : "idle";
+      updateToast(message);
+      checkForUpdate();
+    };
+    const onDisplayedWorkerState = () => {
+      const worker = displayedWorker;
+      if (!worker) return;
+      if (worker.state === "activated") {
+        const shouldReload =
+          updateState === "applying" || reloadWhenWorkerActivates === worker;
+        if (reloadWhenWorkerActivates === worker) {
+          reloadWhenWorkerActivates = null;
+        }
+        detachDisplayedWorker(worker);
+        updateState = "idle";
+        if (shouldReload) reloadOnce();
+        return;
+      }
+      if (worker.state === "redundant") {
+        const wasApplying = updateState === "applying";
+        if (reloadWhenWorkerActivates === worker) {
+          reloadWhenWorkerActivates = null;
+        }
+        clearActivationTimer();
+        detachDisplayedWorker(worker);
+        updateState = "idle";
+        if (wasApplying) {
+          updateToast("That update was replaced before it could open. Checking again…");
+          checkForUpdate();
+        }
+        return;
+      }
+      if (worker.state === "activating" && updateState === "ready") {
+        updateState = "idle";
+      }
+    };
+    const displayUpdate = (worker: ServiceWorker) => {
+      if (
+        disposed ||
+        updateApplying ||
+        worker.state !== "installed"
+      ) {
+        return;
+      }
+      if (
+        reloadWhenWorkerActivates &&
+        reloadWhenWorkerActivates !== worker
+      ) {
+        reloadWhenWorkerActivates = null;
+      }
+      detachDisplayedWorker();
+      displayedWorker = worker;
+      displayedWorkerStateListener = onDisplayedWorkerState;
+      worker.addEventListener("statechange", onDisplayedWorkerState);
+      updateState = "ready";
+    };
+    const activateMatchingWorker = (worker: ServiceWorker) => {
+      if (disposed || worker.state !== "installed") return;
+      if (
+        reloadWhenWorkerActivates &&
+        reloadWhenWorkerActivates !== worker
+      ) {
+        reloadWhenWorkerActivates = null;
+      }
+      detachDisplayedWorker();
+      updateState = "idle";
+      try {
+        worker.postMessage({ type: "ACTIVATE_UPDATE" });
+      } catch (error) {
+        console.warn("Quantamari matching worker could not activate", error);
+      }
+    };
+    const considerWaitingWorker = async (
+      worker: ServiceWorker,
+      retryAttempt = 0,
+    ) => {
+      if (retryAttempt === 0) clearIdentityRetryTimer();
+      if (
+        disposed ||
+        updateApplying ||
+        worker.state !== "installed"
+      ) {
+        return;
+      }
+      const generation = ++candidateGeneration;
+      const [workerBuild, deployedBuild] = await Promise.all([
+        readWorkerBuild(worker),
+        readDeployedBuild(),
+      ]);
+      if (
+        disposed ||
+        generation !== candidateGeneration ||
+        updateApplying ||
+        worker.state !== "installed"
+      ) {
+        return;
+      }
+      if (workerBuild === buildVersion) {
+        clearIdentityRetryTimer();
+        if (!deployedBuild || deployedBuild === buildVersion) {
+          activateMatchingWorker(worker);
+        } else {
+          checkForUpdate();
+        }
+        return;
+      }
+      // Never label an unidentified or stale worker as a newer build. Only the
+      // worker that exactly matches the deployed manifest is actionable.
+      if (
+        workerBuild === null ||
+        deployedBuild === null ||
+        workerBuild !== deployedBuild
+      ) {
+        checkForUpdate();
+        if (
+          (workerBuild === null || deployedBuild === null) &&
+          retryAttempt < WORKER_BUILD_RETRY_LIMIT
+        ) {
+          clearIdentityRetryTimer();
+          identityRetryTimer = window.setTimeout(() => {
+            identityRetryTimer = 0;
+            if (
+              disposed ||
+              updateApplying ||
+              worker.state !== "installed" ||
+              (registration?.waiting && registration.waiting !== worker)
+            ) {
+              return;
+            }
+            void considerWaitingWorker(worker, retryAttempt + 1);
+          }, WORKER_BUILD_RETRY_DELAY_MS * (retryAttempt + 1));
+        }
+        return;
+      }
+      clearIdentityRetryTimer();
+      displayUpdate(worker);
+    };
     const revealUpdate = (worker: ServiceWorker) => {
-      if (disposed) return;
-      waitingWorker = worker;
-      updateApplying = false;
-      updateReady = true;
+      ++candidateGeneration;
+      clearIdentityRetryTimer();
+      displayUpdate(worker);
     };
     const markReady = (worker: ServiceWorker) => {
       if (
@@ -846,7 +1092,7 @@
       ) {
         return;
       }
-      revealUpdate(registration?.waiting ?? worker);
+      void considerWaitingWorker(registration?.waiting ?? worker);
     };
     const onWorkerState = () => {
       if (trackedWorker) markReady(trackedWorker);
@@ -857,39 +1103,118 @@
       trackedWorker?.addEventListener("statechange", onWorkerState);
     };
     const onUpdateFound = () => trackInstallingWorker();
-    const checkForUpdate = () => {
-      if (disposed || !registration) return;
-      void registration.update().catch((error) => {
-        console.warn("Quantamari update check failed", error);
-      });
-    };
     const checkWhenVisible = () => {
       if (document.visibilityState === "visible") checkForUpdate();
     };
+    const onControllerChange = () => {
+      const generation = ++controllerCheckGeneration;
+      if (updateState === "applying") {
+        reloadOnce();
+        return;
+      }
+      const controller = navigator.serviceWorker.controller;
+      if (!controller) return;
+      void (async () => {
+        for (
+          let attempt = 0;
+          attempt <= WORKER_BUILD_RETRY_LIMIT;
+          attempt += 1
+        ) {
+          const controllerBuild = await readWorkerBuild(controller);
+          if (
+            disposed ||
+            generation !== controllerCheckGeneration ||
+            navigator.serviceWorker.controller !== controller
+          ) {
+            return;
+          }
+          if (controllerBuild) {
+            if (controllerBuild !== buildVersion) {
+              persistSnapshot();
+              reloadOnce();
+            }
+            return;
+          }
+          if (attempt < WORKER_BUILD_RETRY_LIMIT) {
+            await new Promise<void>((resolve) =>
+              window.setTimeout(
+                resolve,
+                WORKER_BUILD_RETRY_DELAY_MS * (attempt + 1),
+              ),
+            );
+          }
+        }
+      })();
+    };
+    const performUpdate = () => {
+      const worker = displayedWorker;
+      if (!worker || updateState === "applying") return;
+      if (worker.state !== "installed") {
+        detachDisplayedWorker(worker);
+        updateState = "idle";
+        checkForUpdate();
+        return;
+      }
+      persistSnapshot();
+      reloadWhenWorkerActivates = worker;
+      updateState = "applying";
+      updateToast("Saving this universe and opening the new build…");
+      clearActivationTimer();
+      activationTimer = window.setTimeout(() => {
+        if (disposed || updateState !== "applying") return;
+        if (worker.state === "activated") {
+          reloadOnce();
+          return;
+        }
+        recoverUpdate(
+          worker,
+          worker.state === "installed"
+            ? "The update did not start. Try Update now again."
+            : "The update is still finishing. Reopen Quantamari to use it.",
+        );
+      }, UPDATE_ACTIVATION_TIMEOUT_MS);
+      try {
+        worker.postMessage({ type: "ACTIVATE_UPDATE" });
+      } catch {
+        reloadWhenWorkerActivates = null;
+        recoverUpdate(worker, "The update could not start. Try Update now again.");
+      }
+    };
+    applyWaitingUpdate = performUpdate;
     const updateDebugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
       __QUARKATAMARI_UPDATE_DEBUG__?: {
+        buildVersion: string;
+        considerWaitingWorker: (worker: ServiceWorker) => Promise<void>;
         showUpdateReady: (worker: ServiceWorker) => void;
       };
     };
     if (updateDebugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__) {
       updateDebugWindow.__QUARKATAMARI_UPDATE_DEBUG__ = {
+        buildVersion,
+        considerWaitingWorker,
         showUpdateReady: revealUpdate,
       };
     }
     window.addEventListener("focus", checkForUpdate);
     window.addEventListener("online", checkForUpdate);
     document.addEventListener("visibilitychange", checkWhenVisible);
+    navigator.serviceWorker.addEventListener(
+      "controllerchange",
+      onControllerChange,
+    );
     updateCheckInterval = window.setInterval(checkForUpdate, 10 * 60 * 1000);
 
+    const serviceWorkerUrl = new URL(`${base}/service-worker.js`, location.href);
+    serviceWorkerUrl.searchParams.set("build", buildVersion);
     void navigator.serviceWorker
-      .register(`${base}/service-worker.js`, { type: "module" })
+      .register(serviceWorkerUrl, { type: "module" })
       .then((nextRegistration) => {
         if (disposed) return;
         registration = nextRegistration;
         registration.addEventListener("updatefound", onUpdateFound);
         if (registration.waiting && navigator.serviceWorker.controller) {
-          revealUpdate(registration.waiting);
+          void considerWaitingWorker(registration.waiting);
         }
         trackInstallingWorker();
         checkForUpdate();
@@ -900,10 +1225,21 @@
 
     return () => {
       disposed = true;
+      ++candidateGeneration;
+      ++controllerCheckGeneration;
+      clearActivationTimer();
+      clearIdentityRetryTimer();
+      reloadWhenWorkerActivates = null;
+      detachDisplayedWorker();
+      if (applyWaitingUpdate === performUpdate) applyWaitingUpdate = () => {};
       window.clearInterval(updateCheckInterval);
       window.removeEventListener("focus", checkForUpdate);
       window.removeEventListener("online", checkForUpdate);
       document.removeEventListener("visibilitychange", checkWhenVisible);
+      navigator.serviceWorker.removeEventListener(
+        "controllerchange",
+        onControllerChange,
+      );
       registration?.removeEventListener("updatefound", onUpdateFound);
       trackedWorker?.removeEventListener("statechange", onWorkerState);
       if (

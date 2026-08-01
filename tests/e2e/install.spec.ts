@@ -273,6 +273,7 @@ test("update-ready notice takes priority over first-visit coaching", async ({
     updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady({
       state: "installed",
       addEventListener: () => undefined,
+      removeEventListener: () => undefined,
       postMessage: () => undefined,
     } as unknown as ServiceWorker);
   });
