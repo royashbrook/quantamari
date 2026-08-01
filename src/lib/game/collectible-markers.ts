@@ -102,7 +102,9 @@ export function createCollectibleMarkerFactory() {
           depthWrite: false,
         }),
       );
-      const markerScale = symbol.length > 2 ? 1.02 : 1.16;
+      // The face belongs to the specimen; it should not become a second
+      // silhouette that hides the authored body at ordinary play distance.
+      const markerScale = symbol.length > 2 ? 0.72 : 0.82;
       sprite.scale.set(markerScale, markerScale, 1);
       sprite.renderOrder = 30;
       return sprite;

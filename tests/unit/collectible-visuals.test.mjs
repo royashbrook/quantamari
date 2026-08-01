@@ -16,10 +16,8 @@ import {
   createCollectibleMarkerFactory,
 } from "../../src/lib/game/collectible-markers.ts";
 import {
-  COLLECTIBLE_LOD_BADGE_MAX_TEXTURE_BYTES,
-  COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE,
-  collectibleLodBadgeTextureBytes,
-  createCollectibleInstanceGeometry,
+  createCollectibleGeometryLibrary,
+  createCollectibleInstanceGeometries,
   createCollectibleLodPool,
 } from "../../src/lib/game/collectible-lod.ts";
 import { ERAS, VISUAL_FORMS } from "../../src/lib/scale-data.ts";
@@ -149,7 +147,7 @@ test("semantic forms cannot alias misleading generic silhouettes", () => {
   );
 });
 
-test("all 220 catalog curios produce their authored merged LOD silhouette", async () => {
+test("all 220 catalog curios preserve authored solid and effect LOD layers", async () => {
   const vite = await createServer({
     appType: "custom",
     logLevel: "silent",
@@ -171,28 +169,84 @@ test("all 220 catalog curios produce their authored merged LOD silhouette", asyn
         }),
     });
 
+    let effectCurios = 0;
+    let maximumTriangleCount = 0;
     for (const curio of curios) {
-      const geometry = createCollectibleInstanceGeometry(
+      const authoredVisual = visualFactory.buildVisual(curio, false);
+      authoredVisual.updateMatrixWorld(true);
+      const authoredBounds = new THREE.Box3().setFromObject(
+        authoredVisual,
+        true,
+      );
+      const authoredGeometries = new Set();
+      const authoredMaterials = new Set();
+      authoredVisual.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        authoredGeometries.add(object.geometry);
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        materials.forEach((material) => authoredMaterials.add(material));
+      });
+      const geometries = createCollectibleInstanceGeometries(
         curio,
         visualFactory.buildVisual,
         false,
       );
-      assert.equal(
-        geometry.index,
-        null,
-        `${curio.id} must use normalized non-indexed LOD geometry`,
-      );
-      assert.deepEqual(
-        Object.keys(geometry.attributes).sort(),
-        ["color", "normal", "position"],
-        `${curio.id} must have one merge-compatible attribute contract`,
-      );
       assert.ok(
-        geometry.getAttribute("position").count > 0,
-        `${curio.id} must keep its authored silhouette`,
+        geometries.solid || geometries.effect,
+        `${curio.id} must keep an authored silhouette`,
       );
-      geometry.dispose();
+      if (geometries.effect) effectCurios += 1;
+      let triangleCount = 0;
+      const lodBounds = new THREE.Box3();
+      for (const [layer, geometry] of Object.entries(geometries)) {
+        if (!geometry) continue;
+        triangleCount += geometry.getAttribute("position").count / 3;
+        assert.equal(
+          geometry.index,
+          null,
+          `${curio.id}:${layer} must use normalized non-indexed geometry`,
+        );
+        assert.deepEqual(
+          Object.keys(geometry.attributes).sort(),
+          ["color", "normal", "position"],
+          `${curio.id}:${layer} must have one merge-compatible contract`,
+        );
+        assert.ok(
+          geometry.getAttribute("position").count > 0,
+          `${curio.id}:${layer} must keep its authored silhouette`,
+        );
+        assert.equal(geometry.userData.collectibleLayer, layer);
+        geometry.computeBoundingBox();
+        lodBounds.union(geometry.boundingBox);
+        geometry.dispose();
+      }
+      const authoredSize = authoredBounds.getSize(new THREE.Vector3());
+      const lodSize = lodBounds.getSize(new THREE.Vector3());
+      for (const axis of ["x", "y", "z"]) {
+        const relativeDifference =
+          Math.abs(lodSize[axis] - authoredSize[axis]) /
+          Math.max(1e-6, authoredSize[axis]);
+        assert.ok(
+          relativeDifference <= 0.03,
+          `${curio.id} ${axis}-axis LOD envelope changed by ${(
+            relativeDifference * 100
+          ).toFixed(1)}%`,
+        );
+      }
+      authoredGeometries.forEach((geometry) => geometry.dispose());
+      authoredMaterials.forEach((material) => material.dispose());
+      maximumTriangleCount = Math.max(maximumTriangleCount, triangleCount);
     }
+    assert.ok(
+      effectCurios >= 30,
+      "membranes, clouds, halos, glass, and wire forms must not become opaque",
+    );
+    assert.ok(
+      maximumTriangleCount <= 512,
+      `tiny instanced silhouettes must stay bounded; saw ${maximumTriangleCount}`,
+    );
   } finally {
     await vite.close();
   }
@@ -212,6 +266,10 @@ test("marker assets share bounded non-mipmapped textures", () => {
     assert.equal(uniqueSymbols.size, 98);
     assert.equal(materials.size, curios.length);
     assert.equal(textures.size, uniqueSymbols.size);
+    assert.ok(
+      sprites.every((sprite) => sprite.scale.x <= 0.82),
+      "character faces must remain subordinate to authored silhouettes",
+    );
     for (const texture of textures) {
       assert.equal(texture.image.width, COLLECTIBLE_MARKER_TEXTURE_EDGE);
       assert.equal(texture.image.height, COLLECTIBLE_MARKER_TEXTURE_EDGE);
@@ -269,8 +327,7 @@ test("arbitrary marker labels cannot exceed the GPU texture budget", () => {
   }
 });
 
-test("all 220 LOD families share catalog-symbol badges with single-owner disposal", () => {
-  const restoreDocument = installFakeCanvasDocument();
+test("LOD uses authored solid/effect silhouettes and never circular badges", () => {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
   const buildVisual = (curio) => {
@@ -281,91 +338,73 @@ test("all 220 LOD families share catalog-symbol badges with single-owner disposa
         new THREE.MeshBasicMaterial({ color: curio.color }),
       ),
     );
+    visual.add(
+      new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.72, 0),
+        new THREE.MeshBasicMaterial({
+          color: "#b9f5ff",
+          transparent: true,
+          opacity: 0.3,
+        }),
+      ),
+    );
     return visual;
   };
-  const pool = createCollectibleLodPool(scene, camera, buildVisual);
+  const library = createCollectibleGeometryLibrary(buildVisual);
+  const pool = createCollectibleLodPool(
+    scene,
+    camera,
+    buildVisual,
+    library,
+  );
 
   try {
-    for (const curio of curios) {
-      assert.equal(pool.add(curio, new THREE.Matrix4(), false), true);
-    }
-
-    const badges = scene.children.filter((child) =>
-      child.name.startsWith("collectible-badge:"),
+    const curio = curios[0];
+    const shared = library.geometryFor(curio, false);
+    const disposalCounts = new Map(
+      [shared.solid, shared.effect]
+        .filter(Boolean)
+        .map((geometry) => [geometry, 0]),
     );
-    const geometries = new Set(badges.map((badge) => badge.geometry));
-    const textures = new Set(
-      badges
-        .map((badge) => badge.material.map)
-        .filter(Boolean),
-    );
-
-    assert.equal(badges.length, 220);
-    assert.equal(geometries.size, 1);
-    assert.equal(textures.size, 98);
-    assert.ok(
-      badges.every((badge) => badge.material.side === THREE.FrontSide),
-      "camera-facing badges must stay single-pass",
-    );
-    assert.deepEqual(
-      [...textures]
-        .map((texture) => texture.userData.collectibleBadgeSymbol)
-        .sort(),
-      [...new Set(curios.map((curio) => curio.symbol))].sort(),
-    );
-    for (const texture of textures) {
-      assert.ok(
-        texture.image.drawnText.includes(
-          texture.userData.collectibleBadgeSymbol,
-        ),
-      );
-      assert.equal(texture.image.width, COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE);
-      assert.equal(texture.image.height, COLLECTIBLE_LOD_BADGE_TEXTURE_EDGE);
-      assert.equal(texture.generateMipmaps, false);
-      assert.equal(texture.minFilter, THREE.LinearFilter);
-      assert.equal(texture.magFilter, THREE.LinearFilter);
-    }
-
-    const textureDisposals = new Map(
-      [...textures].map((texture) => [texture, 0]),
-    );
-    textures.forEach((texture) => {
-      texture.addEventListener("dispose", () => {
-        textureDisposals.set(texture, textureDisposals.get(texture) + 1);
+    disposalCounts.forEach((_, geometry) => {
+      geometry.addEventListener("dispose", () => {
+        disposalCounts.set(geometry, disposalCounts.get(geometry) + 1);
       });
     });
-    const [sharedGeometry] = geometries;
-    let geometryDisposals = 0;
-    sharedGeometry.addEventListener("dispose", () => {
-      geometryDisposals += 1;
-    });
-
-    const oldMipPixels = Array.from(
-      { length: 9 },
-      (_, level) => (256 >> level) ** 2,
-    ).reduce((sum, pixels) => sum + pixels, 0);
-    const oldJourneyBytes = curios.length * oldMipPixels * 4;
-    const newJourneyBytes = collectibleLodBadgeTextureBytes(textures.size);
-    assert.equal(oldJourneyBytes, 76_895_280);
-    assert.equal(newJourneyBytes, 6_422_528);
-    assert.ok(
-      newJourneyBytes / oldJourneyBytes < 0.084,
-      "full-journey LOD badge texture memory should fall by more than 91.6%",
+    assert.equal(pool.add(curio, new THREE.Matrix4()), true);
+    const frame = pool.endFrame();
+    assert.deepEqual(frame, { instances: 1, badges: 0, drawCalls: 2 });
+    assert.equal(library.size, 1);
+    assert.deepEqual(
+      scene.children.map((child) => child.name).sort(),
+      [
+        `collectible-lod:effect:${curio.id}`,
+        `collectible-lod:solid:${curio.id}`,
+      ],
     );
-    assert.equal(COLLECTIBLE_LOD_BADGE_MAX_TEXTURE_BYTES, 8_388_608);
-
-    pool.dispose();
-    pool.dispose();
-    assert.equal(geometryDisposals, 1);
-    assert.ok([...textureDisposals.values()].every((count) => count === 1));
     assert.equal(
-      scene.children.filter((child) =>
-        child.name.startsWith("collectible-"),
-      ).length,
+      scene.children.some((child) => child.name.includes("badge")),
+      false,
+    );
+    assert.ok(
+      scene.children.every(
+        (child) => child.material?.wireframe !== true,
+      ),
+      "filled membranes and glow shells must not regress into wireframe balls",
+    );
+    pool.dispose();
+    pool.dispose();
+    assert.ok([...disposalCounts.values()].every((count) => count === 0));
+    library.dispose();
+    library.dispose();
+    assert.ok([...disposalCounts.values()].every((count) => count === 1));
+    assert.equal(
+      scene.children.filter((child) => child.name.startsWith("collectible-"))
+        .length,
       0,
     );
   } finally {
     pool.dispose();
-    restoreDocument();
+    library.dispose();
   }
 });

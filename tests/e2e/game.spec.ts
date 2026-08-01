@@ -88,13 +88,21 @@ type PerformanceSnapshot = {
       surface: string;
       semanticViewScale: number;
       foundationLayers: number[];
+      foundationPresentation: string;
+      foundationNearest: string | null;
+      foundationCompressed: string[];
+      foundationAncestryCount: number;
+      foundationKey: string;
       groundVisible: boolean;
+      foundationSurfaceMemory: boolean;
       dustVisible: boolean;
       environmentChildren: number;
       atmosphericCloudTop: boolean;
       substrateChildren: number;
       substrateAuthoredInstances: number;
       substrateGenericInstances: number;
+      substrateRenderedAuthoredInstances: number;
+      substrateRenderedGenericInstances: number;
     };
     player: {
       x: number;
@@ -1116,6 +1124,12 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
                 snapshot.runtime.world.substrateAuthoredInstances,
               generic:
                 snapshot.runtime.world.substrateGenericInstances,
+              renderedAuthored:
+                snapshot.runtime.world.substrateRenderedAuthoredInstances,
+              renderedGeneric:
+                snapshot.runtime.world.substrateRenderedGenericInstances,
+              surfaceMemory:
+                snapshot.runtime.world.foundationSurfaceMemory,
             }
           : null;
       },
@@ -1126,13 +1140,19 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
       target: DESKTOP_SEMANTIC_PICKUP_TARGET,
       current: DESKTOP_SEMANTIC_PICKUP_TARGET,
       queued: 0,
-      authored: 28,
-      generic: 0,
+      authored: 128,
+      generic: 520,
+      renderedAuthored: 1152,
+      renderedGeneric: 4680,
+      surfaceMemory: true,
     });
   const desktop = await readPerformanceDiagnostics(page);
   expect(desktop?.runtime.player.horizontalFov).toBeLessThanOrEqual(58.001);
   expect(desktop?.runtime.drawCalls).toBeLessThanOrEqual(
     desktop?.runtime.budget.maxDrawCalls ?? 0,
+  );
+  expect(desktop?.runtime.triangles).toBeLessThanOrEqual(
+    desktop?.runtime.budget.maxTriangles ?? 0,
   );
   expect(desktop?.runtime.drawBudget.richUsed).toBeLessThanOrEqual(
     desktop?.runtime.drawBudget.richBudget ?? 0,
@@ -1146,6 +1166,10 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
         moving?.runtime.drawCalls,
         `moving Standard sample ${sample} exceeded its draw-call budget`,
       ).toBeLessThanOrEqual(moving?.runtime.budget.maxDrawCalls ?? 0);
+      expect(
+        moving?.runtime.triangles,
+        `moving Standard sample ${sample} exceeded its triangle budget`,
+      ).toBeLessThanOrEqual(moving?.runtime.budget.maxTriangles ?? 0);
       await page.waitForTimeout(250);
     }
   } finally {
@@ -1163,7 +1187,7 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
   expect(ultrawide?.runtime.pickups.target).toBe(
     DESKTOP_SEMANTIC_PICKUP_TARGET,
   );
-  expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(0);
+  expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(520);
 });
 
 test("mobile battery mode enforces its measured draw-call budget", async ({
@@ -1272,7 +1296,7 @@ test("mobile battery mode enforces its measured draw-call budget", async ({
       settled?.runtime.representations.attachmentProxyActive,
   };
   expect(stableRepresentations.silhouetteDrawCalls).toBeGreaterThan(0);
-  expect(stableRepresentations.silhouetteBadgeInstances).toBeGreaterThan(0);
+  expect(stableRepresentations.silhouetteBadgeInstances).toBe(0);
   expect(stableRepresentations.genericPickups).toBe(0);
   const stableWorldGeneration = settled?.runtime.worldGeneration;
   await page.waitForTimeout(5_500);
@@ -1351,6 +1375,10 @@ test("battery draw budgeting covers every authored era", async ({ page }) => {
       snapshot?.runtime.budget.maxDrawCalls ?? 0,
     );
     expect(
+      snapshot?.runtime.triangles,
+      `era ${era} exceeded its battery triangle budget`,
+    ).toBeLessThanOrEqual(snapshot?.runtime.budget.maxTriangles ?? 0);
+    expect(
       snapshot?.runtime.drawBudget.environmentSuppressed,
       `era ${era} hid its active environment to meet the battery budget`,
     ).toBe(false);
@@ -1365,6 +1393,12 @@ test("battery draw budgeting covers every authored era", async ({ page }) => {
       snapshot?.runtime.drawBudget.richBudget ?? 0,
     );
   }
+
+  const finalSnapshot = await readPerformanceDiagnostics(page);
+  expect(
+    finalSnapshot?.phases["substrate-rebuild"]?.max,
+    "a semantic-rug rebuild regressed into a visible main-thread hitch",
+  ).toBeLessThan(25);
 });
 
 test("dense pickup bursts stay pooled inside the battery draw budget", async ({
@@ -1745,6 +1779,10 @@ test("the optical lens resolves only reached layers and leaves the origin empty"
             substrateChildren: snapshot.runtime.world.substrateChildren,
             authored: snapshot.runtime.world.substrateAuthoredInstances,
             generic: snapshot.runtime.world.substrateGenericInstances,
+            renderedAuthored:
+              snapshot.runtime.world.substrateRenderedAuthoredInstances,
+            renderedGeneric:
+              snapshot.runtime.world.substrateRenderedGenericInstances,
           }
         : null;
     })
@@ -1756,6 +1794,8 @@ test("the optical lens resolves only reached layers and leaves the origin empty"
       substrateChildren: 0,
       authored: 0,
       generic: 0,
+      renderedAuthored: 0,
+      renderedGeneric: 0,
     });
   await expect(page.locator(".lens-control span")).toContainText(
     "no prior fabric",
@@ -1788,7 +1828,7 @@ test("the optical lens resolves only reached layers and leaves the origin empty"
     })
     .toEqual({
       viewScale: 10,
-      foundations: [9, 8],
+      foundations: [9, 8, 7, 6],
     });
 
   expect(await setLens(1 / 256)).toBe(1 / 256);
@@ -1871,13 +1911,21 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     surface: "none",
     semanticViewScale: 0,
     foundationLayers: [],
+    foundationPresentation: "none",
+    foundationNearest: null,
+    foundationCompressed: [],
+    foundationAncestryCount: 0,
+    foundationKey: "none",
     groundVisible: false,
+    foundationSurfaceMemory: false,
     dustVisible: false,
     environmentChildren: 0,
     atmosphericCloudTop: false,
     substrateChildren: 0,
     substrateAuthoredInstances: 0,
     substrateGenericInstances: 0,
+    substrateRenderedAuthoredInstances: 0,
+    substrateRenderedGenericInstances: 0,
   });
   const startPosition = before?.runtime.player ?? { x: 0, z: 0 };
   await page.keyboard.down("w");
