@@ -4,7 +4,7 @@ const appUrl = "http://127.0.0.1:4174/";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  outputDir: "./tests/results/e2e",
+  outputDir: "./tests/results/e2e-edge",
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 2 : 0,
@@ -16,18 +16,17 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "npm run preview:test",
+    command: "npm run preview:edge",
     url: appUrl,
     reuseExistingServer: false,
+    env: {
+      WRANGLER_LOG_PATH: "tests/results/wrangler.log",
+    },
   },
   projects: [
     {
-      name: "chromium",
-      testMatch: [
-        "**/game.spec.ts",
-        "**/install.spec.ts",
-        "**/welcome.spec.ts",
-      ],
+      name: "chromium-edge",
+      testMatch: ["**/recovery.spec.ts"],
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: {
@@ -36,17 +35,13 @@ export default defineConfig({
       },
     },
     {
-      name: "webkit",
-      testMatch: ["**/welcome.spec.ts"],
+      name: "webkit-edge",
+      testMatch: ["**/recovery.spec.ts"],
       use: devices["Desktop Safari"],
     },
     {
-      name: "iphone-air",
-      testMatch: [
-        "**/mobile.spec.ts",
-        "**/install.spec.ts",
-        "**/welcome.spec.ts",
-      ],
+      name: "iphone-air-edge",
+      testMatch: ["**/recovery.spec.ts"],
       use: devices["iPhone Air"],
     },
   ],

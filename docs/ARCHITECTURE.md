@@ -157,7 +157,10 @@ real-device profile showing rebuild work—not shader warm-up—as the bottlenec
 - `tests/unit`, `tests/artifact`, and `tests/e2e` contain Node, built-artifact,
   and Playwright contracts. The full renderer suite stays on Chromium while a
   focused production boot/recovery suite also runs on desktop WebKit and iPhone.
-  Generated browser artifacts go in the ignored `tests/results` directory.
+  Long browser work uses Vite's static preview; only the short edge-contract
+  suite uses Wrangler so a preview-worker failure cannot cascade across the
+  renderer matrix. Generated browser artifacts go in the ignored
+  `tests/results` directory.
 - `scripts` contains build utilities, `docs` contains supporting architecture
   notes, and `.github` contains verification and deployment automation.
 

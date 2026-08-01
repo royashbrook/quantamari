@@ -1,6 +1,6 @@
 {
   "name": "quantamari",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -12,13 +12,16 @@
     "prebuild": "node scripts/clean.mjs && node scripts/build-rescue.mjs",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:test": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
     "preview:edge": "wrangler dev --ip 127.0.0.1 --port 4174 --local --log-level none --show-interactive-dev-session false --persist-to tests/results/wrangler-state",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "lint": "npm run check",
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --test tests/unit/*.test.mjs",
     "test:artifact": "node --test tests/artifact/*.test.mjs",
-    "test:e2e": "npm run build && npm run test:artifact && playwright test",
+    "test:e2e": "npm run build && npm run test:artifact && npm run test:e2e:app && npm run test:e2e:edge",
+    "test:e2e:app": "playwright test",
+    "test:e2e:edge": "playwright test --config playwright.edge.config.ts",
     "test:all": "npm run check && npm run test:unit && npm run test:e2e"
   },
   "dependencies": {
