@@ -266,6 +266,18 @@ touch-through bottom dock. Pickups temporarily replace that dock with a
 bounded fact notice before progress returns, including in installed iPhone
 landscape. The redesign is tracked under
 [issue #42](https://github.com/royashbrook/quantamari/issues/42).
+v3.2 makes scale history spatial instead of decorative. The theoretical
+origin remains floorless; later layers present their nearest constituent as
+an authored volumetric field, physical surface, curved shell, or distant
+field, while three deeper layers compress into deterministic scientific
+motifs. Collectibles now retain separate solid and membrane/glow silhouettes
+through world LOD, the foundation, and the rolled-up mash. The universal
+circular LOD badge is gone, exposing the distinct low-poly forms without
+increasing the former two-draw representation budget. A translucent surface
+memory keeps that history visible over floors, roads, and cities, while shell
+textures and volumetric fields carry it through planetary and cosmic scales.
+This work is tracked
+under [issue #44](https://github.com/royashbrook/quantamari/issues/44).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

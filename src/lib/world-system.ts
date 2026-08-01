@@ -328,8 +328,8 @@ export type WorldPerformanceBudget = {
   maxDrawCalls: number;
   maxTriangles: number;
   maxRichObjects: number;
-  maxInstances: number;
-  maxChunkWorkMs: number;
+  maxSceneryProxyInstances: number;
+  maxSpawnWorkMs: number;
   maxResidentLayers: number;
 };
 
@@ -341,8 +341,8 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxDrawCalls: 180,
     maxTriangles: 600_000,
     maxRichObjects: 64,
-    maxInstances: 4_000,
-    maxChunkWorkMs: 2,
+    maxSceneryProxyInstances: 4_000,
+    maxSpawnWorkMs: 2,
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
   balanced: {
@@ -352,8 +352,8 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxDrawCalls: 120,
     maxTriangles: 300_000,
     maxRichObjects: 48,
-    maxInstances: 2_500,
-    maxChunkWorkMs: 2,
+    maxSceneryProxyInstances: 2_500,
+    maxSpawnWorkMs: 2,
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
   battery: {
@@ -364,8 +364,8 @@ export const WORLD_PERFORMANCE_BUDGETS: Readonly<
     maxDrawCalls: 120,
     maxTriangles: 180_000,
     maxRichObjects: 32,
-    maxInstances: 1_500,
-    maxChunkWorkMs: 2,
+    maxSceneryProxyInstances: 1_500,
+    maxSpawnWorkMs: 2,
     maxResidentLayers: MAX_RESIDENT_LAYERS,
   },
 };
