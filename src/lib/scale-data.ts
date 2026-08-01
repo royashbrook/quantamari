@@ -136,6 +136,12 @@ export const VISUAL_FORMS = [
 
 export type VisualForm = (typeof VISUAL_FORMS)[number];
 
+export const CURIO_RARITIES = ["common", "uncommon", "rare"] as const;
+export type CurioRarity = (typeof CURIO_RARITIES)[number];
+
+export const CURIO_SPAWN_MODES = ["repeatable", "singleton"] as const;
+export type CurioSpawnMode = (typeof CURIO_SPAWN_MODES)[number];
+
 export type Curio = {
   id: string;
   name: string;
@@ -145,6 +151,9 @@ export type Curio = {
   fact: string;
   symbol: string;
   relativeSize: number;
+  rarity: CurioRarity;
+  spawnMode: CurioSpawnMode;
+  subjectId?: string;
   source?: ScienceSource;
 };
 
@@ -162,9 +171,15 @@ export type Era = {
   sources: ScienceSource[];
 };
 
-type CatalogCurio = Omit<Curio, "id" | "source"> & {
+type CatalogCurio = Omit<
+  Curio,
+  "id" | "source" | "rarity" | "spawnMode" | "subjectId"
+> & {
   id: string;
   sourceIndex: number;
+  rarity?: CurioRarity;
+  spawnMode?: CurioSpawnMode;
+  subjectId?: string;
 };
 type CatalogEra = Omit<Era, "curios"> & {
   curios: CatalogCurio[];
@@ -208,17 +223,22 @@ const SHAPES = new Set<Shape>([
   "universe",
 ]);
 const VISUAL_FORM_SET = new Set<VisualForm>(VISUAL_FORMS);
+const CURIO_RARITY_SET = new Set<CurioRarity>(CURIO_RARITIES);
+const CURIO_SPAWN_MODE_SET = new Set<CurioSpawnMode>(CURIO_SPAWN_MODES);
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SUBJECT_ID_PATTERN =
+  /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/;
 const COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 
 function assertCatalog(condition: unknown, message: string): asserts condition {
   if (!condition) throw new TypeError(`Invalid scale catalog: ${message}`);
 }
 
-function loadCatalog(value: unknown): Era[] {
+export function loadScaleCatalog(value: unknown): Era[] {
   assertCatalog(Array.isArray(value) && value.length > 0, "root must be a non-empty array");
   const eraIds = new Set<string>();
   const curioIds = new Set<string>();
+  const subjectIds = new Set<string>();
   let priorAt = Number.NEGATIVE_INFINITY;
   let priorLogMeters = Number.NEGATIVE_INFINITY;
 
@@ -304,6 +324,34 @@ function loadCatalog(value: unknown): Era[] {
           curio.sourceIndex < sources.length,
         `${stableId}.sourceIndex`,
       );
+      const rarity = curio.rarity ?? "common";
+      const spawnMode = curio.spawnMode ?? "repeatable";
+      assertCatalog(CURIO_RARITY_SET.has(rarity), `${stableId}.rarity`);
+      assertCatalog(
+        CURIO_SPAWN_MODE_SET.has(spawnMode),
+        `${stableId}.spawnMode`,
+      );
+      if (spawnMode === "singleton") {
+        assertCatalog(
+          rarity === "rare",
+          `${stableId} singleton landmarks must be rare`,
+        );
+        assertCatalog(
+          typeof curio.subjectId === "string" &&
+            SUBJECT_ID_PATTERN.test(curio.subjectId),
+          `${stableId}.subjectId`,
+        );
+        assertCatalog(
+          !subjectIds.has(curio.subjectId),
+          `${curio.subjectId} is assigned to more than one singleton`,
+        );
+        subjectIds.add(curio.subjectId);
+      } else {
+        assertCatalog(
+          curio.subjectId === undefined,
+          `${stableId} repeatable curios must not declare subjectId`,
+        );
+      }
       return Object.freeze({
         id: stableId,
         name: curio.name,
@@ -313,9 +361,16 @@ function loadCatalog(value: unknown): Era[] {
         fact: curio.fact,
         symbol: curio.symbol,
         relativeSize: curio.relativeSize,
+        rarity,
+        spawnMode,
+        ...(curio.subjectId ? { subjectId: curio.subjectId } : {}),
         source: sources[curio.sourceIndex],
       });
     });
+    assertCatalog(
+      curios.some((curio) => curio.spawnMode === "repeatable"),
+      `${era.id}.curios needs at least one repeatable collectible`,
+    );
     return Object.freeze({
       id: era.id,
       at: era.at,
@@ -362,7 +417,7 @@ export const LEGACY_V3_ERA_NAMES = [
   "Metaversal Beyond",
 ] as const;
 
-export const ERAS: Era[] = loadCatalog(catalogJson);
+export const ERAS: Era[] = loadScaleCatalog(catalogJson);
 
 export const AUTHORED_CATALOG_IDS = ERAS.map((era) => ({
   eraId: era.id,

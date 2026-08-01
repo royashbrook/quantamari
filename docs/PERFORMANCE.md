@@ -58,6 +58,10 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   may recede.
 - Native menu, Field Guide, and Scale Lab dialogs pause the renderer while open.
   The Field Guide remains CSS-only and uses `content-visibility`.
+- Rarity and singleton selection is a bounded deterministic pass over one
+  era's tiny catalog, not a scene traversal. Pity state advances only after a
+  successful current-era spawn. Unique landmarks are never copied into rugs,
+  so completion rules do not add substrate instances or draw calls.
 
 ## Budgets
 

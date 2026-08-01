@@ -63,7 +63,8 @@
 
 .close,
 .viewChoice button,
-.emptyState button {
+.emptyState button,
+.loadMore {
   min-width: 44px;
   min-height: 44px;
   border: 2px solid #4b2868;
@@ -79,14 +80,16 @@
 
 .close:hover,
 .viewChoice button:hover,
-.emptyState button:hover {
+.emptyState button:hover,
+.loadMore:hover {
   background: #fff0b8;
   transform: translateY(-1px);
 }
 
 .close:active,
 .viewChoice button:active,
-.emptyState button:active {
+.emptyState button:active,
+.loadMore:active {
   transform: translateY(2px);
 }
 
@@ -304,6 +307,18 @@
   gap: 12px;
 }
 
+.loadMore {
+  display: block;
+  min-width: min(320px, 100%);
+  margin: 24px auto 2px;
+  padding: 0 18px;
+  border-radius: 14px;
+  background: #ffe170;
+  font: 850 10px var(--font-geist-mono), ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .card {
   display: grid;
   min-height: 258px;
@@ -406,19 +421,13 @@
   letter-spacing: 0.055em;
 }
 
-.certainty[data-certainty="supported-model"] {
+.certainty[data-rarity="uncommon"] {
   border-color: #a9c7db;
   background: #e9f5fb;
   color: #3b6177;
 }
 
-.certainty[data-certainty="unknown"] {
-  border-color: #d7bc7f;
-  background: #fff5d9;
-  color: #785f25;
-}
-
-.certainty[data-certainty="speculative"] {
+.certainty[data-rarity="rare"] {
   border-color: #cdb2dc;
   background: #f6eafa;
   color: #6e477d;
@@ -2590,6 +2599,7 @@
   .close,
   .viewChoice button,
   .emptyState button,
+  .loadMore,
   .silhouette,
   .face b {
     animation: none;

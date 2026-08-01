@@ -50,6 +50,7 @@ import {
   type GameMode,
   type MashRecordV4,
 } from "../save-data";
+import { deriveAchievements } from "../collection-progress";
 import {
   type PerformanceProfile,
   performanceProfileSettings,
@@ -90,7 +91,9 @@ import {
   pickupPopulationPlan,
   pickupSourceEraForSpawn,
   pickupSpawnPlacement,
+  selectCurioForSpawn,
   type PickupSpawnPhase,
+  type SpawnPityState,
 } from "./spawn-policy";
 import { createSpawnQueue } from "./spawn-queue";
 
@@ -301,9 +304,12 @@ export type RuntimeBindings = {
   modalOpenRef: MutableRef<boolean>;
   mashHistoryRef: MutableRef<MashRecordV4[]>;
   collectionRef: MutableRef<CollectionEntry[]>;
+  advanceLayerRef: MutableRef<(() => boolean) | null>;
   labEra: number | null;
   performanceProfile: PerformanceProfile;
   setToast: (message: string) => void;
+  setAchievement: (message: string) => void;
+  setPickupMilestone: (message: string) => void;
   setLastFact: (fact: FactCard, kind: FactKind) => void;
   setCollection: (entries: CollectionEntry[]) => void;
   setHud: (hud: HudState) => void;
@@ -329,9 +335,12 @@ export function mountGame(
     modalOpenRef,
     mashHistoryRef,
     collectionRef,
+    advanceLayerRef,
     labEra,
     performanceProfile: requestedPerformanceProfile,
     setToast,
+    setAchievement,
+    setPickupMilestone,
     setLastFact,
     setCollection,
     setHud,
@@ -361,6 +370,8 @@ export function mountGame(
       setLens: (value: number) => number;
       emitPickupBursts: (count: number) => number;
       collectCurrentPickup: () => string | null;
+      collectSingletonPickup: () => string | null;
+      retireSingletonPickup: () => string | null;
     };
   };
   const phaseRecorder = debugWindow.__QUARKATAMARI_PERFORMANCE_REQUESTED__
@@ -1339,9 +1350,15 @@ export function mountGame(
             : 16;
     const planetGridColumns = Math.ceil(Math.sqrt(count));
     const planetGridRows = Math.ceil(count / planetGridColumns);
+    // Named one-of-one landmarks belong to the collectible world, never to a
+    // periodically repeated foundation texture. The rug remembers archetypes.
+    const rugCurios = era.curios.filter(
+      (curio) => curio.spawnMode === "repeatable",
+    );
+    const substrateCurios = rugCurios.length > 0 ? rugCurios : era.curios;
     const families = new Map<string, { curio: Curio; items: number[] }>();
     for (let item = 0; item < count; item += 1) {
-      const curio = era.curios[item % era.curios.length];
+      const curio = substrateCurios[item % substrateCurios.length];
       const family = families.get(curio.id) ?? { curio, items: [] };
       family.items.push(item);
       families.set(curio.id, family);
@@ -4143,6 +4160,7 @@ export function mountGame(
   };
 
   const pickupSpawnProjection = new THREE.Vector3();
+  const spawnPityByEra = new Map<number, SpawnPityState>();
   const pickupSpawnPointVisible = (x: number, y: number, z: number) => {
     pickupSpawnProjection.set(x, y, z).project(camera);
     return (
@@ -4177,13 +4195,36 @@ export function mountGame(
     });
     const levelDelta = sourceEra - activeIndex;
     const source = ERAS[sourceEra];
-    const curioIndex = Math.floor(pseudo(seed + 67) * source.curios.length);
-    const curio = source.curios[curioIndex];
+    const collectedCurioIds = collectionRef.current
+      .filter((entry) => entry.eraId === source.id && entry.count > 0)
+      .map((entry) => entry.curioId);
+    const activeCurioIds = pickups
+      .filter(
+        (pickup) =>
+          pickup.sourceEra === sourceEra &&
+          pickup.curio.spawnMode === "singleton",
+      )
+      .map((pickup) => pickup.curio.id);
+    const curioSelection = selectCurioForSpawn({
+      curios: source.curios,
+      seed: seed + 67,
+      sequence,
+      ...(levelDelta <= 0
+        ? { pity: spawnPityByEra.get(sourceEra) }
+        : {}),
+      collectedCurioIds,
+      activeCurioIds,
+      repeatablesOnly: levelDelta > 0,
+    });
+    if (!curioSelection) return { spawned: false, builtTemplate: false };
+    const { curio } = curioSelection;
     const identity = collectibleIdentityFor(curio.id, curio.shape);
     let big = levelDelta > 0;
+    const sizeTicket =
+      curio.spawnMode === "singleton" ? 0.5 : pseudo(seed + 53);
     let size = Math.max(
       0.11,
-      0.18 + pseudo(seed + 53) * game.radius * 0.52,
+      0.18 + sizeTicket * game.radius * 0.52,
     ) * curio.relativeSize;
     const root = new THREE.Group();
     const {
@@ -4357,6 +4398,9 @@ export function mountGame(
       handoffZ: null,
       renderedScaleY: 0,
     });
+    if (levelDelta <= 0) {
+      spawnPityByEra.set(sourceEra, curioSelection.pity);
+    }
     game.id += 1;
     return { spawned: true, builtTemplate };
   };
@@ -4466,6 +4510,15 @@ export function mountGame(
   let scaleTransitionStarted = -1;
   let scaleTransitionDurationMs = 0;
   let pendingLayerAdvance = false;
+  const unlockedAchievementIds = new Set(
+    deriveAchievements({
+      catalog: ERAS,
+      collection: collectionRef.current,
+      cycles: game.cycles,
+    })
+      .filter((achievement) => achievement.unlocked)
+      .map((achievement) => achievement.id),
+  );
 
   const preparePickupHandoff = () => {
     const outgoingEra = game.era;
@@ -4507,6 +4560,7 @@ export function mountGame(
       // reborn, so the mash, pickups, and floating-origin drift all reset
       // rather than carrying 94 decades of scale across the seam.
       game.cycles += 1;
+      unlockedAchievementIds.add("journey-cycle");
       game.x = 0;
       game.z = 0;
       game.originX = 0;
@@ -4569,9 +4623,9 @@ export function mountGame(
 
     if (wrapped) {
       setToast(
-        `The ${ERAS[previousIndex].name} folds into fresh quantum foam. Cycle ${
-          game.cycles + 1
-        } begins — the scale of everything, again.`,
+        game.cycles === 1
+          ? `Achievement unlocked: There and Back Again. The ${ERAS[previousIndex].name} folds into fresh quantum foam; cycle ${game.cycles + 1} begins.`
+          : `The ${ERAS[previousIndex].name} folds into fresh quantum foam. Cycle ${game.cycles + 1} begins — the scale of everything, again.`,
       );
       ping(880, true);
     } else {
@@ -4591,11 +4645,42 @@ export function mountGame(
     scaleTransitionDurationMs = 0;
   };
 
+  const requestLayerAdvance = (forceReady = false) => {
+    if (
+      labEra !== null ||
+      scaleTransitionStarted >= 0 ||
+      pendingLayerAdvance ||
+      (!forceReady && game.progress < 1)
+    ) {
+      return false;
+    }
+    scaleTransitionDurationMs = scaleTransitionDuration(game.mode);
+    if (scaleTransitionDurationMs > 0) {
+      preparePickupHandoff();
+      scaleTransitionStarted = readPerformanceClock();
+      setToast(
+        "Learning jump! You grow while this whole layer settles beneath you.",
+      );
+      ping(350 + activeIndex * 18, true);
+    } else {
+      pendingLayerAdvance = true;
+    }
+    return true;
+  };
+  const playerLayerAdvance = () => requestLayerAdvance(false);
+  advanceLayerRef.current = playerLayerAdvance;
+
   const collect = (pickup: Pickup, now: number) => {
     baseSceneDrawCallsDirty = true;
     game.picked += 1;
     game.lastPickup = now / 1000;
     const sourceEra = ERAS[pickup.sourceEra];
+    const firstDiscovery = !collectionRef.current.some(
+      (entry) =>
+        entry.eraId === sourceEra.id &&
+        entry.curioId === pickup.curio.id &&
+        entry.count > 0,
+    );
     collectionRef.current = aggregatePickups(
       [
         {
@@ -4606,9 +4691,27 @@ export function mountGame(
       ],
       collectionRef.current,
     );
+    const currentAchievements = firstDiscovery
+      ? deriveAchievements({
+          catalog: ERAS,
+          collection: collectionRef.current,
+          cycles: game.cycles,
+        })
+      : [];
+    const newlyUnlockedAchievements = currentAchievements.filter(
+      (achievement) =>
+        achievement.unlocked &&
+        !unlockedAchievementIds.has(achievement.id),
+    );
+    currentAchievements
+      .filter((achievement) => achievement.unlocked)
+      .forEach((achievement) =>
+        unlockedAchievementIds.add(achievement.id),
+      );
     setCollection([...collectionRef.current]);
     const isCurrentScale = pickup.sourceEra === activeIndex;
     const gameplayBulkFactor = GAMEPLAY_BULK_FACTORS[pickup.curio.shape];
+    const previousProgress = game.progress;
     game.progress = progressAfterPickup(
       game.progress,
       pickup.sourceEra,
@@ -4622,6 +4725,9 @@ export function mountGame(
     );
     if (isCurrentScale) {
       game.radius = radiusForLayerProgress(game.progress);
+      if (previousProgress < 1 && game.progress >= 1) {
+        ping(350 + activeIndex * 18, true);
+      }
     }
     if (isCurrentScale) {
       setLastFact(
@@ -4634,6 +4740,11 @@ export function mountGame(
         },
         "pickup",
       );
+      if (previousProgress < 1 && game.progress >= 1) {
+        setPickupMilestone(
+          `${activeEra.name} is ready · keep hunting here, or grow when you choose`,
+        );
+      }
       playPickupSound(pickup.curio, pickup.sourceEra);
       faceReactionUntil = now + 240;
       ballFaceMaterial.map = chompFaceTexture;
@@ -4644,6 +4755,19 @@ export function mountGame(
         pickup.curio.color,
         now,
       );
+      if (newlyUnlockedAchievements.length > 0) {
+        const names = newlyUnlockedAchievements
+          .map((achievement) => achievement.name)
+          .join(" + ");
+        const detail =
+          newlyUnlockedAchievements.length === 1
+            ? ` — ${newlyUnlockedAchievements[0].description}`
+            : "";
+        setAchievement(
+          `${newlyUnlockedAchievements.length === 1 ? "Achievement" : "Achievements"} unlocked: ${names}${detail}`,
+        );
+        if (!(previousProgress < 1 && game.progress >= 1)) ping(620, true);
+      }
     }
 
     if (pickup.marker) {
@@ -4719,23 +4843,6 @@ export function mountGame(
       }
     } else {
       disposeVisual(pickup.visual);
-    }
-    if (
-      game.progress >= 1 &&
-      scaleTransitionStarted < 0 &&
-      !pendingLayerAdvance
-    ) {
-      scaleTransitionDurationMs = scaleTransitionDuration(game.mode);
-      if (scaleTransitionDurationMs > 0) {
-        preparePickupHandoff();
-        scaleTransitionStarted = now;
-        setToast(
-          "Learning skip! You grow while this whole layer settles beneath you.",
-        );
-        ping(350 + activeIndex * 18, true);
-      } else {
-        pendingLayerAdvance = true;
-      }
     }
   };
 
@@ -4887,6 +4994,13 @@ export function mountGame(
           runtime: {
             era: activeIndex,
             mode: game.mode,
+            picked: game.picked,
+            progress: game.progress,
+            readyToGrow:
+              labEra === null &&
+              game.progress >= 1 &&
+              scaleTransitionStarted < 0 &&
+              !pendingLayerAdvance,
             radius: game.radius,
             playerScale: playerRoot.scale.x,
             worldScale: transitionWorldScale,
@@ -4983,6 +5097,11 @@ export function mountGame(
               workBudgetMs:
                 worldPerformanceBudget(qualityTier).maxSpawnWorkMs,
               deferredDisposals: deferredVisualDisposals.length,
+              singletonIds: pickups
+                .filter(
+                  (pickup) => pickup.curio.spawnMode === "singleton",
+                )
+                .map((pickup) => pickup.curio.id),
             },
             representations: {
               richPickups: pickups.filter((pickup) => pickup.root.visible).length,
@@ -5095,15 +5214,7 @@ export function mountGame(
           }
           game.progress = 1;
           game.radius = CORE_RADIUS_MAX;
-          const now = readPerformanceClock();
-          scaleTransitionDurationMs = scaleTransitionDuration(game.mode);
-          if (scaleTransitionDurationMs > 0) {
-            preparePickupHandoff();
-            scaleTransitionStarted = now;
-          } else {
-            pendingLayerAdvance = true;
-          }
-          return true;
+          return requestLayerAdvance(true);
         },
         previewEra: (index: number) => {
           const requestedIndex = Number.isFinite(index)
@@ -5152,6 +5263,32 @@ export function mountGame(
           collect(pickup, performance.now());
           reconcilePickupQueue();
           return name;
+        },
+        collectSingletonPickup: () => {
+          const pickupIndex = pickups.findIndex(
+            (pickup) =>
+              pickup.sourceEra === activeIndex &&
+              pickup.curio.spawnMode === "singleton" &&
+              pickup.retireStartedAt === null,
+          );
+          if (pickupIndex < 0) return null;
+          const [pickup] = pickups.splice(pickupIndex, 1);
+          const id = pickup.curio.id;
+          collect(pickup, performance.now());
+          reconcilePickupQueue();
+          return id;
+        },
+        retireSingletonPickup: () => {
+          const pickup = pickups.find(
+            (candidate) =>
+              candidate.sourceEra === activeIndex &&
+              candidate.curio.spawnMode === "singleton" &&
+              candidate.retireStartedAt === null,
+          );
+          if (!pickup) return null;
+          pickup.retireStartedAt = performance.now();
+          reconcilePickupQueue();
+          return pickup.curio.id;
         },
       }
     : null;
@@ -6232,6 +6369,9 @@ export function mountGame(
     );
     if (debugWindow.__QUARKATAMARI_PERFORMANCE__ === performanceDebug) {
       delete debugWindow.__QUARKATAMARI_PERFORMANCE__;
+    }
+    if (advanceLayerRef.current === playerLayerAdvance) {
+      advanceLayerRef.current = null;
     }
     pickups.forEach((pickup) => removePickup(pickup));
     drainDeferredVisualDisposals(deferredVisualDisposals.length);

@@ -24,6 +24,31 @@ import { ERAS, VISUAL_FORMS } from "../../src/lib/scale-data.ts";
 
 const curios = ERAS.flatMap((era) => era.curios);
 
+function roundedVector(vector) {
+  return [vector.x, vector.y, vector.z].map((value) =>
+    Number(value.toFixed(4)),
+  );
+}
+
+function silhouetteSignature(root) {
+  root.updateMatrixWorld(true);
+  const parts = [];
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    object.geometry.computeBoundingBox();
+    const worldBounds = object.geometry.boundingBox
+      .clone()
+      .applyMatrix4(object.matrixWorld);
+    parts.push([
+      object.geometry.type,
+      roundedVector(worldBounds.getCenter(new THREE.Vector3())),
+      roundedVector(worldBounds.getSize(new THREE.Vector3())),
+      roundedVector(object.rotation),
+    ]);
+  });
+  return JSON.stringify(parts);
+}
+
 function installFakeCanvasDocument() {
   const originalDocument = globalThis.document;
   globalThis.document = {
@@ -69,7 +94,7 @@ test("every catalog visual form has an explicit renderer contract", () => {
     Object.keys(COLLECTIBLE_VISUAL_HANDLER_BY_FORM).sort(),
     [...VISUAL_FORMS].sort(),
   );
-  assert.equal(new Set(curios.map((curio) => curio.visualForm)).size, 90);
+  assert.equal(new Set(curios.map((curio) => curio.visualForm)).size, 89);
 
   const fallbackCurios = curios.filter(
     (curio) => collectibleVisualHandlerFor(curio.visualForm) === "artifact",
@@ -147,7 +172,7 @@ test("semantic forms cannot alias misleading generic silhouettes", () => {
   );
 });
 
-test("all 220 catalog curios preserve authored solid and effect LOD layers", async () => {
+test("all 234 catalog curios preserve authored solid and effect LOD layers", async () => {
   const vite = await createServer({
     appType: "custom",
     logLevel: "silent",
@@ -171,8 +196,20 @@ test("all 220 catalog curios preserve authored solid and effect LOD layers", asy
 
     let effectCurios = 0;
     let maximumTriangleCount = 0;
+    const singletonSilhouettes = new Map();
+    const repeatableSilhouettes = new Map();
     for (const curio of curios) {
       const authoredVisual = visualFactory.buildVisual(curio, false);
+      const signature = silhouetteSignature(authoredVisual);
+      if (curio.spawnMode === "singleton") {
+        const ids = singletonSilhouettes.get(signature) ?? [];
+        ids.push(curio.id);
+        singletonSilhouettes.set(signature, ids);
+      } else {
+        const ids = repeatableSilhouettes.get(signature) ?? [];
+        ids.push(curio.id);
+        repeatableSilhouettes.set(signature, ids);
+      }
       authoredVisual.updateMatrixWorld(true);
       const authoredBounds = new THREE.Box3().setFromObject(
         authoredVisual,
@@ -247,6 +284,23 @@ test("all 220 catalog curios preserve authored solid and effect LOD layers", asy
       maximumTriangleCount <= 512,
       `tiny instanced silhouettes must stay bounded; saw ${maximumTriangleCount}`,
     );
+    assert.equal(
+      [...singletonSilhouettes.values()].flat().length,
+      21,
+      "the astronomy collection must keep every named landmark in this visual gate",
+    );
+    assert.deepEqual(
+      [...singletonSilhouettes.values()].filter((ids) => ids.length > 1),
+      [],
+      "every one-of-one landmark needs a distinct low-detail silhouette",
+    );
+    assert.deepEqual(
+      [...singletonSilhouettes.entries()]
+        .filter(([signature]) => repeatableSilhouettes.has(signature))
+        .map(([, singletonIds]) => singletonIds),
+      [],
+      "one-of-one landmarks must never alias a repeatable low-detail silhouette",
+    );
   } finally {
     await vite.close();
   }
@@ -263,7 +317,7 @@ test("marker assets share bounded non-mipmapped textures", () => {
       sprites.map((sprite) => sprite.material.map).filter(Boolean),
     );
 
-    assert.equal(uniqueSymbols.size, 98);
+    assert.equal(uniqueSymbols.size, 106);
     assert.equal(materials.size, curios.length);
     assert.equal(textures.size, uniqueSymbols.size);
     assert.ok(
@@ -291,7 +345,7 @@ test("marker assets share bounded non-mipmapped textures", () => {
     ).reduce((sum, pixels) => sum + pixels, 0);
     const oldCatalogBytes = uniqueSymbols.size * oldMipPixels * 4;
     const newCatalogBytes = collectibleMarkerTextureBytes(uniqueSymbols.size);
-    assert.equal(newCatalogBytes, 6_422_528);
+    assert.equal(newCatalogBytes, 6_946_816);
     assert.ok(
       newCatalogBytes / oldCatalogBytes < 0.19,
       "catalog marker texture memory should fall by more than 81%",

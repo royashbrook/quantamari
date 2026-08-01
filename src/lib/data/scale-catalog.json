@@ -2446,8 +2446,11 @@
         "color": "#aaa9a4",
         "fact": "Ceres is the largest object in the asteroid belt and is massive enough to be rounded by gravity.",
         "symbol": "C",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.27,
+        "sourceIndex": 1,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/ceres"
       },
       {
         "id": "europa",
@@ -2457,8 +2460,11 @@
         "color": "#d6c89f",
         "fact": "Europa is an icy moon of Jupiter with strong evidence for a subsurface ocean.",
         "symbol": "E",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.9,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/europa"
       },
       {
         "id": "earth-s-moon",
@@ -2469,7 +2475,10 @@
         "fact": "The Moon is about 3,475 kilometres across and tidally locked to Earth.",
         "symbol": "☾",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/moon"
       },
       {
         "id": "pluto",
@@ -2479,8 +2488,46 @@
         "color": "#d7b799",
         "fact": "Pluto is a dwarf planet with a nitrogen-rich surface and a large moon named Charon.",
         "symbol": "P",
+        "relativeSize": 0.68,
+        "sourceIndex": 1,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/pluto"
+      },
+      {
+        "id": "dwarf-world",
+        "name": "dwarf world",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#b8aca1",
+        "fact": "Dwarf planets are rounded worlds that have not cleared other objects from their orbital neighborhoods.",
+        "symbol": "◉",
         "relativeSize": 1,
+        "sourceIndex": 1,
+        "rarity": "uncommon"
+      },
+      {
+        "id": "cratered-moonlet",
+        "name": "cratered moonlet",
+        "shape": "stone",
+        "visualForm": "asteroid",
+        "color": "#8e9299",
+        "fact": "Small moons can remain irregular and preserve impact craters because their gravity is too weak to round them.",
+        "symbol": "m",
+        "relativeSize": 0.42,
         "sourceIndex": 0
+      },
+      {
+        "id": "icy-moon-archetype",
+        "name": "icy moon",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#b9dbe2",
+        "fact": "Many outer-system moons contain abundant water ice, with surfaces reshaped by impacts, tides, or internal activity.",
+        "symbol": "I",
+        "relativeSize": 0.82,
+        "sourceIndex": 0,
+        "rarity": "uncommon"
       }
     ]
   },
@@ -2508,19 +2555,24 @@
         "label": "Solar System facts",
         "organization": "NASA",
         "url": "https://science.nasa.gov/solar-system/solar-system-facts/"
+      },
+      {
+        "label": "Exoplanet types",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/exoplanets/planet-types/"
       }
     ],
     "curios": [
       {
         "id": "small-moon",
-        "name": "small moon",
+        "name": "rocky exoplanet",
         "shape": "planet",
-        "visualForm": "asteroid",
-        "color": "#d8dee5",
-        "fact": "Many small moons are irregular because their gravity is too weak to make them round.",
-        "symbol": "◍",
+        "visualForm": "world",
+        "color": "#b6aaa3",
+        "fact": "Terrestrial exoplanets are worlds outside our Solar System made mostly from rock, silicate, water, or carbon.",
+        "symbol": "R",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 2
       },
       {
         "id": "mercury",
@@ -2530,8 +2582,25 @@
         "color": "#aaa39e",
         "fact": "Mercury is the smallest planet in our Solar System.",
         "symbol": "◍",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.38,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/mercury"
+      },
+      {
+        "id": "venus",
+        "name": "Venus",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#e9c47d",
+        "fact": "Venus is nearly Earth's size but has a dense carbon-dioxide atmosphere and an extremely hot surface.",
+        "symbol": "♀",
+        "relativeSize": 0.95,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/venus"
       },
       {
         "id": "earth",
@@ -2542,40 +2611,43 @@
         "fact": "Earth is an oblate spheroid, slightly wider at the equator.",
         "symbol": "◍",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/earth"
       },
       {
         "id": "gas-giant",
-        "name": "gas giant",
+        "name": "water-rich world",
         "shape": "planet",
         "visualForm": "world",
-        "color": "#f2c36f",
-        "fact": "Gas giants have no simple solid surface like Earth's.",
-        "symbol": "◍",
+        "color": "#5bb8d2",
+        "fact": "A small planet's mass and radius can suggest a water-rich composition, although an ocean is not guaranteed by density alone.",
+        "symbol": "W",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 2
       },
       {
         "id": "asteroid",
-        "name": "asteroid",
-        "shape": "stone",
-        "visualForm": "asteroid",
-        "color": "#a8a29a",
-        "fact": "Most asteroids are irregular rocky or metallic bodies.",
-        "symbol": "◆",
+        "name": "lava world",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#e46f45",
+        "fact": "Some rocky exoplanets orbit close enough to their stars for parts of their surfaces to remain molten.",
+        "symbol": "L",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 2
       },
       {
         "id": "comet-nucleus",
-        "name": "comet nucleus",
-        "shape": "stone",
-        "visualForm": "comet",
-        "color": "#d8eef2",
-        "fact": "A comet nucleus is a dark mixture of ice, dust, and rock.",
-        "symbol": "☄",
+        "name": "ice-covered world",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#c7e4e8",
+        "fact": "Earth-size worlds can have very different surfaces; distance from their stars helps determine whether exposed water freezes or vaporizes.",
+        "symbol": "I",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 2
       },
       {
         "id": "mars",
@@ -2585,26 +2657,30 @@
         "color": "#e17655",
         "fact": "Mars is a rocky planet with a diameter a little over half Earth's.",
         "symbol": "♂",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.53,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/mars"
       },
       {
         "id": "saturn",
-        "name": "Saturn",
+        "name": "super-Earth",
         "shape": "planet",
-        "visualForm": "ringed-world",
-        "color": "#e6c77c",
-        "fact": "Saturn is a gas giant surrounded by a broad, thin ring system.",
-        "symbol": "♄",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "visualForm": "world",
+        "color": "#cf9d77",
+        "fact": "Super-Earth describes size only: larger than Earth and smaller than Neptune, with no promise of Earth-like conditions.",
+        "symbol": "S",
+        "relativeSize": 1.3,
+        "sourceIndex": 2,
+        "rarity": "uncommon"
       }
     ]
   },
   {
     "id": "giant-worlds",
     "at": 260,
-    "logMeters": 8.8,
+    "logMeters": 8.15,
     "name": "Giant Worlds",
     "quip": "Atmospheres wider than smaller planets",
     "confidence": "MEASURED",
@@ -2625,6 +2701,11 @@
         "label": "Solar System facts",
         "organization": "NASA",
         "url": "https://science.nasa.gov/solar-system/solar-system-facts/"
+      },
+      {
+        "label": "Exoplanets",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/exoplanets/"
       }
     ],
     "curios": [
@@ -2637,7 +2718,10 @@
         "fact": "Jupiter is the Solar System's largest planet and has a deep atmosphere dominated by hydrogen and helium.",
         "symbol": "J",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/jupiter"
       },
       {
         "id": "saturn",
@@ -2647,8 +2731,11 @@
         "color": "#e6cb85",
         "fact": "Saturn's broad rings are made from countless orbiting particles rather than a solid disc.",
         "symbol": "♄",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.84,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/saturn"
       },
       {
         "id": "uranus",
@@ -2658,8 +2745,11 @@
         "color": "#8fd7df",
         "fact": "Uranus rotates on its side relative to its orbit and has a cold hydrogen-helium-methane atmosphere.",
         "symbol": "U",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.36,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/uranus"
       },
       {
         "id": "neptune",
@@ -2669,8 +2759,46 @@
         "color": "#638ddf",
         "fact": "Neptune is an ice giant with powerful winds and a deep blue atmospheric appearance.",
         "symbol": "N",
+        "relativeSize": 0.35,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/neptune"
+      },
+      {
+        "id": "exoplanet-giant",
+        "name": "exoplanet giant",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#d48a70",
+        "fact": "Giant exoplanets include hot Jupiters close to their stars and colder giants on wider orbits.",
+        "symbol": "G",
         "relativeSize": 1,
+        "sourceIndex": 2,
+        "rarity": "uncommon"
+      },
+      {
+        "id": "ice-giant-archetype",
+        "name": "ice giant",
+        "shape": "planet",
+        "visualForm": "world",
+        "color": "#75bad1",
+        "fact": "Ice giants contain larger fractions of water, methane, and ammonia-rich material than Jupiter and Saturn.",
+        "symbol": "i",
+        "relativeSize": 0.36,
         "sourceIndex": 0
+      },
+      {
+        "id": "ringed-giant-archetype",
+        "name": "ringed giant",
+        "shape": "planet",
+        "visualForm": "ringed-world",
+        "color": "#d9bd8a",
+        "fact": "All four giant planets in our Solar System have rings made from many orbiting particles, though Saturn's are the brightest.",
+        "symbol": "R",
+        "relativeSize": 0.78,
+        "sourceIndex": 0,
+        "rarity": "uncommon"
       }
     ]
   },
@@ -2698,6 +2826,11 @@
         "label": "How stars form and evolve",
         "organization": "NASA",
         "url": "https://science.nasa.gov/exoplanets/stars/"
+      },
+      {
+        "label": "The Sun",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/sun/"
       }
     ],
     "curios": [
@@ -2722,6 +2855,20 @@
         "symbol": "★",
         "relativeSize": 1,
         "sourceIndex": 0
+      },
+      {
+        "id": "sun",
+        "name": "Sun",
+        "shape": "star",
+        "visualForm": "star",
+        "color": "#ffd35a",
+        "fact": "The Sun is the Solar System's only star and is about 1.39 million kilometres in diameter.",
+        "symbol": "☉",
+        "relativeSize": 1,
+        "sourceIndex": 2,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system/sun"
       },
       {
         "id": "blue-giant",
@@ -2830,6 +2977,20 @@
         "sourceIndex": 0
       },
       {
+        "id": "solar-system",
+        "name": "Solar System",
+        "shape": "system",
+        "visualForm": "orbit-system",
+        "color": "#ffd978",
+        "fact": "The Solar System includes the Sun and everything gravitationally bound to it, extending far beyond Neptune.",
+        "symbol": "☉",
+        "relativeSize": 1,
+        "sourceIndex": 1,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "solar-system"
+      },
+      {
         "id": "binary-stars",
         "name": "binary stars",
         "shape": "system",
@@ -2932,6 +3093,16 @@
         "label": "Nebulae",
         "organization": "NASA",
         "url": "https://science.nasa.gov/mission/hubble/science/universe-uncovered/hubble-nebulae/"
+      },
+      {
+        "label": "Orion Nebula (Messier 42)",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-42/"
+      },
+      {
+        "label": "Pleiades (Messier 45)",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-45/"
       }
     ],
     "curios": [
@@ -2978,6 +3149,34 @@
         "symbol": "☁",
         "relativeSize": 1,
         "sourceIndex": 0
+      },
+      {
+        "id": "pleiades",
+        "name": "Pleiades",
+        "shape": "system",
+        "visualForm": "star-cluster",
+        "color": "#b9d9ff",
+        "fact": "The Pleiades is a nearby open cluster whose young stars formed together from the same molecular cloud.",
+        "symbol": "7",
+        "relativeSize": 0.75,
+        "sourceIndex": 3,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "milky-way/pleiades"
+      },
+      {
+        "id": "orion-nebula-m42",
+        "name": "Orion Nebula (M42)",
+        "shape": "system",
+        "visualForm": "nebula",
+        "color": "#e997cc",
+        "fact": "The Orion Nebula is a physical star-forming cloud about 1,500 light-years away, not the perspective pattern of the Orion constellation.",
+        "symbol": "M42",
+        "relativeSize": 1,
+        "sourceIndex": 2,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "milky-way/orion-nebula-m42"
       }
     ]
   },
@@ -3005,6 +3204,16 @@
         "label": "Large-scale structures",
         "organization": "NASA",
         "url": "https://science.nasa.gov/universe/galaxies/large-scale-structures/"
+      },
+      {
+        "label": "Andromeda Galaxy (Messier 31)",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-31/"
+      },
+      {
+        "label": "Triangulum Galaxy (Messier 33)",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/mission/hubble/science/explore-the-night-sky/hubble-messier-catalog/messier-33/"
       }
     ],
     "curios": [
@@ -3029,6 +3238,48 @@
         "symbol": "〰",
         "relativeSize": 1,
         "sourceIndex": 0
+      },
+      {
+        "id": "milky-way",
+        "name": "Milky Way",
+        "shape": "galaxy",
+        "visualForm": "galaxy",
+        "color": "#c7c8ff",
+        "fact": "The Milky Way is the barred spiral galaxy that contains the Solar System.",
+        "symbol": "MW",
+        "relativeSize": 0.55,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "local-group/milky-way"
+      },
+      {
+        "id": "andromeda-galaxy",
+        "name": "Andromeda Galaxy",
+        "shape": "galaxy",
+        "visualForm": "galaxy",
+        "color": "#b5d2ff",
+        "fact": "The Andromeda Galaxy is the nearest large galaxy to the Milky Way and another member of the Local Group.",
+        "symbol": "M31",
+        "relativeSize": 1,
+        "sourceIndex": 2,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "local-group/andromeda"
+      },
+      {
+        "id": "triangulum-galaxy",
+        "name": "Triangulum Galaxy",
+        "shape": "galaxy",
+        "visualForm": "galaxy",
+        "color": "#bcaeff",
+        "fact": "The Triangulum Galaxy is a spiral galaxy and the third-largest major member of the Local Group.",
+        "symbol": "M33",
+        "relativeSize": 0.28,
+        "sourceIndex": 3,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "local-group/triangulum"
       },
       {
         "id": "elliptical-galaxy",
@@ -3122,6 +3373,11 @@
         "label": "Large-scale structures",
         "organization": "NASA",
         "url": "https://science.nasa.gov/universe/galaxies/large-scale-structures/"
+      },
+      {
+        "label": "Virgo Cluster galaxies",
+        "organization": "NASA",
+        "url": "https://science.nasa.gov/asset/hubble/hubble-acs-image-of-100-virgo-cluster-galaxies/"
       }
     ],
     "curios": [
@@ -3133,8 +3389,11 @@
         "color": "#9dbdff",
         "fact": "The Local Group contains the Milky Way, Andromeda, Triangulum, and many smaller galaxies.",
         "symbol": "L",
-        "relativeSize": 1,
-        "sourceIndex": 0
+        "relativeSize": 0.65,
+        "sourceIndex": 0,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "large-scale/local-group"
       },
       {
         "id": "virgo-cluster",
@@ -3145,7 +3404,10 @@
         "fact": "The Virgo Cluster is the nearest large galaxy cluster and contains well over a thousand member galaxies.",
         "symbol": "V",
         "relativeSize": 1,
-        "sourceIndex": 0
+        "sourceIndex": 2,
+        "rarity": "rare",
+        "spawnMode": "singleton",
+        "subjectId": "large-scale/virgo-cluster"
       },
       {
         "id": "cosmic-void",

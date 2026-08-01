@@ -33,6 +33,14 @@ const catalog = [
     name: "Vehicle Yard",
     curios: [{ id: "bicycle" }],
   },
+  {
+    id: "planetary-pantry",
+    name: "Planetary Pantry",
+    curios: [
+      { id: "earth", spawnMode: "singleton" },
+      { id: "rocky-world", spawnMode: "repeatable" },
+    ],
+  },
 ];
 
 const mash = (overrides = {}) => ({
@@ -132,6 +140,57 @@ test("completed journey cycles survive a save round trip and legacy saves defaul
     catalog,
   );
   assert.equal(negative?.save.cycles, 0);
+});
+
+test("v4 migration collapses newly one-of-one collection and mash records", () => {
+  const earthMash = mash({
+    eraId: "planetary-pantry",
+    curioId: "earth",
+  });
+  const raw = JSON.stringify({
+    version: 4,
+    mode: "journey",
+    eraId: "planetary-pantry",
+    progress: 0.8,
+    picked: 7,
+    unitemizedPicked: 0,
+    x: 0,
+    z: 0,
+    zooms: 0,
+    sound: false,
+    mash: [earthMash, { ...earthMash, position: [4, 5, 6] }],
+    collection: [
+      {
+        eraId: "planetary-pantry",
+        curioId: "earth",
+        count: 3,
+        firstPick: 10,
+        lastPick: 20,
+      },
+      {
+        eraId: "planetary-pantry",
+        curioId: "earth",
+        count: 4,
+        firstPick: 5,
+        lastPick: 30,
+      },
+    ],
+  });
+
+  const loaded = loadSaveCandidates({ v4: raw }, catalog);
+  assert.equal(loaded?.save.mash.length, 1);
+  assert.deepEqual(loaded?.save.mash[0].position, [4, 5, 6]);
+  assert.deepEqual(loaded?.save.collection, [
+    {
+      eraId: "planetary-pantry",
+      curioId: "earth",
+      count: 1,
+      firstPick: 5,
+      lastPick: 30,
+    },
+  ]);
+  assert.equal(loaded?.save.picked, 7);
+  assert.equal(loaded?.save.unitemizedPicked, 6);
 });
 
 test("a corrupt v4 falls back to v3 and maps numeric eras through the frozen atlas", () => {

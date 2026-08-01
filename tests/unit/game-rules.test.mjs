@@ -34,7 +34,7 @@ const curios = ERAS.flatMap((era) =>
 
 test("ships the complete sourced scale atlas", () => {
   assert.equal(ERAS.length, 34);
-  assert.equal(curios.length, 220);
+  assert.equal(curios.length, 234);
   assert.equal(JOURNEY_HOURS, 500);
 
   for (const era of ERAS) {

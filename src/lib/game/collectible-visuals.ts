@@ -102,6 +102,7 @@ export function createCollectibleVisualFactory({
     const pale = createMaterial("#f6f2e8");
     const form = curio.visualForm;
     const handler = collectibleVisualHandlerFor(form);
+    const subjectKey = curio.subjectId?.split("/").at(-1) ?? "";
 
     if (handler === "nuclear-cluster") {
       const nucleons: [number, number, number][] = [
@@ -1575,7 +1576,15 @@ export function createCollectibleVisualFactory({
           [0.28, 0.08, -0.12],
         );
       });
-      if (rich) {
+      if (subjectKey === "saturn") {
+        addPart(
+          group,
+          new THREE.CylinderGeometry(0.1, 0.1, 0.025, 6),
+          accent,
+          [0, 0.57, 0],
+          [1, 1, 0.7],
+        );
+      } else if (rich) {
         addPart(
           group,
           new THREE.SphereGeometry(0.08, 9, 7),
@@ -1584,7 +1593,10 @@ export function createCollectibleVisualFactory({
         );
       }
     } else if (handler === "world") {
-      const irregular = name.includes("small moon") || name.includes("rogue");
+      const irregular =
+        name.includes("small moon") ||
+        name.includes("rogue") ||
+        subjectKey === "ceres";
       addPart(
         group,
         irregular
@@ -1592,22 +1604,73 @@ export function createCollectibleVisualFactory({
           : new THREE.SphereGeometry(0.67, 32, 24),
         material,
         [0, 0, 0],
-        name.includes("earth") ? [1, 0.97, 1] : [1, 1, 1],
+        subjectKey === "earth" ? [1, 0.97, 1] : [1, 1, 1],
       );
       if (name.includes("saturn") || name.includes("gas giant")) {
         addPart(group, new THREE.TorusGeometry(0.92, name.includes("saturn") ? 0.11 : 0.055, 9, 52), pale, [0, 0, 0], [1, 0.42, 1], [0.25, 0, 0.15]);
-      } else if (name.includes("earth")) {
+      } else if (subjectKey === "earth") {
         for (let land = 0; land < 6; land += 1) {
           const angle = (land / 6) * Math.PI * 2;
           addPart(group, new THREE.DodecahedronGeometry(0.14 + (land % 2) * 0.04, 1), accent, [Math.cos(angle) * 0.59, Math.sin(angle * 1.7) * 0.36, Math.sin(angle) * 0.34]);
         }
+      } else if (subjectKey === "europa") {
+        addPart(group, new THREE.TorusGeometry(0.66, 0.018, 5, 24), dark, [0, 0, 0], [1, 0.72, 1], [0.45, 0.18, 0.12]);
+        addPart(group, new THREE.TorusGeometry(0.65, 0.014, 5, 22), accent, [0, 0, 0], [0.76, 1, 1], [-0.32, 0.52, 0.18]);
+      } else if (subjectKey === "moon") {
+        [[-0.22, 0.2, 0.6], [0.26, -0.15, 0.6], [0.12, 0.34, 0.55]].forEach(
+          (position, crater) =>
+            addPart(
+              group,
+              new THREE.SphereGeometry(crater === 1 ? 0.13 : 0.09, 8, 6),
+              dark,
+              position as [number, number, number],
+              [1, 1, 0.22],
+            ),
+        );
+      } else if (subjectKey === "ceres" || subjectKey === "mercury") {
+        const craterPositions =
+          subjectKey === "ceres"
+            ? [[-0.3, 0.24, 0.53], [0.25, -0.3, 0.55]]
+            : [[-0.12, 0.28, 0.61], [0.34, -0.08, 0.54], [-0.3, -0.26, 0.52]];
+        craterPositions.forEach((position, crater) =>
+          addPart(
+            group,
+            new THREE.SphereGeometry(0.075 + crater * 0.018, 8, 6),
+            subjectKey === "ceres" ? accent : dark,
+            position as [number, number, number],
+            [1, 1, 0.2],
+          ),
+        );
+      } else if (subjectKey === "pluto") {
+        [-0.085, 0.085].forEach((x) =>
+          addPart(group, new THREE.SphereGeometry(0.14, 8, 6), pale, [x, 0.14, 0.59], [1, 1.18, 0.25]),
+        );
+      } else if (subjectKey === "venus") {
+        [-0.2, 0.2].forEach((y, band) =>
+          addPart(group, new THREE.TorusGeometry(0.61, 0.028, 5, 24), band ? pale : accent, [0, y, 0], [1, 1, 1], [Math.PI / 2, 0, 0]),
+        );
+      } else if (subjectKey === "mars") {
+        addPart(group, new THREE.SphereGeometry(0.19, 9, 6), pale, [0, 0.6, 0], [1, 0.28, 1]);
+        addPart(group, new THREE.SphereGeometry(0.1, 8, 6), dark, [0.3, -0.08, 0.56], [1, 1, 0.22]);
+      } else if (subjectKey === "jupiter") {
+        [-0.22, 0.18].forEach((y, band) =>
+          addPart(group, new THREE.TorusGeometry(0.61, 0.035, 5, 26), band ? pale : accent, [0, y, 0], [1, 1, 1], [Math.PI / 2, 0, 0]),
+        );
+        addPart(group, new THREE.SphereGeometry(0.1, 8, 6), createMaterial("#b94f45"), [0.34, -0.08, 0.55], [1.35, 0.75, 0.2]);
+      } else if (subjectKey === "uranus") {
+        addPart(group, new THREE.TorusGeometry(0.82, 0.025, 5, 30), pale, [0, 0, 0], [1, 0.38, 1], [0.2, 0.12, 1.22]);
+      } else if (subjectKey === "neptune") {
+        addPart(group, new THREE.TorusGeometry(0.61, 0.025, 5, 24), pale, [0, -0.14, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+        addPart(group, new THREE.SphereGeometry(0.095, 8, 6), dark, [-0.3, 0.14, 0.56], [1.25, 0.8, 0.2]);
       } else if (rich) {
         addPart(group, new THREE.SphereGeometry(0.11 + variant * 0.015, 12, 9), accent, [0.84, 0.3, -0.16]);
       }
     } else if (handler === "star") {
       addPart(group, new THREE.IcosahedronGeometry(0.72, 3), material, [0, 0, 0]);
       addPart(group, new THREE.SphereGeometry(0.96, 20, 14), new THREE.MeshBasicMaterial({ color: curio.color, transparent: true, opacity: 0.12, side: THREE.BackSide }), [0, 0, 0]);
-      if (rich) {
+      if (subjectKey === "sun") {
+        addPart(group, new THREE.RingGeometry(0.76, 0.96, 16), pale, [0, 0, 0.04], [1, 1, 1], [0.08, 0.2, 0]);
+      } else if (rich) {
         addPart(group, new THREE.TorusGeometry(0.86, 0.025, 6, 30), accent, [0, 0, 0], [1, 0.62, 1], [0.4, 0.2, 0]);
       }
     } else if (handler === "dense-star") {
@@ -1641,7 +1704,7 @@ export function createCollectibleVisualFactory({
       [0.45, 0.72, 0.98].forEach((radius, index) => {
         addPart(group, new THREE.TorusGeometry(radius, 0.018, 5, 42), pale, [0, 0, 0], [1, 0.35 + index * 0.12, 1], [0.3 * index, 0.15, 0]);
       });
-      if (rich) {
+      if (rich || subjectKey === "solar-system") {
         addPart(group, new THREE.SphereGeometry(0.1, 10, 8), accent, [0.56, 0.04, 0.16]);
         addPart(group, new THREE.SphereGeometry(0.075, 9, 7), material, [-0.78, -0.05, -0.12]);
       }
@@ -1655,14 +1718,16 @@ export function createCollectibleVisualFactory({
         [-0.26, -0.42, -0.2],
         [0.12, -0.5, 0.04],
       ] as const;
-      starPositions.forEach((position, star) => {
+      starPositions
+        .slice(0, subjectKey === "pleiades" ? 7 : 5)
+        .forEach((position, star) => {
         addPart(
           group,
           new THREE.IcosahedronGeometry(0.14 + (star % 3) * 0.045, 1),
           star % 3 === 0 ? pale : star % 2 ? accent : material,
           position as [number, number, number],
         );
-      });
+        });
       if (rich) {
         addPart(
           group,
@@ -1700,6 +1765,17 @@ export function createCollectibleVisualFactory({
           [1.2, 0.76, 0.9],
         );
       });
+      if (subjectKey === "orion-nebula-m42") {
+        [[-0.09, 0.08, 0.28], [0.09, 0.08, 0.28], [-0.06, -0.08, 0.28], [0.08, -0.07, 0.28]].forEach(
+          (position) =>
+            addPart(
+              group,
+              new THREE.OctahedronGeometry(0.045, 0),
+              pale,
+              position as [number, number, number],
+            ),
+        );
+      }
       if (rich) {
         addPart(
           group,
@@ -1710,6 +1786,7 @@ export function createCollectibleVisualFactory({
       }
     } else if (handler === "galaxy") {
       const irregular = name.includes("irregular");
+      const namedLocalGroupGalaxy = ["milky-way", "andromeda", "triangulum"].includes(subjectKey);
       addPart(group, new THREE.SphereGeometry(name.includes("active") ? 0.26 : 0.18, 16, 12), name.includes("active") ? accent : pale, [0, 0, 0]);
       if (irregular) {
         const galaxyBits = 6;
@@ -1726,11 +1803,23 @@ export function createCollectibleVisualFactory({
           );
         }
       } else {
-        for (let i = 0; i < 3; i += 1) {
-          addPart(group, new THREE.TorusGeometry(0.38 + i * 0.2, 0.075, 7, 52), material, [0, 0, 0], [1, 0.2, 1], [0.2, i * (name.includes("barred") ? 0.34 : 0.6), 0]);
+        const diskScale: [number, number, number] =
+          subjectKey === "andromeda"
+            ? [1.3, 0.16, 0.78]
+            : subjectKey === "triangulum"
+              ? [0.86, 0.24, 1]
+              : [1, 0.2, 1];
+        for (let i = 0; i < (namedLocalGroupGalaxy ? 2 : 3); i += 1) {
+          addPart(group, new THREE.TorusGeometry(0.38 + i * 0.2, 0.075, 7, 52), material, [0, 0, 0], diskScale, [0.2, i * (name.includes("barred") || subjectKey === "milky-way" ? 0.34 : 0.6), 0]);
         }
-        if (name.includes("barred")) {
+        if (name.includes("barred") || subjectKey === "milky-way") {
           addPart(group, new THREE.CapsuleGeometry(0.075, 0.75, 4, 10), pale, [0, 0, 0], [1, 1, 1], [0, 0, Math.PI / 2]);
+        } else if (subjectKey === "andromeda") {
+          addPart(group, new THREE.SphereGeometry(0.085, 8, 6), accent, [0.78, 0.16, 0.1]);
+        } else if (subjectKey === "triangulum") {
+          [[-0.38, -0.2, 0.05], [0.42, -0.16, -0.06], [0.02, 0.38, 0.08]].forEach((position) =>
+            addPart(group, new THREE.IcosahedronGeometry(0.07, 0), accent, position as [number, number, number]),
+          );
         }
       }
       if (rich) {
@@ -1738,13 +1827,11 @@ export function createCollectibleVisualFactory({
         addPart(group, new THREE.SphereGeometry(0.055, 8, 6), pale, [-0.62, -0.2, -0.28]);
       }
     } else if (handler === "galaxy-cluster") {
-      const galaxyPositions = [
-        [-0.52, 0.26, -0.2],
-        [-0.18, -0.34, 0.16],
-        [0.08, 0.16, 0.04],
-        [0.46, -0.18, -0.12],
-        [0.56, 0.4, 0.2],
-      ] as const;
+      const galaxyPositions = subjectKey === "local-group"
+        ? [[-0.58, 0.22, -0.18], [0.08, -0.18, 0.12], [0.54, 0.3, 0.04]]
+        : subjectKey === "virgo-cluster"
+          ? [[-0.58, 0.34, -0.18], [-0.42, -0.28, 0.14], [-0.12, 0.12, 0.04], [0.16, -0.34, -0.12], [0.34, 0.18, 0.18], [0.58, -0.04, -0.08], [0.48, 0.48, 0.1]]
+          : [[-0.52, 0.26, -0.2], [-0.18, -0.34, 0.16], [0.08, 0.16, 0.04], [0.46, -0.18, -0.12], [0.56, 0.4, 0.2]];
       galaxyPositions.forEach((position, galaxy) => {
         const radius = 0.18 + (galaxy % 2) * 0.05;
         addPart(

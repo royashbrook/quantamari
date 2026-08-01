@@ -101,6 +101,9 @@
   } | null> = { current: null };
   const mashHistoryRef: MutableRef<MashRecordV4[]> = { current: [] };
   const collectionRef: MutableRef<CollectionEntry[]> = { current: [] };
+  const advanceLayerRef: MutableRef<(() => boolean) | null> = {
+    current: null,
+  };
   const unitemizedPickedRef: MutableRef<number> = { current: 0 };
   const keysRef: MutableRef<Record<string, boolean>> = { current: {} };
   const joystickRef = {
@@ -174,6 +177,8 @@
   );
   let toastVisible = $state(false);
   let toastTimer: number | null = null;
+  let factAchievement = $state("");
+  let factMilestone = $state("");
   let factVisible = $state(false);
   let factTimer: number | null = null;
   let factBurstCount = $state(0);
@@ -335,6 +340,22 @@
       toastTimer = null;
     }, 4_000);
   }
+  function announceAchievement(message: string) {
+    if (factVisible) {
+      factAchievement = message
+        .replace(/^Achievements? unlocked:\s*/i, "")
+        .split(" — ")[0];
+      return;
+    }
+    updateToast(message);
+  }
+  function announcePickupMilestone(message: string) {
+    if (factVisible) {
+      factMilestone = message;
+      return;
+    }
+    updateToast(message);
+  }
   function hideToast() {
     toastVisible = false;
     if (toastTimer !== null) {
@@ -346,6 +367,8 @@
     const wasVisible = factVisible;
     factVisible = false;
     factBurstCount = 0;
+    factAchievement = "";
+    factMilestone = "";
     pickupAnnouncement = "";
     if (factTimer !== null) {
       window.clearTimeout(factTimer);
@@ -378,6 +401,8 @@
       factTimer = window.setTimeout(() => {
         factVisible = false;
         factBurstCount = 0;
+        factAchievement = "";
+        factMilestone = "";
         pickupAnnouncement = "";
         factTimer = null;
         factCooldownUntil = Date.now() + PICKUP_FACT_COOLDOWN_MS;
@@ -654,6 +679,12 @@
     labReturnRef.current = null;
     labEra = null;
     updateToast("Journey restored exactly where you left it.");
+  }
+
+  function growToNextScale() {
+    void resumeAudio();
+    if (advanceLayerRef.current?.()) return;
+    updateToast("Keep rolling until this scale is ready to grow.");
   }
 
   function persistSnapshot() {
@@ -1064,9 +1095,12 @@
           modalOpenRef,
           mashHistoryRef,
           collectionRef,
+          advanceLayerRef,
           labEra: preview,
           performanceProfile: selectedPerformanceProfile,
           setToast: updateToast,
+          setAchievement: announceAchievement,
+          setPickupMilestone: announcePickupMilestone,
           setLastFact: updateLastFact,
           setCollection: updateCollection,
           setHud: updateHud,
@@ -1235,6 +1269,19 @@
   let journeyIndex = $derived(hud.journeyEra);
   // The final layer wraps to layer 0 as a new cycle, so "Next" names it.
   let nextEra = $derived(ERAS[(journeyIndex + 1) % ERAS.length]);
+  let remainingScaleCollection = $derived.by(() => {
+    const found = new Set(
+      collection
+        .filter((entry) => entry.eraId === era.id && entry.count > 0)
+        .map((entry) => entry.curioId),
+    );
+    const missing = era.curios.filter((curio) => !found.has(curio.id));
+    return {
+      specimens: missing.length,
+      landmarks: missing.filter((curio) => curio.spawnMode === "singleton")
+        .length,
+    };
+  });
   let scale = $derived(
     labEra === null
       ? formatEraScale(journeyIndex, hud.progress)
@@ -1392,7 +1439,11 @@
       </div>
     {/if}
 
-    <div class="journey-dock hud" aria-label="Journey status">
+    <div
+      class:ready-to-grow={labEra === null && hud.progress >= 1}
+      class="journey-dock hud"
+      aria-label="Journey status"
+    >
       <section class="scale-card hud" aria-label="Scale progress">
         <div class="kicker">
           <span>{era.name}</span>
@@ -1410,16 +1461,39 @@
         <div class="track">
           <i style={`--progress: ${Math.max(0.015, hud.progress)}`}></i>
         </div>
-        <div class="meta">
-          <span class="frontier">
-            <small>{labEra === null ? "Next frontier" : "Scale Lab"}</small>
-            <b>{labEra === null ? nextEra.name : "Specimen preview"}</b>
-          </span>
-          <span class="progress-value">
-            {labEra === null
-              ? `${(hud.progress * 100).toFixed(2)}%`
-              : "PREVIEW"}
-          </span>
+        <div class:scale-ready={labEra === null && hud.progress >= 1} class="meta">
+          {#if labEra === null && hud.progress >= 1}
+            <button
+              class="grow-action"
+              type="button"
+              data-testid="grow-layer"
+              aria-label={`Grow to ${nextEra.name}`}
+              onclick={growToNextScale}
+            >
+              <span>
+                <small>Scale ready</small>
+                <b>Grow to {nextEra.name}</b>
+              </span>
+              <span class="grow-choice">
+                {remainingScaleCollection.specimens === 0
+                  ? "scale guide complete"
+                  : remainingScaleCollection.landmarks > 0
+                    ? `${remainingScaleCollection.specimens} finds · ${remainingScaleCollection.landmarks} landmark${remainingScaleCollection.landmarks === 1 ? "" : "s"}`
+                    : `${remainingScaleCollection.specimens} finds remain`}
+                <b aria-hidden="true">→</b>
+              </span>
+            </button>
+          {:else}
+            <span class="frontier">
+              <small>{labEra === null ? "Next frontier" : "Scale Lab"}</small>
+              <b>{labEra === null ? nextEra.name : "Specimen preview"}</b>
+            </span>
+            <span class="progress-value">
+              {labEra === null
+                ? `${(hud.progress * 100).toFixed(2)}%`
+                : "PREVIEW"}
+            </span>
+          {/if}
         </div>
         <div
           class="lens-control"
@@ -1500,10 +1574,16 @@
         </div>
         <div class="fact-kicker">
           <span>{labEra === null ? "ROLLED UP" : "SCALE LAB SPECIMEN"}</span>
+          {#if factAchievement}
+            <b class="achievement-unlock">🏆 {factAchievement}</b>
+          {/if}
           {#if factVisible && factBurstCount > 1}
             <b>+{factBurstCount - 1} more</b>
           {/if}
         </div>
+        {#if factMilestone}
+          <b class="scale-ready-unlock">{factMilestone}</b>
+        {/if}
         <h2>{lastFact.name}</h2>
         <p>{lastFact.fact}</p>
         <span class="fact-citation">
@@ -1626,7 +1706,7 @@
           </section>
         </div>
         <div class="welcome-foot">
-          <span>{collectibleCount} UNIQUE SPECIMENS</span><span>•</span>
+          <span>{collectibleCount} GUIDE SPECIMENS</span><span>•</span>
           <span>{ERAS.length} SCALE LAYERS</span><span>•</span>
           <span>{scienceSourceCount} SOURCES IN THE SCIENCE ATLAS</span>
         </div>
@@ -1792,6 +1872,7 @@
     <FieldGuide
       open={showGuide}
       entries={collection}
+      cycles={hud.cycles}
       {legacyUnitemizedCount}
       onClose={closeGuide}
     />
