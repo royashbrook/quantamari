@@ -14,6 +14,8 @@
     appVersion: string;
     buildLabel: string;
     updateReady: boolean;
+    installAvailable: boolean;
+    installNative: boolean;
     onClose: () => void;
     onOpenGuide: () => void;
     onOpenAtlas: () => void;
@@ -21,6 +23,7 @@
     onToggleBatteryOptimized: () => void;
     onReset: () => boolean;
     onApplyUpdate: () => void;
+    onInstall: () => void;
   };
 
   let {
@@ -31,6 +34,8 @@
     appVersion,
     buildLabel,
     updateReady,
+    installAvailable,
+    installNative,
     onClose,
     onOpenGuide,
     onOpenAtlas,
@@ -38,6 +43,7 @@
     onToggleBatteryOptimized,
     onReset,
     onApplyUpdate,
+    onInstall,
   }: GameMenuProps = $props();
 
   const componentId = $props.id();
@@ -147,6 +153,23 @@
               <span>
                 <b>Update ready</b>
                 <small>Save this universe and load the new build</small>
+              </span>
+            </button>
+          {/if}
+          {#if installAvailable}
+            <button
+              class={styles.installChoice}
+              type="button"
+              onclick={onInstall}
+            >
+              <span class={styles.icon} aria-hidden="true">↓</span>
+              <span>
+                <b>Install Quantamari</b>
+                <small>
+                  {installNative
+                    ? "Add the full-screen app to this device"
+                    : "See the Home Screen steps for this device"}
+                </small>
               </span>
             </button>
           {/if}

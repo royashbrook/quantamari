@@ -28,6 +28,7 @@ export default defineConfig({
       name: "chromium",
       testMatch: [
         "**/game.spec.ts",
+        "**/install.spec.ts",
         "**/recovery.spec.ts",
         "**/welcome.spec.ts",
       ],
@@ -47,6 +48,7 @@ export default defineConfig({
       name: "iphone-air",
       testMatch: [
         "**/mobile.spec.ts",
+        "**/install.spec.ts",
         "**/recovery.spec.ts",
         "**/welcome.spec.ts",
       ],

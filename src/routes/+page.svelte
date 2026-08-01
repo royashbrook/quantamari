@@ -9,6 +9,7 @@
   import { version as appVersion } from "../../package.json";
   import FieldGuide from "$lib/components/FieldGuide.svelte";
   import GameMenu from "$lib/components/GameMenu.svelte";
+  import InstallCoach from "$lib/components/InstallCoach.svelte";
   import {
     ERAS,
     type Era,
@@ -27,6 +28,19 @@
     type PerformanceProfile,
     parsePerformanceProfile,
   } from "$lib/performance-profile";
+  import {
+    INSTALL_COACH_INSTALLED_VALUE,
+    INSTALL_COACH_STORAGE_KEY,
+    type BeforeInstallPromptEvent,
+    type InstallPromptKind,
+    type InstallSignals,
+    installCoachSnoozeValue,
+    installCoachSuppressed,
+    isAppleTouchDevice,
+    isAppleTablet,
+    isPhoneOrTablet,
+    isStandaloneApp,
+  } from "$lib/pwa-install";
   import {
     SAVE_KEYS,
     createSaveData,
@@ -56,6 +70,7 @@
     buildVersion.endsWith("-dirty") ? "+dirty" : ""
   }`;
   const RESET_GENERATION_KEY = "everything-roll-reset-generation";
+  const INSTALL_COACH_REVEAL_DELAY_MS = 900;
   const PICKUP_FACT_DURATION_MS = 5_500;
   const PICKUP_FACT_COOLDOWN_MS = 2_500;
   const ROLL_KEYS = new Set([
@@ -145,6 +160,15 @@
   let legacyUnitemizedCount = $state(0);
   let updateReady = $state(false);
   let updateApplying = $state(false);
+  let installKind = $state<InstallPromptKind | null>(null);
+  let installAppleTablet = $state(false);
+  let installCoachVisible = $state(false);
+  let installCoachManual = $state(false);
+  let installApplying = $state(false);
+  let installedDisplayMode = $state(false);
+  let installPromptEvent: BeforeInstallPromptEvent | null = null;
+  let installCoachTimer: number | null = null;
+  let installCoachSuppressedForVisit = false;
   let toast = $state(
     "Current-scale things stick. Older specks dissolve quietly into mass.",
   );
@@ -185,6 +209,122 @@
   let resetInProgress = false;
   let resetGeneration: string | null = null;
 
+  function currentInstallSignals(): InstallSignals {
+    const installNavigator = navigator as Navigator & {
+      standalone?: boolean;
+      userAgentData?: { mobile?: boolean };
+    };
+    return {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      maxTouchPoints: navigator.maxTouchPoints,
+      userAgentMobile: installNavigator.userAgentData?.mobile === true,
+      coarsePointer: window.matchMedia("(pointer: coarse)").matches,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      navigatorStandalone: installNavigator.standalone === true,
+      displayModeStandalone: window.matchMedia("(display-mode: standalone)")
+        .matches,
+    };
+  }
+
+  function clearInstallCoachTimer() {
+    if (installCoachTimer === null) return;
+    window.clearTimeout(installCoachTimer);
+    installCoachTimer = null;
+  }
+
+  function storeInstallCoachState(value: string) {
+    try {
+      localStorage.setItem(INSTALL_COACH_STORAGE_KEY, value);
+    } catch {
+      // Installation guidance remains useful for this visit without storage.
+    }
+  }
+
+  function scheduleInstallCoach() {
+    if (
+      !started ||
+      !installKind ||
+      installedDisplayMode ||
+      installCoachSuppressedForVisit ||
+      installCoachVisible ||
+      installCoachTimer !== null
+    ) {
+      return;
+    }
+    installCoachTimer = window.setTimeout(() => {
+      installCoachTimer = null;
+      if (
+        started &&
+        installKind &&
+        !installedDisplayMode &&
+        !installCoachSuppressedForVisit
+      ) {
+        installCoachVisible = true;
+      }
+    }, INSTALL_COACH_REVEAL_DELAY_MS);
+  }
+
+  function dismissInstallCoach() {
+    clearInstallCoachTimer();
+    installCoachVisible = false;
+    installCoachManual = false;
+    installCoachSuppressedForVisit = true;
+    storeInstallCoachState(installCoachSnoozeValue());
+  }
+
+  function markInstallComplete() {
+    clearInstallCoachTimer();
+    installPromptEvent = null;
+    installKind = null;
+    installCoachVisible = false;
+    installCoachManual = false;
+    installApplying = false;
+    installCoachSuppressedForVisit = true;
+    storeInstallCoachState(INSTALL_COACH_INSTALLED_VALUE);
+  }
+
+  async function activateInstallCoach() {
+    if (installKind === "apple" || installKind === "manual") {
+      dismissInstallCoach();
+      return;
+    }
+    const promptEvent = installPromptEvent;
+    if (!promptEvent || installApplying) return;
+    installPromptEvent = null;
+    installApplying = true;
+    try {
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
+      if (choice.outcome === "accepted") markInstallComplete();
+      else {
+        dismissInstallCoach();
+        installKind = null;
+      }
+    } catch (error) {
+      installKind = null;
+      installApplying = false;
+      installCoachVisible = false;
+      installCoachManual = false;
+      console.warn("Quantamari install prompt failed", error);
+      updateToast(
+        "The browser could not open its install prompt. Try its browser menu instead.",
+      );
+    }
+  }
+
+  function installFromMenu() {
+    closeMenu();
+    installCoachSuppressedForVisit = false;
+    installCoachManual = true;
+    if (installKind === "native") {
+      void activateInstallCoach();
+      return;
+    }
+    installCoachVisible = installKind === "apple" || installKind === "manual";
+  }
+
   function updateToast(message: string) {
     hideFact(true);
     toast = message;
@@ -221,7 +361,7 @@
     if (kind !== "pickup") return;
     if (
       !factVisible &&
-      (toastVisible || Date.now() < factCooldownUntil)
+      (toastVisible || installCoachVisible || Date.now() < factCooldownUntil)
     ) {
       return;
     }
@@ -333,6 +473,7 @@
     gameRef.current.running = true;
     started = true;
     hideToast();
+    scheduleInstallCoach();
     if (gameRef.current.sound) {
       resumeAudio();
     }
@@ -596,6 +737,54 @@
     window.addEventListener("storage", syncPerformanceProfile);
     return () =>
       window.removeEventListener("storage", syncPerformanceProfile);
+  });
+
+  onMount(() => {
+    const displayMode = window.matchMedia("(display-mode: standalone)");
+    const signals = currentInstallSignals();
+    installedDisplayMode = isStandaloneApp(signals);
+    try {
+      installCoachSuppressedForVisit = installCoachSuppressed(
+        localStorage.getItem(INSTALL_COACH_STORAGE_KEY),
+      );
+    } catch {
+      installCoachSuppressedForVisit = false;
+    }
+
+    if (!installedDisplayMode && isPhoneOrTablet(signals)) {
+      if (isAppleTouchDevice(signals)) {
+        installKind = "apple";
+        installAppleTablet = isAppleTablet(signals);
+      } else {
+        installKind = "manual";
+      }
+    }
+
+    const beforeInstall = (event: Event) => {
+      const nextSignals = currentInstallSignals();
+      if (isStandaloneApp(nextSignals) || !isPhoneOrTablet(nextSignals)) return;
+      event.preventDefault();
+      installPromptEvent = event as BeforeInstallPromptEvent;
+      installKind = "native";
+      installAppleTablet = false;
+      scheduleInstallCoach();
+    };
+    const appInstalled = () => markInstallComplete();
+    const displayModeChanged = () => {
+      installedDisplayMode = isStandaloneApp(currentInstallSignals());
+      if (installedDisplayMode) markInstallComplete();
+    };
+
+    window.addEventListener("beforeinstallprompt", beforeInstall);
+    window.addEventListener("appinstalled", appInstalled);
+    displayMode.addEventListener("change", displayModeChanged);
+    document.documentElement.dataset.quantamariInstallReady = "true";
+    return () => {
+      window.removeEventListener("beforeinstallprompt", beforeInstall);
+      window.removeEventListener("appinstalled", appInstalled);
+      displayMode.removeEventListener("change", displayModeChanged);
+      delete document.documentElement.dataset.quantamariInstallReady;
+    };
   });
 
   onMount(() => {
@@ -899,6 +1088,7 @@
   });
 
   onDestroy(() => {
+    clearInstallCoachTimer();
     hideToast();
     hideFact();
     closeAudio();
@@ -1060,6 +1250,18 @@
       ? ERAS[semanticFoundationIndex]
       : null,
   );
+  let installCoachShowing = $derived(
+    installCoachVisible &&
+      (started || installCoachManual) &&
+      !installedDisplayMode &&
+      !toastVisible &&
+      !factVisible &&
+      !updateReady &&
+      !updateApplying &&
+      !showMenu &&
+      !showGuide &&
+      !showAtlas,
+  );
 </script>
 
 <svelte:head>
@@ -1087,7 +1289,7 @@
     class:awaiting-start={!started}
     class:empty-origin={started && hud.era === 0}
     class:lab-active={labEra !== null}
-    class:has-bottom-notice={toastVisible || factVisible}
+    class:has-bottom-notice={toastVisible || factVisible || installCoachShowing}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
@@ -1173,6 +1375,15 @@
         </button>
       </aside>
     {/if}
+
+    <InstallCoach
+      visible={installCoachShowing}
+      kind={installKind}
+      appleTablet={installAppleTablet}
+      applying={installApplying}
+      onPrimary={() => void activateInstallCoach()}
+      onDismiss={dismissInstallCoach}
+    />
 
     {#if labEra !== null}
       <div class="lab-banner hud">
@@ -1429,6 +1640,8 @@
       {appVersion}
       {buildLabel}
       {updateReady}
+      installAvailable={!installedDisplayMode && installKind !== null}
+      installNative={installKind === "native"}
       {performanceProfile}
       onClose={closeMenu}
       onOpenGuide={openGuideFromMenu}
@@ -1437,6 +1650,7 @@
       onToggleBatteryOptimized={toggleBatteryOptimized}
       onReset={resetProgress}
       onApplyUpdate={applyUpdate}
+      onInstall={installFromMenu}
     />
 
     {#if showAtlas}
