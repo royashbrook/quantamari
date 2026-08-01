@@ -190,7 +190,10 @@ reference its GitHub issue using `#<number>`.
 
 `npm test` runs the fast Node gameplay/science/save suite. `npm run test:e2e`
 builds the production PWA, verifies the static artifact, and exercises it with
-Playwright. Browser artifacts are written under `tests/results/e2e` and ignored.
+Playwright. The long gameplay, install, and mobile matrix uses Vite's static
+preview; a separate short Wrangler pass verifies Cloudflare routing, headers,
+rescue, and offline recovery. Browser artifacts are written under
+`tests/results/e2e*` and ignored.
 `npm run test:all` is the release and CI contract.
 
 Important code:

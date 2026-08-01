@@ -1687,17 +1687,31 @@ test("reduced motion keeps backdrop depth styling without parallax", async ({
   expect(before?.runtime.backgroundDepth.midChildren).toBeGreaterThan(0);
   expect(before?.runtime.backgroundDepth.farChildren).toBeGreaterThan(0);
   const startZ = before?.runtime.player.z ?? 0;
-  await page.keyboard.down("ArrowUp");
-  try {
-    await expect
-      .poll(async () => {
-        const snapshot = await readPerformanceDiagnostics(page);
-        return Math.abs((snapshot?.runtime.player.z ?? startZ) - startZ);
-      })
-      .toBeGreaterThan(3);
-  } finally {
-    await page.keyboard.up("ArrowUp");
-  }
+  const moved = await page.evaluate(({ x, z }) => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          setPlayerPosition: (
+            nextX: number,
+            nextZ: number,
+          ) => { x: number; z: number };
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.setPlayerPosition(x, z - 4) ?? null;
+  }, before?.runtime.player ?? { x: 0, z: startZ });
+  expect(moved?.z).toBeCloseTo(startZ - 4, 5);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return Boolean(
+        snapshot &&
+          Math.abs(snapshot.runtime.player.z - (startZ - 4)) < 0.01 &&
+          snapshot.runtime.backgroundDepth.foundationRugOffsetY !==
+            before?.runtime.backgroundDepth.foundationRugOffsetY,
+      );
+    })
+    .toBe(true);
   const after = await readPerformanceDiagnostics(page);
   expect(after?.runtime.backgroundDepth.nearPitch).toBe(0);
   expect(after?.runtime.backgroundDepth.midPitch).toBe(0);
@@ -2719,6 +2733,7 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   page,
 }) => {
   test.setTimeout(90_000);
+  await page.clock.install();
   await enablePerformanceDiagnostics(page, "balanced");
   await seedAttachedFoam(page);
   await begin(page);
@@ -2782,7 +2797,10 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   } finally {
     await page.keyboard.up("w");
   }
-  const handoff = await page.evaluate(async () => {
+  await page.clock.pauseAt(
+    (await page.evaluate(() => Date.now())) + 10_000,
+  );
+  const handoff = await page.evaluate(() => {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
         completeLayer: () => boolean;
@@ -2793,59 +2811,41 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     const triggered = diagnostics?.completeLayer() ?? false;
     const start = diagnostics?.snapshot().runtime ?? null;
     const radius = start?.radius ?? 0;
-    return new Promise<{
-      triggered: boolean;
-      radius: number;
-      start: PerformanceSnapshot["runtime"] | null;
-      middle: PerformanceSnapshot["runtime"] | null;
-      late: PerformanceSnapshot["runtime"] | null;
-    }>((resolve, reject) => {
-      let sawTransition = false;
-      let middle: PerformanceSnapshot["runtime"] | null = null;
-      let late: PerformanceSnapshot["runtime"] | null = null;
-      const timeout = window.setTimeout(
-        () => reject(new Error("Scale handoff did not settle")),
-        10_000,
-      );
-      const sample = () => {
-        const runtime = diagnostics?.snapshot().runtime;
-        if (!runtime) {
-          window.clearTimeout(timeout);
-          reject(new Error("Performance diagnostics disappeared"));
-          return;
-        }
-        if (runtime.transitionActive) {
-          sawTransition = true;
-          if (!middle && runtime.worldScale < 0.5) middle = runtime;
-          if (!late && runtime.worldScale < 0.3) late = runtime;
-        } else if (sawTransition) {
-          window.clearTimeout(timeout);
-          resolve({ triggered, radius, start, middle, late });
-          return;
-        }
-        requestAnimationFrame(sample);
-      };
-      requestAnimationFrame(sample);
-    });
+    return { triggered, radius, start };
   });
   expect(handoff.triggered).toBe(true);
-  const middleHandoff = handoff.middle;
+  const startHandoff = handoff.start;
+  expect(startHandoff).not.toBeNull();
+  expect(startHandoff?.transitionActive).toBe(true);
+  expect(
+    startHandoff?.backgroundDepth.transitionOutgoingPickups,
+  ).toBeGreaterThan(0);
+  expect(
+    startHandoff?.backgroundDepth.transitionIncomingPickups,
+  ).toBeGreaterThan(0);
+
+  await page.clock.runFor(900);
+  const middleHandoff =
+    (await readPerformanceDiagnostics(page))?.runtime ?? null;
   expect(middleHandoff).not.toBeNull();
+  expect(middleHandoff?.transitionActive).toBe(true);
   expect(
     middleHandoff?.backgroundDepth.transitionOutgoingPickups,
   ).toBeGreaterThan(0);
   expect(
     middleHandoff?.backgroundDepth.transitionIncomingPickups,
   ).toBeGreaterThan(0);
-  expect(
-    middleHandoff?.backgroundDepth.transitionRugVisible,
-  ).toBe(true);
+  expect(middleHandoff?.backgroundDepth.transitionRugVisible).toBe(true);
   expect(middleHandoff?.backgroundDepth.transitionRugMode).toBe("plane");
   expect(
     middleHandoff?.backgroundDepth.transitionRugOpacity,
   ).toBeGreaterThan(0);
-  const lateHandoff = handoff.late;
+
+  await page.clock.runFor(600);
+  const lateHandoff =
+    (await readPerformanceDiagnostics(page))?.runtime ?? null;
   expect(lateHandoff).not.toBeNull();
+  expect(lateHandoff?.transitionActive).toBe(true);
   expect(
     lateHandoff?.backgroundDepth.transitionRugOpacity,
   ).toBeGreaterThan(0.12);
@@ -2855,8 +2855,6 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   expect(
     lateHandoff?.backgroundDepth.transitionIncomingScale,
   ).toBeLessThan((lateHandoff?.worldScale ?? 0) * 0.6);
-  const startHandoff = handoff.start;
-  expect(startHandoff).not.toBeNull();
   expect(
     lateHandoff?.backgroundDepth.transitionOutgoingMeanDistance ?? Infinity,
   ).toBeLessThan(
@@ -2879,6 +2877,8 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   ).toBeLessThan(
     startHandoff?.backgroundDepth.transitionIncomingMaxRenderedScaleY ?? 0,
   );
+  await page.clock.runFor(400);
+  await page.clock.resume();
   await expect
     .poll(
       async () => {
@@ -2943,6 +2943,7 @@ test("a planetary handoff folds the previous layer into the ground shell", async
   page,
 }) => {
   test.setTimeout(90_000);
+  await page.clock.install();
   await enablePerformanceDiagnostics(page, "balanced");
   await seedLearningEra(page, "moon-scale", 24);
   await begin(page);
@@ -2961,101 +2962,74 @@ test("a planetary handoff folds the previous layer into the ground shell", async
     }, { timeout: 30_000 })
     .toEqual({ era: 24, queued: 0, populated: true });
 
-  const handoff = await page.evaluate(async () => {
+  await page.clock.pauseAt(
+    (await page.evaluate(() => Date.now())) + 10_000,
+  );
+  const triggered = await page.evaluate(() => {
     const diagnostics = (
       window as typeof window & {
         __QUARKATAMARI_PERFORMANCE__?: {
           completeLayer: () => boolean;
-          snapshot: () => PerformanceSnapshot;
         };
       }
     ).__QUARKATAMARI_PERFORMANCE__;
-    const triggered = diagnostics?.completeLayer() ?? false;
-    return new Promise<{
-      triggered: boolean;
-      middle: PerformanceSnapshot["runtime"] | null;
-      late: PerformanceSnapshot["runtime"] | null;
-    }>((resolve, reject) => {
-      let sawTransition = false;
-      let middle: PerformanceSnapshot["runtime"] | null = null;
-      let late: PerformanceSnapshot["runtime"] | null = null;
-      const timeout = window.setTimeout(
-        () => reject(new Error("Planetary scale handoff did not settle")),
-        10_000,
-      );
-      const sample = () => {
-        const runtime = diagnostics?.snapshot().runtime;
-        if (!runtime) {
-          window.clearTimeout(timeout);
-          reject(new Error("Performance diagnostics disappeared"));
-          return;
-        }
-        if (runtime.transitionActive) {
-          sawTransition = true;
-          if (!middle && runtime.worldScale < 0.5) middle = runtime;
-          if (
-            !late &&
-            runtime.backgroundDepth.transitionRugOpacity > 0.62
-          ) {
-            late = runtime;
-          }
-        } else if (sawTransition) {
-          window.clearTimeout(timeout);
-          resolve({ triggered, middle, late });
-          return;
-        }
-        requestAnimationFrame(sample);
-      };
-      requestAnimationFrame(sample);
-    });
+    return diagnostics?.completeLayer() ?? false;
   });
+  await page.clock.runFor(1_200);
+  const middle = (await readPerformanceDiagnostics(page))?.runtime ?? null;
+  await page.clock.runFor(450);
+  const late = (await readPerformanceDiagnostics(page))?.runtime ?? null;
 
-  expect(handoff.triggered).toBe(true);
-  expect(handoff.middle?.backgroundDepth.transitionRugMode).toBe("shell");
-  expect(handoff.middle?.backgroundDepth.transitionRugVisible).toBe(true);
+  expect(triggered).toBe(true);
+  expect(middle?.transitionActive).toBe(true);
+  expect(middle?.backgroundDepth.transitionRugMode).toBe("shell");
+  expect(middle?.backgroundDepth.transitionRugVisible).toBe(true);
   expect(
-    handoff.middle?.backgroundDepth.transitionRugOpacity ?? 0,
+    middle?.backgroundDepth.transitionRugOpacity ?? 0,
   ).toBeGreaterThan(0);
-  expect(handoff.late?.backgroundDepth.transitionRugMode).toBe("shell");
+  expect(late?.transitionActive).toBe(true);
+  expect(late?.backgroundDepth.transitionRugMode).toBe("shell");
   expect(
-    handoff.late?.backgroundDepth.transitionRugOpacity ?? 0,
+    late?.backgroundDepth.transitionRugOpacity ?? 0,
   ).toBeGreaterThan(
-    handoff.middle?.backgroundDepth.transitionRugOpacity ?? Infinity,
+    middle?.backgroundDepth.transitionRugOpacity ?? Infinity,
   );
   expect(
-    handoff.late?.backgroundDepth.transitionOutgoingMeanDistance ?? Infinity,
+    late?.backgroundDepth.transitionOutgoingMeanDistance ?? Infinity,
   ).toBeLessThan(
-    handoff.middle?.backgroundDepth.transitionOutgoingMeanDistance ?? 0,
+    middle?.backgroundDepth.transitionOutgoingMeanDistance ?? 0,
   );
   expect(
-    handoff.late?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ??
+    late?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ??
       Infinity,
   ).toBeLessThan(
-    handoff.middle?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ?? 0,
+    middle?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ?? 0,
   );
   expect(
-    handoff.late?.backgroundDepth.transitionOutgoingMeanRenderedY ?? 0,
+    late?.backgroundDepth.transitionOutgoingMeanRenderedY ?? 0,
   ).toBeGreaterThan(0.8);
   expect(
-    handoff.late?.backgroundDepth
+    late?.backgroundDepth
       .transitionOutgoingMeanAbsoluteSurfaceClearance ?? Infinity,
   ).toBeLessThan(0.25);
   expect(
-    handoff.late?.backgroundDepth
+    late?.backgroundDepth
       .transitionOutgoingMaxAbsoluteSurfaceClearance ?? Infinity,
   ).toBeLessThan(0.5);
   expect(
-    handoff.late?.backgroundDepth.transitionOutgoingMinSurfaceClearance ??
+    late?.backgroundDepth.transitionOutgoingMinSurfaceClearance ??
       -Infinity,
   ).toBeGreaterThan(-0.3);
   expect(
-    handoff.late?.backgroundDepth
+    late?.backgroundDepth
       .transitionOutgoingMeanAbsoluteSurfaceClearance ?? Infinity,
   ).toBeLessThan(
-    handoff.middle?.backgroundDepth
+    middle?.backgroundDepth
       .transitionOutgoingMeanAbsoluteSurfaceClearance ?? 0,
   );
 
+  await page.clock.runFor(250);
+  await page.clock.resume();
   await expect
     .poll(async () => {
       const snapshot = await readPerformanceDiagnostics(page);
