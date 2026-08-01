@@ -27,12 +27,18 @@ server, API, database, authentication layer, or server-side game state.
   deterministic content-selection boundary shared by the runtime and those
   tests.
 - `src/service-worker.ts` uses SvelteKit's generated build manifest to precache
-  every shipped chunk. It deliberately avoids `skipWaiting` and
-  `clients.claim`, so an update cannot replace code beneath an open game.
-  Registration is explicit: an installed update waits while a persistent
-  top-of-game notice offers to save the current universe and activate it on
-  request; the menu keeps the same action as a fallback. The page also checks
-  for a fresh worker on focus, reconnection, visibility, and a quiet interval.
+  every shipped chunk. It avoids automatic `skipWaiting` and `clients.claim`,
+  so a different build cannot replace code beneath an open game. A waiting
+  worker reports its exact build through a message channel, cross-checked
+  against a bounded, network-only deployment-manifest request: one matching the
+  page already on screen activates silently, while a genuinely newer worker
+  waits behind a persistent save-and-update notice. Unidentified workers get a
+  bounded identity retry; unidentified or stale workers stay non-actionable
+  while the current registration replaces them. The menu keeps the
+  same action as a fallback, activation failures return to a retryable state,
+  and the next document build confirms the completed update once. The page
+  also checks for a fresh worker on focus, reconnection, visibility, and a
+  quiet interval.
   `static/sw.js` permanently retires the former worker path without deleting
   another project's caches.
 - `static/rescue.html` is generated as one inline IIFE with no runtime imports.

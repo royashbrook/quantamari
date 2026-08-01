@@ -152,6 +152,9 @@ test("cold installation caches every deployable code chunk", async () => {
   assert.match(serviceWorker, /quarkatamari-/);
   assert.match(serviceWorker, /caches\.open/);
   assert.match(serviceWorker, /request\.mode===`navigate`/);
+  assert.match(serviceWorker, /version\.json/);
+  assert.match(serviceWorker, /GET_BUILD_VERSION/);
+  assert.match(serviceWorker, /BUILD_VERSION/);
   assert.match(serviceWorker, /ACTIVATE_UPDATE/);
   assert.match(serviceWorker, /skipWaiting/);
   assert.doesNotMatch(serviceWorker, /\/quarkatamari\//);
@@ -159,27 +162,75 @@ test("cold installation caches every deployable code chunk", async () => {
 
   const listeners = new Map();
   let precache = [];
+  let skipWaitingCalled = false;
+  let cacheOpenCount = 0;
+  let cacheMatchCount = 0;
+  let cachePutCount = 0;
+  let networkFails = false;
   runInNewContext(serviceWorker, {
-    location: { pathname: "/service-worker.js" },
+    location: {
+      origin: "https://quantamari.test",
+      pathname: "/service-worker.js",
+    },
     addEventListener(type, listener) {
       listeners.set(type, listener);
     },
+    skipWaiting() {
+      skipWaitingCalled = true;
+    },
     caches: {
-      open: async () => ({
-        addAll: async (assets) => {
-          precache = [...assets];
-        },
-      }),
+      open: async () => {
+        cacheOpenCount += 1;
+        return {
+          addAll: async (assets) => {
+            precache = [...assets];
+          },
+          match: async () => {
+            cacheMatchCount += 1;
+            return new Response('{"version":"stale-cache"}');
+          },
+          put: async () => {
+            cachePutCount += 1;
+          },
+        };
+      },
       keys: async () => [],
       delete: async () => true,
     },
     AbortController,
+    Request,
     URL,
     Response,
-    fetch,
+    fetch: async () => {
+      if (networkFails) throw new Error("offline");
+      return new Response('{"version":"live-deployment"}', {
+        headers: { "content-type": "application/json" },
+      });
+    },
     setTimeout,
     clearTimeout,
   });
+  let reportedBuild;
+  listeners.get("message")({
+    data: { type: "GET_BUILD_VERSION" },
+    ports: [
+      {
+        postMessage(message) {
+          reportedBuild = message;
+        },
+      },
+    ],
+  });
+  const expectedBuild = JSON.parse(
+    await readFile(resolve(clientRoot, "_app/version.json"), "utf8"),
+  ).version;
+  assert.equal(reportedBuild?.type, "BUILD_VERSION");
+  assert.equal(reportedBuild?.version, expectedBuild);
+  listeners.get("message")({
+    data: { type: "ACTIVATE_UPDATE" },
+    ports: [],
+  });
+  assert.equal(skipWaitingCalled, true);
   let installPromise;
   listeners.get("install")({
     waitUntil(promise) {
@@ -190,6 +241,36 @@ test("cold installation caches every deployable code chunk", async () => {
   assert.ok(precache.includes("/rescue"));
   assert.ok(!precache.includes("/_headers"));
   assert.ok(!precache.includes("/rescue.html"));
+
+  const cacheOpensAfterInstall = cacheOpenCount;
+  const requestVersionManifest = async () => {
+    let responsePromise;
+    listeners.get("fetch")({
+      request: new Request(
+        "https://quantamari.test/_app/version.json",
+        { cache: "no-store" },
+      ),
+      respondWith(promise) {
+        responsePromise = promise;
+      },
+      waitUntil() {
+        throw new Error("version manifest must never schedule a cache write");
+      },
+    });
+    return responsePromise;
+  };
+  const liveManifest = await requestVersionManifest();
+  assert.equal((await liveManifest.json()).version, "live-deployment");
+  assert.equal(cacheOpenCount, cacheOpensAfterInstall);
+  assert.equal(cacheMatchCount, 0);
+  assert.equal(cachePutCount, 0);
+
+  networkFails = true;
+  const offlineManifest = await requestVersionManifest();
+  assert.equal(offlineManifest.type, "error");
+  assert.equal(cacheOpenCount, cacheOpensAfterInstall);
+  assert.equal(cacheMatchCount, 0);
+  assert.equal(cachePutCount, 0);
 
   const codeAssets = (await filesBelow(clientRoot))
     .filter((path) => /\.(?:css|js)$/.test(path))

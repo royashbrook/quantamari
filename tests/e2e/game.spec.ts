@@ -3107,6 +3107,198 @@ test("a cold install can boot the lazy Three.js world offline", async ({
   }
 });
 
+test("a waiting worker for the page's current build activates silently", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page);
+  await page.goto(appPath);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "__QUARKATAMARI_UPDATE_DEBUG__" in
+          (window as typeof window & {
+            __QUARKATAMARI_UPDATE_DEBUG__?: unknown;
+          }),
+      ),
+    )
+    .toBe(true);
+
+  await page.evaluate(async () => {
+    const updateWindow = window as typeof window & {
+      __QUARKATAMARI_UPDATE_DEBUG__?: {
+        buildVersion: string;
+        considerWaitingWorker: (worker: ServiceWorker) => Promise<void>;
+      };
+      __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
+    };
+    const debug = updateWindow.__QUARKATAMARI_UPDATE_DEBUG__;
+    if (!debug) throw new Error("Update diagnostics did not initialize");
+    const fakeWorker = {
+      state: "installed",
+      scriptURL: `${location.origin}/service-worker.js?build=${encodeURIComponent(debug.buildVersion)}`,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      postMessage: (message: { type?: string }, transfer?: Transferable[]) => {
+        if (message.type === "GET_BUILD_VERSION") {
+          (transfer?.[0] as MessagePort | undefined)?.postMessage({
+            type: "BUILD_VERSION",
+            version: debug.buildVersion,
+          });
+          return;
+        }
+        updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__ ??= [];
+        updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__.push(message);
+      },
+    } as unknown as ServiceWorker;
+    await debug.considerWaitingWorker(fakeWorker);
+  });
+
+  await expect(page.getByRole("status", { name: "Update ready" })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
+            }
+          ).__QUARKATAMARI_UPDATE_MESSAGES__,
+      ),
+    )
+    .toEqual([{ type: "ACTIVATE_UPDATE" }]);
+});
+
+test("an initially unidentified current worker retries without a false action", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page);
+  await page.goto(appPath);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "__QUARKATAMARI_UPDATE_DEBUG__" in
+          (window as typeof window & {
+            __QUARKATAMARI_UPDATE_DEBUG__?: unknown;
+          }),
+      ),
+    )
+    .toBe(true);
+
+  await page.evaluate(async () => {
+    const updateWindow = window as typeof window & {
+      __QUARKATAMARI_UPDATE_DEBUG__?: {
+        buildVersion: string;
+        considerWaitingWorker: (worker: ServiceWorker) => Promise<void>;
+      };
+      __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
+    };
+    const debug = updateWindow.__QUARKATAMARI_UPDATE_DEBUG__;
+    if (!debug) throw new Error("Update diagnostics did not initialize");
+    let versionRequests = 0;
+    await debug.considerWaitingWorker({
+      state: "installed",
+      scriptURL: `${location.origin}/service-worker.js`,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      postMessage: (
+        message: { type?: string },
+        transfer?: Transferable[],
+      ) => {
+        if (message.type === "GET_BUILD_VERSION") {
+          versionRequests += 1;
+          if (versionRequests < 2) return;
+          (transfer?.[0] as MessagePort | undefined)?.postMessage({
+            type: "BUILD_VERSION",
+            version: debug.buildVersion,
+          });
+          return;
+        }
+        updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__ ??= [];
+        updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__.push(message);
+      },
+    } as unknown as ServiceWorker);
+  });
+
+  await expect(page.getByRole("status", { name: "Update ready" })).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
+            }
+          ).__QUARKATAMARI_UPDATE_MESSAGES__,
+      ),
+    )
+    .toEqual([{ type: "ACTIVATE_UPDATE" }]);
+});
+
+test("a stale waiting worker cannot be offered as a downgrade", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page);
+  await page.goto(appPath);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "__QUARKATAMARI_UPDATE_DEBUG__" in
+          (window as typeof window & {
+            __QUARKATAMARI_UPDATE_DEBUG__?: unknown;
+          }),
+      ),
+    )
+    .toBe(true);
+  await page.route("**/_app/version.json", async (route) => {
+    await route.fulfill({ json: { version: "deployed-test-build" } });
+  });
+
+  await page.evaluate(async () => {
+    const debug = (
+      window as typeof window & {
+        __QUARKATAMARI_UPDATE_DEBUG__?: {
+          considerWaitingWorker: (worker: ServiceWorker) => Promise<void>;
+        };
+      }
+    ).__QUARKATAMARI_UPDATE_DEBUG__;
+    if (!debug) throw new Error("Update diagnostics did not initialize");
+    await debug.considerWaitingWorker({
+      state: "installed",
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      postMessage: (
+        message: { type?: string },
+        transfer?: Transferable[],
+      ) => {
+        if (message.type !== "GET_BUILD_VERSION") return;
+        (transfer?.[0] as MessagePort | undefined)?.postMessage({
+          type: "BUILD_VERSION",
+          version: "stale-test-build",
+        });
+      },
+    } as unknown as ServiceWorker);
+  });
+
+  await expect(page.getByRole("status", { name: "Update ready" })).toHaveCount(0);
+});
+
+test("a newly loaded build confirms the update only once", async ({ page }) => {
+  await page.goto(appPath);
+  await page.evaluate(() => {
+    localStorage.setItem("quantamari-last-seen-build", "older-test-build");
+  });
+  await page.reload();
+  await expect(page.locator(".toast")).toContainText(
+    `Quantamari updated to v${appVersion}.`,
+  );
+
+  await page.reload();
+  await expect(page.locator(".toast")).toHaveCount(0);
+});
+
 test("a waiting update stays visible outside the menu until activated", async ({
   page,
 }) => {
@@ -3124,22 +3316,39 @@ test("a waiting update stays visible outside the menu until activated", async ({
     )
     .toBe(true);
 
-  await page.evaluate(() => {
+  await page.route("**/_app/version.json", async (route) => {
+    await route.fulfill({ json: { version: "future-test-build" } });
+  });
+
+  await page.evaluate(async () => {
     const updateWindow = window as typeof window & {
       __QUARKATAMARI_UPDATE_DEBUG__?: {
-        showUpdateReady: (worker: ServiceWorker) => void;
+        considerWaitingWorker: (worker: ServiceWorker) => Promise<void>;
       };
       __QUARKATAMARI_UPDATE_MESSAGES__?: unknown[];
     };
+    const debug = updateWindow.__QUARKATAMARI_UPDATE_DEBUG__;
+    if (!debug) throw new Error("Update diagnostics did not initialize");
     const fakeWorker = {
       state: "installed",
       addEventListener: () => undefined,
-      postMessage: (message: unknown) => {
+      removeEventListener: () => undefined,
+      postMessage: (
+        message: { type?: string },
+        transfer?: Transferable[],
+      ) => {
+        if (message.type === "GET_BUILD_VERSION") {
+          (transfer?.[0] as MessagePort | undefined)?.postMessage({
+            type: "BUILD_VERSION",
+            version: "future-test-build",
+          });
+          return;
+        }
         updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__ ??= [];
         updateWindow.__QUARKATAMARI_UPDATE_MESSAGES__.push(message);
       },
     } as unknown as ServiceWorker;
-    updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady(fakeWorker);
+    await debug.considerWaitingWorker(fakeWorker);
   });
 
   const banner = page.getByRole("status", { name: "Update ready" });
@@ -3171,4 +3380,112 @@ test("a waiting update stays visible outside the menu until activated", async ({
       ),
     )
     .toEqual([{ type: "ACTIVATE_UPDATE" }]);
+});
+
+test("a failed update activation returns to a usable retry action", async ({
+  page,
+}) => {
+  await enablePerformanceDiagnostics(page);
+  await page.goto(appPath);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "__QUARKATAMARI_UPDATE_DEBUG__" in
+          (window as typeof window & {
+            __QUARKATAMARI_UPDATE_DEBUG__?: unknown;
+          }),
+      ),
+    )
+    .toBe(true);
+
+  await page.evaluate(() => {
+    const updateWindow = window as typeof window & {
+      __QUARKATAMARI_UPDATE_DEBUG__?: {
+        showUpdateReady: (worker: ServiceWorker) => void;
+      };
+    };
+    updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady({
+      state: "installed",
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      postMessage: () => {
+        throw new Error("synthetic activation failure");
+      },
+    } as unknown as ServiceWorker);
+  });
+
+  const banner = page.getByRole("status", { name: "Update ready" });
+  await banner.getByRole("button", { name: "Update now" }).click();
+  await expect(banner).toContainText("Update ready");
+  await expect(banner.getByRole("button", { name: "Update now" })).toBeEnabled();
+  await expect(page.locator(".toast")).toContainText(
+    "The update could not start. Try Update now again.",
+  );
+});
+
+test("a requested update still reloads when activation finishes late", async ({
+  page,
+}) => {
+  test.setTimeout(30_000);
+  await enablePerformanceDiagnostics(page);
+  await page.goto(appPath);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          "__QUARKATAMARI_UPDATE_DEBUG__" in
+          (window as typeof window & {
+            __QUARKATAMARI_UPDATE_DEBUG__?: unknown;
+          }),
+      ),
+    )
+    .toBe(true);
+
+  await page.evaluate(() => {
+    const updateWindow = window as typeof window & {
+      __QUARKATAMARI_UPDATE_DEBUG__?: {
+        showUpdateReady: (worker: ServiceWorker) => void;
+      };
+    };
+    let state: ServiceWorkerState = "installed";
+    const listeners = new Set<EventListener>();
+    updateWindow.__QUARKATAMARI_UPDATE_DEBUG__?.showUpdateReady({
+      get state() {
+        return state;
+      },
+      addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => {
+        if (typeof listener === "function") listeners.add(listener);
+      },
+      removeEventListener: (
+        _type: string,
+        listener: EventListenerOrEventListenerObject,
+      ) => {
+        if (typeof listener === "function") listeners.delete(listener);
+      },
+      postMessage: (message: { type?: string }) => {
+        if (message.type !== "ACTIVATE_UPDATE") return;
+        window.setTimeout(() => {
+          state = "activated";
+          localStorage.setItem("quantamari-late-update-test", "activated");
+          const event = new Event("statechange");
+          for (const listener of listeners) listener(event);
+        }, 8_500);
+      },
+    } as unknown as ServiceWorker);
+  });
+
+  const reloaded = page.waitForEvent("load", { timeout: 15_000 });
+  await page
+    .getByRole("status", { name: "Update ready" })
+    .getByRole("button", { name: "Update now" })
+    .click();
+  await reloaded;
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("quantamari-late-update-test"),
+      ),
+    )
+    .toBe("activated");
 });

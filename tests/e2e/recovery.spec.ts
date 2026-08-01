@@ -100,7 +100,7 @@ test("the root worker controls the app and keeps game plus rescue offline", asyn
     .poll(() =>
       page.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? ""),
     )
-    .toMatch(/\/service-worker\.js$/);
+    .toMatch(/\/service-worker\.js\?build=.+$/);
 
   await context.setOffline(true);
   try {

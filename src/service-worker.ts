@@ -9,6 +9,7 @@ const CACHE_NAMESPACE = "quarkatamari-";
 const CACHE = `${CACHE_NAMESPACE}v2-${version}`;
 const APP_SHELL = `${base}/`;
 const RESCUE_ROUTE = `${base}/rescue`;
+const VERSION_MANIFEST = `${base}/_app/version.json`;
 const STATIC_FILES = files.filter((path) => {
   const fileName = path.slice(path.lastIndexOf("/") + 1);
   return !fileName.startsWith("_") && !fileName.endsWith(".html");
@@ -30,6 +31,10 @@ worker.addEventListener("install", (event) => {
 });
 
 worker.addEventListener("message", (event) => {
+  if (event.data?.type === "GET_BUILD_VERSION") {
+    event.ports[0]?.postMessage({ type: "BUILD_VERSION", version });
+    return;
+  }
   if (event.data?.type === "ACTIVATE_UPDATE") {
     void worker.skipWaiting();
   }
@@ -64,6 +69,17 @@ worker.addEventListener("fetch", (event) => {
 
   const url = new URL(event.request.url);
   if (url.origin !== worker.location.origin) return;
+
+  // Update identity must describe the live deployment, never an old cache.
+  // A failed request is intentionally "unknown" to the page state machine.
+  if (url.pathname === VERSION_MANIFEST) {
+    event.respondWith(
+      fetchWithTimeout(event.request, NAVIGATION_TIMEOUT_MS).catch(() =>
+        Response.error(),
+      ),
+    );
+    return;
+  }
 
   // Cache writes happen after the response is returned so they never sit on
   // the critical path of a page load.
