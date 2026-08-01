@@ -75,11 +75,46 @@ type PerformanceSnapshot = {
       foundationNearestRate: number;
       foundationNearestYaw: number;
       foundationNearestPitch: number;
+      foundationNearestRoll: number;
       foundationNearestChildren: number;
+      foundationNearestGrounded: boolean;
+      foundationNearestPlacement: string;
+      foundationNearestVerticalScale: number;
+      foundationNearestChunkSize: number;
+      foundationNearestLocalRadius: number;
+      foundationNearestMinY: number;
+      foundationNearestMaxY: number;
+      foundationNearestSampleX: number;
+      foundationNearestSampleZ: number;
+      foundationNearestUnderfootInstances: number;
+      foundationNearestAnchorX: number;
+      foundationNearestAnchorZ: number;
       foundationCompressedRate: number;
       foundationCompressedYaw: number;
       foundationCompressedPitch: number;
       foundationCompressedChildren: number;
+      foundationCompressedGrounded: boolean;
+      foundationCompressedPlacement: string;
+      foundationRugVisible: boolean;
+      foundationOverlayVisible: boolean;
+      foundationRugOffsetX: number;
+      foundationRugOffsetY: number;
+      transitionRugVisible: boolean;
+      transitionRugMode: "none" | "plane" | "shell";
+      transitionRugOpacity: number;
+      transitionHandoffFlatten: number;
+      transitionOutgoingPickups: number;
+      transitionIncomingPickups: number;
+      transitionOutgoingMeanDistance: number;
+      transitionOutgoingMeanBaseY: number;
+      transitionOutgoingMeanSurfaceClearance: number;
+      transitionOutgoingMeanRenderedY: number;
+      transitionOutgoingMeanAbsoluteSurfaceClearance: number;
+      transitionOutgoingMaxAbsoluteSurfaceClearance: number;
+      transitionOutgoingMinSurfaceClearance: number;
+      transitionOutgoingMeanRenderedScaleY: number;
+      transitionIncomingMaxRenderedScaleY: number;
+      transitionIncomingScale: number;
     };
     pickups: {
       active: number;
@@ -93,6 +128,7 @@ type PerformanceSnapshot = {
       maxSpawnedPerFrame: number;
       maxPerFrame: number;
       workBudgetMs: number;
+      deferredDisposals: number;
     };
     representations: {
       richPickups: number;
@@ -280,6 +316,29 @@ async function seedAttachedFoam(page: Page) {
       }),
     );
   });
+}
+
+async function seedLearningEra(page: Page, eraId: string, zooms: number) {
+  await page.addInitScript(({ savedEraId, savedZooms }) => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: savedEraId,
+        progress: 0,
+        picked: 0,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: savedZooms,
+        cycles: 0,
+        sound: false,
+        mash: [],
+        collection: [],
+      }),
+    );
+  }, { savedEraId: eraId, savedZooms: zooms });
 }
 
 async function seedDenseDistinctMash(page: Page, count = 90) {
@@ -1217,7 +1276,100 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
   expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(520);
 });
 
-test("volumetric background bands move at distinct depths while rolling", async ({
+test("every world presentation puts N-1 on its playable surface", async ({
+  page,
+}) => {
+  test.setTimeout(70_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await begin(page);
+  const cases = [
+    {
+      era: 2,
+      presentation: "field",
+      overlay: true,
+      maxRadius: 28,
+      minY: -1,
+      maxY: 1,
+    },
+    {
+      era: 13,
+      presentation: "surface",
+      overlay: true,
+      maxRadius: 96,
+      minY: -1,
+      maxY: 1,
+    },
+    {
+      era: 25,
+      presentation: "shell",
+      overlay: false,
+      maxRadius: 52,
+      minY: -22,
+      maxY: 1.5,
+    },
+    {
+      era: 31,
+      presentation: "distant-field",
+      overlay: true,
+      maxRadius: 28,
+      minY: -1,
+      maxY: 1,
+    },
+  ] as const;
+
+  for (const expected of cases) {
+    const selected = await page.evaluate((eraIndex) => {
+      const debugWindow = window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          previewEra: (index: number) => number;
+        };
+      };
+      return debugWindow.__QUARKATAMARI_PERFORMANCE__?.previewEra(eraIndex);
+    }, expected.era);
+    expect(selected).toBe(expected.era);
+    await expect
+      .poll(async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              era: snapshot.runtime.era,
+              queued: snapshot.runtime.pickups.queued,
+              populated:
+                snapshot.runtime.pickups.current ===
+                snapshot.runtime.pickups.target,
+            }
+          : null;
+      }, { timeout: 30_000 })
+      .toEqual({ era: expected.era, queued: 0, populated: true });
+    const snapshot = await readPerformanceDiagnostics(page);
+    const depth = snapshot?.runtime.backgroundDepth;
+    expect(snapshot?.runtime.world.foundationPresentation).toBe(
+      expected.presentation,
+    );
+    expect(depth?.foundationNearestGrounded).toBe(true);
+    expect(depth?.foundationNearestRate).toBe(0);
+    expect(depth?.foundationRugVisible).toBe(true);
+    expect(depth?.foundationOverlayVisible).toBe(expected.overlay);
+    expect(depth?.foundationNearestLocalRadius).toBeLessThanOrEqual(
+      expected.maxRadius,
+    );
+    expect(depth?.foundationNearestMinY).toBeGreaterThan(expected.minY);
+    expect(depth?.foundationNearestMaxY).toBeLessThan(expected.maxY);
+    if (expected.presentation === "shell") {
+      expect(
+        depth?.foundationNearestUnderfootInstances ?? 0,
+      ).toBeGreaterThanOrEqual(8);
+    }
+    expect(snapshot?.runtime.drawCalls).toBeLessThanOrEqual(
+      snapshot?.runtime.budget.maxDrawCalls ?? 0,
+    );
+    expect(snapshot?.runtime.triangles).toBeLessThanOrEqual(
+      snapshot?.runtime.budget.maxTriangles ?? 0,
+    );
+  }
+});
+
+test("backdrop bands move while the nearest history stays underfoot", async ({
   page,
 }) => {
   test.setTimeout(70_000);
@@ -1251,6 +1403,10 @@ test("volumetric background bands move at distinct depths while rolling", async 
   expect(before?.runtime.backgroundDepth.nearChildren).toBeGreaterThan(0);
   expect(before?.runtime.backgroundDepth.midChildren).toBeGreaterThan(0);
   expect(before?.runtime.backgroundDepth.farChildren).toBeGreaterThan(0);
+  expect(before?.runtime.backgroundDepth.foundationNearestGrounded).toBe(
+    true,
+  );
+  expect(before?.runtime.backgroundDepth.foundationRugVisible).toBe(true);
   expect(
     before?.runtime.backgroundDepth.foundationNearestChildren,
   ).toBeGreaterThan(0);
@@ -1263,12 +1419,26 @@ test("volumetric background bands move at distinct depths while rolling", async 
   expect(before?.runtime.backgroundDepth.midRate).toBeGreaterThan(
     before?.runtime.backgroundDepth.farRate ?? Number.POSITIVE_INFINITY,
   );
-  expect(
-    before?.runtime.backgroundDepth.foundationNearestRate,
-  ).toBeGreaterThan(
-    before?.runtime.backgroundDepth.foundationCompressedRate ??
-      Number.POSITIVE_INFINITY,
+  expect(before?.runtime.backgroundDepth.foundationNearestRate).toBe(0);
+  expect(before?.runtime.backgroundDepth.foundationNearestGrounded).toBe(
+    true,
   );
+  expect(before?.runtime.backgroundDepth.foundationNearestPlacement).toBe(
+    "surface",
+  );
+  expect(
+    before?.runtime.backgroundDepth.foundationNearestVerticalScale,
+  ).toBeLessThan(0.25);
+  expect(
+    before?.runtime.backgroundDepth.foundationNearestLocalRadius,
+  ).toBeLessThanOrEqual(28);
+  expect(
+    before?.runtime.backgroundDepth.foundationNearestMaxY,
+  ).toBeLessThan(1);
+  expect(before?.runtime.backgroundDepth.foundationRugVisible).toBe(true);
+  expect(
+    before?.runtime.backgroundDepth.foundationCompressedRate,
+  ).toBeGreaterThan(0);
 
   const startZ = before?.runtime.player.z ?? 0;
   await page.keyboard.down("ArrowUp");
@@ -1315,10 +1485,14 @@ test("volumetric background bands move at distinct depths while rolling", async 
   expect(nearTravel).toBeLessThan(0.05);
   expect(midTravel).toBeLessThan(0.03);
   expect(farTravel).toBeLessThan(0.015);
-  expect(foundationNearestTravel).toBeGreaterThan(
-    foundationCompressedTravel,
-  );
+  expect(foundationNearestTravel).toBe(0);
   expect(foundationCompressedTravel).toBeGreaterThan(0);
+  expect(after?.runtime.backgroundDepth.foundationNearestAnchorZ).toBe(
+    before?.runtime.backgroundDepth.foundationNearestAnchorZ,
+  );
+  expect(after?.runtime.backgroundDepth.foundationRugOffsetY).not.toBe(
+    before?.runtime.backgroundDepth.foundationRugOffsetY,
+  );
   expect(after?.runtime.worldGeneration).toBe(before?.runtime.worldGeneration);
   expect(after?.runtime.drawCalls).toBeLessThanOrEqual(
     after?.runtime.budget.maxDrawCalls ?? 0,
@@ -1450,6 +1624,12 @@ test("reduced motion keeps backdrop depth styling without parallax", async ({
   expect(after?.runtime.backgroundDepth.farPitch).toBe(0);
   expect(after?.runtime.backgroundDepth.foundationNearestPitch).toBe(0);
   expect(after?.runtime.backgroundDepth.foundationCompressedPitch).toBe(0);
+  expect(after?.runtime.backgroundDepth.foundationNearestAnchorZ).toBe(
+    before?.runtime.backgroundDepth.foundationNearestAnchorZ,
+  );
+  expect(after?.runtime.backgroundDepth.foundationRugOffsetY).not.toBe(
+    before?.runtime.backgroundDepth.foundationRugOffsetY,
+  );
 });
 
 test("mobile battery mode enforces its measured draw-call budget", async ({
@@ -1979,6 +2159,14 @@ test("long game crosses a layer without a skip animation or size pop", async ({
       initialAttachmentDistance,
   ).toBeCloseTo(expectedRebase, 5);
   expect(crossed?.runtime.representations.attachments).toBe(1);
+  expect(crossed?.runtime.pickups.resident).toBe(0);
+  expect(crossed?.runtime.world.foundationNearest).toBe(
+    "theory-playground",
+  );
+  expect(crossed?.runtime.backgroundDepth.foundationNearestGrounded).toBe(
+    true,
+  );
+  expect(crossed?.runtime.backgroundDepth.foundationRugVisible).toBe(true);
   await expect
     .poll(
       async () => {
@@ -1996,6 +2184,14 @@ test("long game crosses a layer without a skip animation or size pop", async ({
       { timeout: 15_000 },
     )
     .toEqual({ extended: true, proxy: false });
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups
+          .deferredDisposals,
+      { timeout: 10_000 },
+    )
+    .toBe(0);
   await expect
     .poll(
       async () => {
@@ -2206,7 +2402,7 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   } finally {
     await page.keyboard.up("w");
   }
-  const transitionStart = await page.evaluate(() => {
+  const handoff = await page.evaluate(async () => {
     const debugWindow = window as typeof window & {
       __QUARKATAMARI_PERFORMANCE__?: {
         completeLayer: () => boolean;
@@ -2214,19 +2410,91 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
       };
     };
     const diagnostics = debugWindow.__QUARKATAMARI_PERFORMANCE__;
-    return {
-      triggered: diagnostics?.completeLayer() ?? false,
-      radius: diagnostics?.snapshot().runtime.radius ?? 0,
-    };
+    const triggered = diagnostics?.completeLayer() ?? false;
+    const radius = diagnostics?.snapshot().runtime.radius ?? 0;
+    return new Promise<{
+      triggered: boolean;
+      radius: number;
+      middle: PerformanceSnapshot["runtime"] | null;
+      late: PerformanceSnapshot["runtime"] | null;
+    }>((resolve, reject) => {
+      let sawTransition = false;
+      let middle: PerformanceSnapshot["runtime"] | null = null;
+      let late: PerformanceSnapshot["runtime"] | null = null;
+      const timeout = window.setTimeout(
+        () => reject(new Error("Scale handoff did not settle")),
+        10_000,
+      );
+      const sample = () => {
+        const runtime = diagnostics?.snapshot().runtime;
+        if (!runtime) {
+          window.clearTimeout(timeout);
+          reject(new Error("Performance diagnostics disappeared"));
+          return;
+        }
+        if (runtime.transitionActive) {
+          sawTransition = true;
+          if (!middle && runtime.worldScale < 0.5) middle = runtime;
+          if (!late && runtime.worldScale < 0.3) late = runtime;
+        } else if (sawTransition) {
+          window.clearTimeout(timeout);
+          resolve({ triggered, radius, middle, late });
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
   });
-  expect(transitionStart.triggered).toBe(true);
-  await expect
-    .poll(
-      async () =>
-        (await readPerformanceDiagnostics(page))?.runtime.transitionActive,
-      { timeout: 30_000 },
-    )
-    .toBe(true);
+  expect(handoff.triggered).toBe(true);
+  const middleHandoff = handoff.middle;
+  expect(middleHandoff).not.toBeNull();
+  expect(
+    middleHandoff?.backgroundDepth.transitionOutgoingPickups,
+  ).toBeGreaterThan(0);
+  expect(
+    middleHandoff?.backgroundDepth.transitionIncomingPickups,
+  ).toBeGreaterThan(0);
+  expect(
+    middleHandoff?.backgroundDepth.transitionRugVisible,
+  ).toBe(true);
+  expect(middleHandoff?.backgroundDepth.transitionRugMode).toBe("plane");
+  expect(
+    middleHandoff?.backgroundDepth.transitionRugOpacity,
+  ).toBeGreaterThan(0);
+  const lateHandoff = handoff.late;
+  expect(lateHandoff).not.toBeNull();
+  expect(
+    lateHandoff?.backgroundDepth.transitionRugOpacity,
+  ).toBeGreaterThan(0.12);
+  expect(
+    lateHandoff?.backgroundDepth.transitionHandoffFlatten,
+  ).toBeLessThan(0.5);
+  expect(
+    lateHandoff?.backgroundDepth.transitionIncomingScale,
+  ).toBeLessThan((lateHandoff?.worldScale ?? 0) * 0.6);
+  expect(
+    lateHandoff?.backgroundDepth.transitionOutgoingMeanDistance ?? Infinity,
+  ).toBeLessThan(
+    middleHandoff?.backgroundDepth.transitionOutgoingMeanDistance ?? 0,
+  );
+  expect(
+    lateHandoff?.backgroundDepth.transitionOutgoingMeanBaseY ?? Infinity,
+  ).toBeLessThan(
+    middleHandoff?.backgroundDepth.transitionOutgoingMeanBaseY ?? 0,
+  );
+  expect(
+    lateHandoff?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ??
+      Infinity,
+  ).toBeLessThan(
+    middleHandoff?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ?? 0,
+  );
+  expect(
+    lateHandoff?.backgroundDepth.transitionIncomingMaxRenderedScaleY ??
+      Infinity,
+  ).toBeLessThan(
+    middleHandoff?.backgroundDepth.transitionIncomingMaxRenderedScaleY ?? 0,
+  );
   await expect
     .poll(
       async () => {
@@ -2257,15 +2525,24 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     (before?.runtime.worldGeneration ?? 0) + 1,
   );
   expect(after?.runtime.pickups.current).toBe(after?.runtime.pickups.target);
-  expect(after?.runtime.pickups.resident).toBeGreaterThan(0);
-  expect(after?.runtime.pickups.active).toBeGreaterThan(
-    after?.runtime.pickups.target ?? 0,
+  expect(after?.runtime.pickups.resident).toBe(0);
+  expect(after?.runtime.pickups.deferredDisposals).toBe(0);
+  expect(after?.runtime.pickups.active).toBe(
+    after?.runtime.pickups.target,
   );
   expect(after?.runtime.pickups.maxSpawnedPerFrame).toBeLessThanOrEqual(
     after?.runtime.pickups.maxPerFrame ?? 0,
   );
   expect(after?.runtime.world.environmentChildren).toBeGreaterThan(0);
   expect(after?.runtime.world.substrateChildren).toBeGreaterThan(0);
+  expect(after?.runtime.world.foundationLayers).toEqual([0]);
+  expect(after?.runtime.world.foundationNearest).toBe("theory-playground");
+  expect(after?.runtime.world.foundationCompressed).toEqual([]);
+  expect(after?.runtime.backgroundDepth.foundationNearestGrounded).toBe(true);
+  expect(after?.runtime.backgroundDepth.foundationNearestPlacement).toBe(
+    "surface",
+  );
+  expect(after?.runtime.backgroundDepth.foundationRugVisible).toBe(true);
   expect(after?.runtime.world.dustVisible).toBe(true);
   expect(after?.runtime.playerScale).toBeCloseTo(1, 5);
   expect(after?.runtime.worldScale).toBeCloseTo(1, 5);
@@ -2273,9 +2550,165 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
     (after?.runtime.representations.attachmentScale ?? 0) /
       initialAttachmentScale,
   ).toBeCloseTo(
-    (after?.runtime.radius ?? 0) / transitionStart.radius,
+    (after?.runtime.radius ?? 0) / handoff.radius,
     5,
   );
+});
+
+test("a planetary handoff folds the previous layer into the ground shell", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLearningEra(page, "moon-scale", 24);
+  await begin(page);
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            queued: snapshot.runtime.pickups.queued,
+            populated:
+              snapshot.runtime.pickups.current ===
+              snapshot.runtime.pickups.target,
+          }
+        : null;
+    }, { timeout: 30_000 })
+    .toEqual({ era: 24, queued: 0, populated: true });
+
+  const handoff = await page.evaluate(async () => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          completeLayer: () => boolean;
+          snapshot: () => PerformanceSnapshot;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    const triggered = diagnostics?.completeLayer() ?? false;
+    return new Promise<{
+      triggered: boolean;
+      middle: PerformanceSnapshot["runtime"] | null;
+      late: PerformanceSnapshot["runtime"] | null;
+    }>((resolve, reject) => {
+      let sawTransition = false;
+      let middle: PerformanceSnapshot["runtime"] | null = null;
+      let late: PerformanceSnapshot["runtime"] | null = null;
+      const timeout = window.setTimeout(
+        () => reject(new Error("Planetary scale handoff did not settle")),
+        10_000,
+      );
+      const sample = () => {
+        const runtime = diagnostics?.snapshot().runtime;
+        if (!runtime) {
+          window.clearTimeout(timeout);
+          reject(new Error("Performance diagnostics disappeared"));
+          return;
+        }
+        if (runtime.transitionActive) {
+          sawTransition = true;
+          if (!middle && runtime.worldScale < 0.5) middle = runtime;
+          if (
+            !late &&
+            runtime.backgroundDepth.transitionRugOpacity > 0.62
+          ) {
+            late = runtime;
+          }
+        } else if (sawTransition) {
+          window.clearTimeout(timeout);
+          resolve({ triggered, middle, late });
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+  });
+
+  expect(handoff.triggered).toBe(true);
+  expect(handoff.middle?.backgroundDepth.transitionRugMode).toBe("shell");
+  expect(handoff.middle?.backgroundDepth.transitionRugVisible).toBe(true);
+  expect(
+    handoff.middle?.backgroundDepth.transitionRugOpacity ?? 0,
+  ).toBeGreaterThan(0);
+  expect(handoff.late?.backgroundDepth.transitionRugMode).toBe("shell");
+  expect(
+    handoff.late?.backgroundDepth.transitionRugOpacity ?? 0,
+  ).toBeGreaterThan(
+    handoff.middle?.backgroundDepth.transitionRugOpacity ?? Infinity,
+  );
+  expect(
+    handoff.late?.backgroundDepth.transitionOutgoingMeanDistance ?? Infinity,
+  ).toBeLessThan(
+    handoff.middle?.backgroundDepth.transitionOutgoingMeanDistance ?? 0,
+  );
+  expect(
+    handoff.late?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ??
+      Infinity,
+  ).toBeLessThan(
+    handoff.middle?.backgroundDepth.transitionOutgoingMeanRenderedScaleY ?? 0,
+  );
+  expect(
+    handoff.late?.backgroundDepth.transitionOutgoingMeanRenderedY ?? 0,
+  ).toBeGreaterThan(0.8);
+  expect(
+    handoff.late?.backgroundDepth
+      .transitionOutgoingMeanAbsoluteSurfaceClearance ?? Infinity,
+  ).toBeLessThan(0.25);
+  expect(
+    handoff.late?.backgroundDepth
+      .transitionOutgoingMaxAbsoluteSurfaceClearance ?? Infinity,
+  ).toBeLessThan(0.5);
+  expect(
+    handoff.late?.backgroundDepth.transitionOutgoingMinSurfaceClearance ??
+      -Infinity,
+  ).toBeGreaterThan(-0.3);
+  expect(
+    handoff.late?.backgroundDepth
+      .transitionOutgoingMeanAbsoluteSurfaceClearance ?? Infinity,
+  ).toBeLessThan(
+    handoff.middle?.backgroundDepth
+      .transitionOutgoingMeanAbsoluteSurfaceClearance ?? 0,
+  );
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readPerformanceDiagnostics(page);
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            presentation: snapshot.runtime.world.foundationPresentation,
+            rug: snapshot.runtime.backgroundDepth.foundationRugVisible,
+            overlay:
+              snapshot.runtime.backgroundDepth.foundationOverlayVisible,
+            transition: snapshot.runtime.transitionActive,
+            transitionRugMode:
+              snapshot.runtime.backgroundDepth.transitionRugMode,
+            underfoot:
+              snapshot.runtime.backgroundDepth
+                .foundationNearestUnderfootInstances,
+            settled:
+              snapshot.runtime.pickups.current ===
+                snapshot.runtime.pickups.target &&
+              snapshot.runtime.pickups.queued === 0,
+          }
+        : null;
+    }, { timeout: 30_000 })
+    .toEqual({
+      era: 25,
+      presentation: "shell",
+      rug: true,
+      overlay: false,
+      transition: false,
+      transitionRugMode: "none",
+      underfoot: expect.any(Number),
+      settled: true,
+    });
+  const landed = await readPerformanceDiagnostics(page);
+  expect(
+    landed?.runtime.backgroundDepth.foundationNearestUnderfootInstances ?? 0,
+  ).toBeGreaterThanOrEqual(8);
 });
 
 test("a cold install can boot the lazy Three.js world offline", async ({

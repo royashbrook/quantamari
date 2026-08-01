@@ -16,7 +16,7 @@ test("every era owns an explicit scientific foundation motif", () => {
   );
 });
 
-test("the theoretical origin is empty and becomes a volumetric memory", () => {
+test("the theoretical origin is empty and becomes the first grounded memory", () => {
   assert.deepEqual(foundationPlan(0, ERAS), {
     presentation: "none",
     nearest: null,
