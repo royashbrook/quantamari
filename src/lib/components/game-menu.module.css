@@ -188,6 +188,11 @@
   color: #25577a;
 }
 
+.choices .installChoice {
+  background: #fff8cf;
+  color: #6c4b18;
+}
+
 .choices .performanceChoice[aria-checked="true"] {
   border-color: #4a7794;
   background: #e9f8ff;

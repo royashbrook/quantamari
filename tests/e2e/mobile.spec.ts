@@ -1,14 +1,22 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import {
+  INSTALL_COACH_INSTALLED_VALUE,
+  INSTALL_COACH_STORAGE_KEY,
+} from "../../src/lib/pwa-install";
 
 const appPath = "/";
 
 async function startLearningTour(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript(({ coachKey, installedValue }) => {
     (
       window as typeof window & {
         __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
       }
     ).__QUARKATAMARI_PERFORMANCE_REQUESTED__ = true;
+    localStorage.setItem(coachKey, installedValue);
+  }, {
+    coachKey: INSTALL_COACH_STORAGE_KEY,
+    installedValue: INSTALL_COACH_INSTALLED_VALUE,
   });
   await page.goto(appPath);
   await page.getByRole("button", { name: "Play Learning Tour" }).click();

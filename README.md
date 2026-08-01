@@ -16,8 +16,10 @@ rescue, and the exact running build. The shipped game is a static,
 offline-capable PWA designed mobile-first for modern iPhones and Android
 phones: drag anywhere to roll, pinch to zoom the free lens, and read journey
 progress from one touch-through bottom dock that
-respects notch and home-indicator safe areas. All gameplay and persistence
-stay in the browser.
+respects notch and home-indicator safe areas. Eligible phones and tablets get
+compact first-visit installation coaching after play begins, with native
+Android installation and current Apple Home Screen steps; the menu keeps those
+steps available later. All gameplay and persistence stay in the browser.
 
 ## Gameplay contract
 
@@ -194,6 +196,8 @@ Important code:
 - `src/lib/save-data.ts` — reorder-safe v4 saves and v2/v3 migrations
 - `src/lib/components/FieldGuide.svelte` — animated collection history
 - `src/lib/components/GameMenu.svelte` — pause, About, sound, and safe reset
+- `src/lib/components/InstallCoach.svelte` — mobile PWA installation coach
+- `src/lib/pwa-install.ts` — install eligibility and dismissal policy
 - `src/service-worker.ts` — generated, root-scoped offline runtime
 - `src/rescue.template.html` — dependency-free installed-save recovery hatch
 - `tests/unit`, `tests/artifact`, and `tests/e2e` — Node, build, and browser
@@ -278,6 +282,13 @@ memory keeps that history visible over floors, roads, and cities, while shell
 textures and volumetric fields carry it through planetary and cosmic scales.
 This work is tracked
 under [issue #44](https://github.com/royashbrook/quantamari/issues/44).
+v3.3 helps phone and tablet players install Quantamari without crowding the
+launcher or permanent game HUD. Eligible Apple players receive current Add to
+Home Screen guidance after starting; browsers with a native install prompt get
+its one-tap action. Dismissal snoozes the coach for fourteen days, installed
+apps suppress it, and the pause menu keeps installation available on demand.
+This work is tracked under
+[issue #47](https://github.com/royashbrook/quantamari/issues/47).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.
