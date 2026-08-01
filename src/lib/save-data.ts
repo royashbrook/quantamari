@@ -2,6 +2,7 @@ export type GameMode = "journey" | "learning";
 
 export type SaveCatalogCurio = {
   id: string;
+  spawnMode?: "repeatable" | "singleton";
 };
 
 export type SaveCatalogEra = {
@@ -265,9 +266,17 @@ function catalogPairExists(
   eraId: string,
   curioId: string,
 ) {
+  return catalogCurio(catalog, eraId, curioId) !== undefined;
+}
+
+function catalogCurio(
+  catalog: readonly SaveCatalogEra[],
+  eraId: string,
+  curioId: string,
+) {
   return catalog
     .find((era) => era.id === eraId)
-    ?.curios.some((curio) => curio.id === curioId) ?? false;
+    ?.curios.find((curio) => curio.id === curioId);
 }
 
 function sanitizeMashRecord(
@@ -324,7 +333,12 @@ function sanitizeCollection(
       lastPick: boundedNumber(item.lastPick, 0, 0),
     });
   }
-  return aggregatePickups(valid);
+  return aggregatePickups(valid).map((entry) =>
+    catalogCurio(catalog, entry.eraId, entry.curioId)?.spawnMode ===
+    "singleton"
+      ? { ...entry, count: 1 }
+      : entry,
+  );
 }
 
 function sanitizedMash(
@@ -332,9 +346,21 @@ function sanitizedMash(
   catalog: readonly SaveCatalogEra[],
 ) {
   if (!Array.isArray(value)) return [];
-  return value
+  const records = value
     .map((record) => sanitizeMashRecord(record, catalog))
-    .filter((record): record is MashRecordV4 => record !== null)
+    .filter((record): record is MashRecordV4 => record !== null);
+  const retainedSingletons = new Set<string>();
+  return records
+    .reverse()
+    .filter((record) => {
+      const curio = catalogCurio(catalog, record.eraId, record.curioId);
+      if (curio?.spawnMode !== "singleton") return true;
+      const key = collectionKey(record.eraId, record.curioId);
+      if (retainedSingletons.has(key)) return false;
+      retainedSingletons.add(key);
+      return true;
+    })
+    .reverse()
     .slice(-96);
 }
 

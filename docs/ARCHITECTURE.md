@@ -21,9 +21,11 @@ server, API, database, authentication layer, or server-side game state.
 - `src/lib/data/scale-catalog.json` is the editable content boundary.
   `scale-data.ts` validates stable IDs, science metadata, relative size, and
   visual-form references before publishing the typed catalog.
-- `src/lib/game-rules.ts`, `save-data.ts`, `scale-data.ts`, and
-  `world-system.ts` are browser-independent domain modules tested directly by
-  Node.
+- `src/lib/game-rules.ts`, `save-data.ts`, `scale-data.ts`,
+  `collection-progress.ts`, and `world-system.ts` are browser-independent
+  domain modules tested directly by Node. `src/lib/game/spawn-policy.ts` is the
+  deterministic content-selection boundary shared by the runtime and those
+  tests.
 - `src/service-worker.ts` uses SvelteKit's generated build manifest to precache
   every shipped chunk. It deliberately avoids `skipWaiting` and
   `clients.claim`, so an update cannot replace code beneath an open game.
@@ -60,6 +62,13 @@ population of every fresh layer uses the dense inner field; later
 replenishments enter through an outer ring. Distant pickups shrink out before
 their resources are released.
 
+Each descriptor chooses from the catalog through a deterministic rarity
+policy. Repeatables maintain population; singleton subject IDs are excluded
+while live and forever after collection. Per-era rare and singleton pity
+counters advance only on successful current-era spawns, so placement failures
+and next-era blockers cannot starve a completion-critical landmark. Named
+singletons are also excluded from periodic substrate and rug populations.
+
 Every quality profile treats `maxDrawCalls` as a hard weighted budget. Each
 cached collectible template records its render-leaf cost, while the live scene,
 shadow casters, instanced silhouette families, and a measured renderer-pipeline
@@ -95,20 +104,21 @@ attachment admission is limited by both toy count and measured render-leaf
 cost; expensive species therefore collapse to their authored batched
 silhouette before they can break the profile's draw-call ceiling.
 
-Long Game and Learning Tour share one logical layer-advance path. Long Game
-keeps camera distance proportional to the physical radius and rebases both
-together; Learning Tour alone runs the explicit scale-skip animation. That
-animation ends at the exact next-layer player radius. Attached transforms and
-their save records rebase at the same handoff. Loose outgoing pickups fold
-toward the player, settle flat, and are then retired while the incoming N−1
-rug crossfades underneath them. Planet-scale transitions use the same handoff
-on a curved shell. Next-era blockers shrink independently instead of being
-mistaken for outgoing fabric. Flat rugs are periodic and chunk-anchored;
-planetary rugs wrap a small authored population continuously across the curved
-surface from absolute travel. Both are non-interactive lower-scale
-representations. The opening Theory Playground has
-no passive environment or substrate; its first rug appears only after the next
-layer is reached.
+Long Game and Learning Tour share one player-invoked layer-advance path.
+Progress and radius cap at 100%, leaving the current field collectible until
+the player chooses Grow. Long Game keeps camera distance proportional to the
+physical radius and rebases both together; Learning Tour alone runs the
+explicit scale-skip animation. That animation ends at the exact next-layer
+player radius. Attached transforms and their save records rebase at the same
+handoff. Loose outgoing pickups fold toward the player, settle flat, and are
+then retired while the incoming N−1 rug crossfades underneath them.
+Planet-scale transitions use the same handoff on a curved shell. Next-era
+blockers shrink independently instead of being mistaken for outgoing fabric.
+Flat rugs are periodic and chunk-anchored; planetary rugs wrap a small authored
+repeatable population continuously across the curved surface from absolute
+travel. Both are non-interactive lower-scale representations. The opening
+Theory Playground has no passive environment or substrate; its first rug
+appears only after the next layer is reached.
 
 Camera framing is mobile-first without letterboxing. Portrait devices keep a
 56-degree vertical field of view; wider canvases derive their vertical field of

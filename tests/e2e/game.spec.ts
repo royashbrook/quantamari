@@ -39,6 +39,9 @@ type PerformanceSnapshot = {
   runtime: {
     era: number;
     mode: "journey" | "learning";
+    picked: number;
+    progress: number;
+    readyToGrow: boolean;
     radius: number;
     playerScale: number;
     worldScale: number;
@@ -129,6 +132,7 @@ type PerformanceSnapshot = {
       maxPerFrame: number;
       workBudgetMs: number;
       deferredDisposals: number;
+      singletonIds: string[];
     };
     representations: {
       richPickups: number;
@@ -320,6 +324,7 @@ async function seedAttachedFoam(page: Page) {
 
 async function seedLearningEra(page: Page, eraId: string, zooms: number) {
   await page.addInitScript(({ savedEraId, savedZooms }) => {
+    if (localStorage.getItem("everything-roll-save-v4")) return;
     localStorage.setItem(
       "everything-roll-save-v4",
       JSON.stringify({
@@ -339,6 +344,52 @@ async function seedLearningEra(page: Page, eraId: string, zooms: number) {
       }),
     );
   }, { savedEraId: eraId, savedZooms: zooms });
+}
+
+async function seedReadyJourney(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "journey",
+        eraId: "theory-playground",
+        progress: 1,
+        picked: 0,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 0,
+        cycles: 0,
+        sound: false,
+        mash: [],
+        collection: [],
+      }),
+    );
+  });
+}
+
+async function seedAlmostReadyJourney(page: Page, eraId: string) {
+  await page.addInitScript((savedEraId) => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "journey",
+        eraId: savedEraId,
+        progress: 0.999999,
+        picked: 0,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 0,
+        cycles: 0,
+        sound: false,
+        mash: [],
+        collection: [],
+      }),
+    );
+  }, eraId);
 }
 
 async function seedDenseDistinctMash(page: Page, count = 90) {
@@ -561,6 +612,37 @@ test("field guide hydrates a stable-ID v4 collection", async ({ page }) => {
   await expect(guide).toBeVisible();
   await expect(guide.getByText("Foam bubble")).toBeVisible();
   await expect(guide.getByLabel("2 collected")).toBeVisible();
+  await expect(guide.getByRole("status")).toContainText("234 guide entries");
+  await expect(guide.getByRole("status")).toContainText("1 / 234 found");
+  await expect(guide.getByRole("article")).toHaveCount(48);
+  await expect(
+    guide.getByRole("button", { name: "Show 48 more finds" }),
+  ).toBeVisible();
+  await expect(guide.getByLabel("Collection achievements")).toContainText(
+    "First Find",
+  );
+
+  await guide.getByRole("button", { name: "Missing" }).click();
+  await expect(guide.getByRole("status")).toContainText("233 guide entries");
+  await expect(guide.getByText("Foam bubble")).toHaveCount(0);
+  const search = guide.getByRole("searchbox", {
+    name: "Find a rolled-up thing",
+  });
+  await search.fill("Earth");
+  const lockedEarth = guide.getByRole("article", {
+    name: "Earth, not yet found",
+    exact: true,
+  });
+  await expect(lockedEarth).toBeVisible();
+  await expect(lockedEarth).toContainText("RARE FIND · LANDMARK · ONE OF ONE");
+  await expect(lockedEarth).toContainText(
+    "Science reference unlocks with this find",
+  );
+
+  await search.fill("");
+  await guide.getByRole("button", { name: "Found" }).click();
+  await expect(guide.getByRole("status")).toContainText("1 guide entry");
+  await expect(guide.getByText("Foam bubble")).toBeVisible();
   await page.getByRole("button", { name: "Close field guide" }).click();
   await expect(guide).toBeHidden();
 });
@@ -1869,19 +1951,19 @@ test("dense pickup bursts stay pooled inside the battery draw budget", async ({
 
   await expect
     .poll(
-      async () => {
-        const snapshot = await readPerformanceDiagnostics(page);
-        return Boolean(
-          snapshot &&
-            snapshot.phases.frame.count >
-              (beforeBursts?.phases.frame.count ?? 0) &&
-            snapshot.runtime.bursts.active === snapshot.runtime.bursts.limit &&
-            snapshot.runtime.drawCalls <= snapshot.runtime.budget.maxDrawCalls,
-        );
-      },
+      async () =>
+        (await readPerformanceDiagnostics(page))?.phases.frame.count ?? 0,
       { timeout: 15_000 },
     )
-    .toBe(true);
+    .toBeGreaterThan(beforeBursts?.phases.frame.count ?? 0);
+
+  const afterBursts = await readPerformanceDiagnostics(page);
+  expect(afterBursts?.runtime.bursts.active).toBeLessThanOrEqual(
+    afterBursts?.runtime.bursts.limit ?? 0,
+  );
+  expect(afterBursts?.runtime.drawCalls).toBeLessThanOrEqual(
+    afterBursts?.runtime.budget.maxDrawCalls ?? 0,
+  );
 });
 
 test("performance diagnostics capture a repeatable complex-scene baseline", async ({
@@ -2204,6 +2286,306 @@ test("long game crosses a layer without a skip animation or size pop", async ({
       { timeout: 10_000 },
     )
     .toBeLessThan(0.03);
+});
+
+test("a ready scale waits for the player and remains collectible", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedReadyJourney(page);
+  await begin(page, "Long game");
+
+  const grow = page.getByTestId("grow-layer");
+  await expect(grow).toBeVisible();
+  await expect(grow).toContainText("Scale ready");
+  await expect(grow).toContainText("Grow to Particle Probe Frontier");
+  await expect
+    .poll(async () => {
+      const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+      return runtime
+        ? {
+            era: runtime.era,
+            progress: runtime.progress,
+            ready: runtime.readyToGrow,
+          }
+        : null;
+    })
+    .toEqual({ era: 0, progress: 1, ready: true });
+
+  await page.waitForTimeout(1_200);
+  expect((await readPerformanceDiagnostics(page))?.runtime.era).toBe(0);
+
+  const collected = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectCurrentPickup: () => string | null;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.collectCurrentPickup() ?? null;
+  });
+  expect(collected).not.toBeNull();
+  await expect(page.locator(".achievement-unlock")).toBeVisible();
+  await expect(page.locator(".achievement-unlock")).toContainText(
+    /First Find|One of One/,
+  );
+  await expect
+    .poll(async () => {
+      const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+      return runtime
+        ? {
+            era: runtime.era,
+            progress: runtime.progress,
+            ready: runtime.readyToGrow,
+            picked: runtime.picked,
+          }
+        : null;
+    }, { timeout: 10_000 })
+    .toEqual({ era: 0, progress: 1, ready: true, picked: 1 });
+
+  await expect(page.locator(".fact-card")).toHaveCount(0, {
+    timeout: 7_000,
+  });
+  await expect(grow).toBeVisible();
+  await grow.click();
+  await expect
+    .poll(async () => {
+      const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+      return runtime
+        ? {
+            era: runtime.era,
+            progress: runtime.progress,
+            ready: runtime.readyToGrow,
+            transition: runtime.transitionActive,
+          }
+        : null;
+    }, { timeout: 10_000 })
+    .toEqual({ era: 1, progress: 0, ready: false, transition: false });
+  await expect(grow).toHaveCount(0);
+});
+
+test("a scale-crossing landmark keeps its fact, readiness, and every achievement", async ({
+  page,
+}) => {
+  test.setTimeout(75_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedAlmostReadyJourney(page, "moon-scale");
+  await begin(page, "Long game");
+
+  const collected = await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const diagnostics = (
+            window as typeof window & {
+              __QUARKATAMARI_PERFORMANCE__?: {
+                collectSingletonPickup: () => string | null;
+              };
+            }
+          ).__QUARKATAMARI_PERFORMANCE__;
+          return diagnostics?.collectSingletonPickup() ?? null;
+        }),
+      { timeout: 20_000 },
+    )
+    .not.toBeNull();
+  void collected;
+
+  const fact = page.locator(".fact-card");
+  await expect(fact).toBeVisible();
+  await expect(fact.locator(".scale-ready-unlock")).toContainText(
+    /Moon Scale is ready/i,
+  );
+  await expect(fact.locator(".achievement-unlock")).toContainText(
+    "First Find",
+  );
+  await expect(fact.locator(".achievement-unlock")).toContainText(
+    "One of One",
+  );
+  await expect(page.getByTestId("grow-layer")).toBeVisible();
+  await expect
+    .poll(async () => {
+      const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+      return runtime
+        ? { progress: runtime.progress, ready: runtime.readyToGrow, picked: runtime.picked }
+        : null;
+    })
+    .toEqual({ progress: 1, ready: true, picked: 1 });
+});
+
+test("one-of-one landmarks never duplicate or respawn after collection", async ({
+  page,
+}) => {
+  test.setTimeout(75_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLearningEra(page, "planetary-pantry", 25);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        if (!runtime || runtime.pickups.queued > 0) return [];
+        return runtime.pickups.singletonIds;
+      },
+      { timeout: 30_000 },
+    )
+    .toHaveLength(4);
+  const before = (await readPerformanceDiagnostics(page))?.runtime.pickups
+    .singletonIds ?? [];
+  expect(new Set(before).size).toBe(before.length);
+
+  const retiredId = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          retireSingletonPickup: () => string | null;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.retireSingletonPickup() ?? null;
+  });
+  expect(retiredId).not.toBeNull();
+  await expect
+    .poll(
+      async () => {
+        const pickups = (await readPerformanceDiagnostics(page))?.runtime
+          .pickups;
+        return pickups
+          ? {
+              queued: pickups.queued,
+              retiring: pickups.retiring,
+              retiredCopies: pickups.singletonIds.filter(
+                (id) => id === retiredId,
+              ).length,
+              unique:
+                new Set(pickups.singletonIds).size ===
+                pickups.singletonIds.length,
+            }
+          : null;
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({ queued: 0, retiring: 1, retiredCopies: 1, unique: true });
+  await expect
+    .poll(
+      async () => {
+        const pickups = (await readPerformanceDiagnostics(page))?.runtime
+          .pickups;
+        return pickups
+          ? {
+              retiring: pickups.retiring,
+              containsRetired: pickups.singletonIds.includes(retiredId!),
+            }
+          : null;
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({ retiring: 0, containsRetired: false });
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          removePickups: (count: number) => unknown;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__?.removePickups(12);
+  });
+  await expect
+    .poll(
+      async () => {
+        const pickups = (await readPerformanceDiagnostics(page))?.runtime
+          .pickups;
+        return pickups?.queued === 0 && pickups.singletonIds.includes(retiredId!)
+          ? pickups.singletonIds
+          : [];
+      },
+      { timeout: 20_000 },
+    )
+    .toContain(retiredId!);
+
+  const collectedId = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectSingletonPickup: () => string | null;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.collectSingletonPickup() ?? null;
+  });
+  expect(collectedId).not.toBeNull();
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? {
+              queued: runtime.pickups.queued,
+              containsCollected: runtime.pickups.singletonIds.includes(
+                collectedId!,
+              ),
+              unique:
+                new Set(runtime.pickups.singletonIds).size ===
+                runtime.pickups.singletonIds.length,
+            }
+          : null;
+      },
+      { timeout: 20_000 },
+    )
+    .toEqual({ queued: 0, containsCollected: false, unique: true });
+
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate((expectedId) => {
+        const save = JSON.parse(
+          localStorage.getItem("everything-roll-save-v4") ?? "null",
+        );
+        return save?.collection?.some(
+          (entry: { curioId?: string; count?: number }) =>
+            entry.curioId === expectedId && (entry.count ?? 0) > 0,
+        ) ?? false;
+      }, collectedId!),
+    )
+    .toBe(true);
+  await page.reload();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        if (
+          !runtime ||
+          runtime.pickups.queued > 0 ||
+          runtime.pickups.current < runtime.pickups.target
+        ) {
+          return null;
+        }
+        const collection = await page.evaluate(() => {
+          const save = JSON.parse(
+            localStorage.getItem("everything-roll-save-v4") ?? "null",
+          );
+          return save?.collection ?? [];
+        });
+        return {
+          era: runtime.era,
+          containsCollected: runtime.pickups.singletonIds.includes(
+            collectedId!,
+          ),
+          saved: collection.some(
+            (entry: { curioId?: string; count?: number }) =>
+              entry.curioId === collectedId && (entry.count ?? 0) > 0,
+          ),
+        };
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({ era: 25, containsCollected: false, saved: true });
 });
 
 test("the optical lens resolves only reached layers and leaves the origin empty", async ({

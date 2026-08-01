@@ -13,6 +13,7 @@
     open: boolean;
     entries: readonly CollectionEntry[];
     legacyUnitemizedCount?: number;
+    cycles?: number;
     onClose: () => void;
   };
 
@@ -204,6 +205,7 @@
 
 <script lang="ts">
   import { tick } from "svelte";
+  import { deriveAchievements } from "$lib/collection-progress";
   import {
     ERAS,
     formatEraScale,
@@ -212,18 +214,30 @@
   } from "$lib/scale-data";
   import styles from "./field-guide.module.css";
 
-  type ResolvedEntry = {
-    entry: CollectionEntry;
+  type GuideRecord = {
+    entry: CollectionEntry | null;
+    found: boolean;
     era: Era;
     eraIndex: number;
     curio: Curio;
+    curioIndex: number;
     formNote: string;
+  };
+
+  type GuideFilter = "all" | "found" | "missing";
+
+  type EraCompletion = {
+    found: number;
+    total: number;
+    landmarksFound: number;
+    landmarksTotal: number;
   };
 
   let {
     open,
     entries,
     legacyUnitemizedCount = 0,
+    cycles = 0,
     onClose,
   }: FieldGuideProps = $props();
 
@@ -236,7 +250,9 @@
   let searchInput = $state<HTMLInputElement>();
   let search = $state("");
   let eraFilter = $state("");
-  let view = $state<"recent" | "scale">("recent");
+  let guideFilter = $state<GuideFilter>("all");
+  const GUIDE_BATCH_SIZE = 48;
+  let visibleLimit = $state(GUIDE_BATCH_SIZE);
 
   function positiveInteger(value: number | undefined) {
     return Number.isFinite(value) ? Math.max(0, Math.floor(value ?? 0)) : 0;
@@ -251,12 +267,15 @@
     return hash >>> 0;
   }
 
-  function portraitStyleFor(era: Era, curio: Curio) {
+  function portraitStyleFor(era: Era, curio: Curio, found = true) {
     const seed = specimenSeed(`${era.id}:${curio.id}:${curio.name}`);
-    return `--specimen-color: ${curio.color}; --specimen-tilt: ${(seed % 15) - 7}deg; --bob-delay: ${-(seed % 1800)}ms`;
+    const lockedStyle = found
+      ? ""
+      : "; filter: grayscale(0.82); opacity: 0.58";
+    return `--specimen-color: ${curio.color}; --specimen-tilt: ${(seed % 15) - 7}deg; --bob-delay: ${-(seed % 1800)}ms${lockedStyle}`;
   }
 
-  function resolveEntries(collectionEntries: readonly CollectionEntry[]) {
+  function resolveCatalog(collectionEntries: readonly CollectionEntry[]) {
     const eraById = new Map(ERAS.map((era, index) => [era.id, { era, index }]));
     const combined = new Map<string, CollectionEntry>();
     let unresolvedCount = 0;
@@ -286,30 +305,37 @@
       });
     });
 
-    const records: ResolvedEntry[] = [];
-    combined.forEach((entry) => {
-      const eraMatch = eraById.get(entry.eraId);
-      const curio = eraMatch?.era.curios.find(
-        (item) => item.id === entry.curioId,
-      );
-      if (!eraMatch || !curio) return;
-      records.push({
-        entry,
-        era: eraMatch.era,
-        eraIndex: eraMatch.index,
-        curio,
-        formNote: SPECIMEN_FORM_NOTES[curio.visualForm],
-      });
-    });
+    const records = ERAS.flatMap((era, eraIndex) =>
+      era.curios.map((curio, curioIndex): GuideRecord => {
+        const entry = combined.get(`${era.id}\u0000${curio.id}`) ?? null;
+        return {
+          entry,
+          found: entry !== null,
+          era,
+          eraIndex,
+          curio,
+          curioIndex,
+          formNote: SPECIMEN_FORM_NOTES[curio.visualForm],
+        };
+      }),
+    );
 
     return { records, unresolvedCount };
   }
 
-  const resolvedCollection = $derived.by(() => resolveEntries(entries));
+  const resolvedCatalog = $derived.by(() => resolveCatalog(entries));
+  const foundRecords = $derived(
+    resolvedCatalog.records.filter((record) => record.found),
+  );
 
   const filteredRecords = $derived.by(() => {
     const query = search.trim().toLocaleLowerCase();
-    return resolvedCollection.records
+    return resolvedCatalog.records
+      .filter((record) => {
+        if (guideFilter === "found") return record.found;
+        if (guideFilter === "missing") return !record.found;
+        return true;
+      })
       .filter((record) => !eraFilter || record.era.id === eraFilter)
       .filter((record) => {
         if (!query) return true;
@@ -318,29 +344,23 @@
           record.curio.fact,
           record.era.name,
           record.formNote,
+          record.curio.rarity,
+          record.curio.spawnMode === "singleton"
+            ? "landmark one of one"
+            : "repeatable",
         ].some((value) => value.toLocaleLowerCase().includes(query));
       })
       .sort((left, right) => {
-        if (view === "recent") {
-          const timeDifference =
-            (right.entry.lastPick ?? 0) - (left.entry.lastPick ?? 0);
-          if (timeDifference !== 0) return timeDifference;
-          if (left.eraIndex !== right.eraIndex) {
-            return right.eraIndex - left.eraIndex;
-          }
-        } else if (left.eraIndex !== right.eraIndex) {
-          return left.eraIndex - right.eraIndex;
-        }
-        return left.curio.name.localeCompare(right.curio.name);
+        if (left.eraIndex !== right.eraIndex) return left.eraIndex - right.eraIndex;
+        return left.curioIndex - right.curioIndex;
       });
   });
 
+  const visibleRecords = $derived(filteredRecords.slice(0, visibleLimit));
+
   const groupedRecords = $derived.by(() => {
-    if (view === "recent") {
-      return [{ era: null, records: filteredRecords }];
-    }
-    const groups = new Map<string, { era: Era; records: ResolvedEntry[] }>();
-    filteredRecords.forEach((record) => {
+    const groups = new Map<string, { era: Era; records: GuideRecord[] }>();
+    visibleRecords.forEach((record) => {
       const group = groups.get(record.era.id) ?? {
         era: record.era,
         records: [],
@@ -351,34 +371,93 @@
     return [...groups.values()];
   });
 
+  const completionByEra = $derived.by(() => {
+    const completion = new Map<string, EraCompletion>();
+    resolvedCatalog.records.forEach((record) => {
+      const current = completion.get(record.era.id) ?? {
+        found: 0,
+        total: 0,
+        landmarksFound: 0,
+        landmarksTotal: 0,
+      };
+      current.total += 1;
+      if (record.found) current.found += 1;
+      if (record.curio.spawnMode === "singleton") {
+        current.landmarksTotal += 1;
+        if (record.found) current.landmarksFound += 1;
+      }
+      completion.set(record.era.id, current);
+    });
+    return completion;
+  });
+
   const totalRolled = $derived(
-    resolvedCollection.records.reduce(
-      (sum, record) => sum + record.entry.count,
+    foundRecords.reduce(
+      (sum, record) => sum + (record.entry?.count ?? 0),
       0,
     ) +
-      resolvedCollection.unresolvedCount +
+      resolvedCatalog.unresolvedCount +
       positiveInteger(legacyUnitemizedCount),
   );
   const representedScales = $derived(
-    new Set(resolvedCollection.records.map((record) => record.era.id)).size,
+    new Set(foundRecords.map((record) => record.era.id)).size,
   );
-  const availableThings = ERAS.reduce(
-    (sum, era) => sum + era.curios.length,
-    0,
+  const completedScales = $derived(
+    [...completionByEra.values()].filter(
+      (completion) => completion.total > 0 && completion.found === completion.total,
+    ).length,
+  );
+  const landmarkTotal = $derived(
+    resolvedCatalog.records.filter(
+      (record) => record.curio.spawnMode === "singleton",
+    ).length,
+  );
+  const landmarkFound = $derived(
+    foundRecords.filter((record) => record.curio.spawnMode === "singleton").length,
+  );
+  const availableThings = $derived(resolvedCatalog.records.length);
+  const achievements = $derived(
+    deriveAchievements({ catalog: ERAS, collection: entries, cycles }),
+  );
+  const visibleAchievements = $derived(
+    achievements.filter((achievement) => !achievement.secret || achievement.unlocked),
+  );
+  const unlockedAchievements = $derived(
+    visibleAchievements.filter((achievement) => achievement.unlocked),
+  );
+  const latestAchievements = $derived(
+    unlockedAchievements
+      .slice()
+      .sort((left, right) => (right.unlockedAt ?? 0) - (left.unlockedAt ?? 0))
+      .slice(0, 3),
+  );
+  const nextAchievement = $derived(
+    visibleAchievements.find((achievement) => !achievement.unlocked) ?? null,
   );
   const hiddenCount = $derived(
-    resolvedCollection.unresolvedCount +
+    resolvedCatalog.unresolvedCount +
       positiveInteger(legacyUnitemizedCount),
   );
   const hasFilters = $derived(
-    search.trim().length > 0 || eraFilter.length > 0,
+    search.trim().length > 0 || eraFilter.length > 0 || guideFilter !== "all",
   );
 
   function clearFilters() {
     search = "";
     eraFilter = "";
+    guideFilter = "all";
     searchInput?.focus();
   }
+
+  $effect(() => {
+    // Search/filter changes start with one deliberately bounded portrait
+    // batch. Players can reveal more without paying for all 234 animations.
+    void open;
+    void search;
+    void eraFilter;
+    void guideFilter;
+    visibleLimit = GUIDE_BATCH_SIZE;
+  });
 
   function handleCancel(event: Event) {
     event.preventDefault();
@@ -407,12 +486,12 @@
   });
 </script>
 
-{#snippet SpecimenPortrait(era: Era, curio: Curio)}
+{#snippet SpecimenPortrait(era: Era, curio: Curio, found: boolean)}
   <div
     class={styles.portrait}
     data-shape={curio.shape}
     data-form={curio.visualForm}
-    style={portraitStyleFor(era, curio)}
+    style={portraitStyleFor(era, curio, found)}
     aria-hidden="true"
   >
     <span class={styles.shadow}></span>
@@ -425,42 +504,70 @@
         <b></b>
       </span>
     </span>
-    <span class={styles.symbol}>{curio.symbol}</span>
+    <span class={styles.symbol}>{found ? curio.symbol : "?"}</span>
   </div>
 {/snippet}
 
-{#snippet EntryCard(record: ResolvedEntry)}
-  {@const { entry, era, eraIndex, curio, formNote } = record}
+{#snippet EntryCard(record: GuideRecord)}
+  {@const { entry, found, era, eraIndex, curio, formNote } = record}
   {@const source = curio.source ?? era.sources[0]}
-  <article class={styles.card}>
-    {@render SpecimenPortrait(era, curio)}
+  <article
+    class={styles.card}
+    aria-label={`${curio.name}, ${found ? "found" : "not yet found"}`}
+    style={found
+      ? undefined
+      : "border-style: dashed; background: color-mix(in srgb, #fffef9 76%, #e7dce7)"}
+  >
+    {@render SpecimenPortrait(era, curio, found)}
     <div class={styles.cardCopy}>
       <div class={styles.cardMeta}>
-        <span>{era.name}</span>
+        <span>{era.name} · {found ? "FOUND" : "NOT YET FOUND"}</span>
         <span>{formatEraScale(eraIndex, 0)}</span>
       </div>
       <div class={styles.cardTitle}>
         <h4>{curio.name}</h4>
-        <span aria-label={`${entry.count.toLocaleString()} collected`}>
-          ×{entry.count.toLocaleString()}
-        </span>
+        {#if entry}
+          {#if curio.spawnMode === "singleton"}
+            <span aria-label={`${curio.name} one of one collected`}>
+              one of one
+            </span>
+          {:else}
+            <span aria-label={`${entry.count.toLocaleString()} collected`}>
+              ×{entry.count.toLocaleString()}
+            </span>
+          {/if}
+        {:else}
+          <span aria-label="Not yet collected">missing</span>
+        {/if}
       </div>
-      <p class={styles.fact}>{curio.fact}</p>
+      {#if found}
+        <p class={styles.fact}>{curio.fact}</p>
+      {:else}
+        <p class={styles.fact}>
+          Still loose in {era.name}. Its science note unlocks when you find it.
+        </p>
+      {/if}
       <p class={styles.formNote}>
-        <b>Why this shape</b>
+        <b>{found ? "Why this shape" : "Silhouette clue"}</b>
         {formNote}
       </p>
       <div class={styles.cardFooter}>
         <span
           class={styles.certainty}
-          data-certainty={era.confidence.toLowerCase().replaceAll(" ", "-")}
+          data-rarity={curio.rarity}
+          aria-label={`Gameplay rarity ${curio.rarity}; ${curio.spawnMode === "singleton" ? "landmark, one of one" : "repeatable"}`}
         >
-          {era.confidence}
+          {curio.rarity.toUpperCase()} FIND · {curio.spawnMode === "singleton"
+            ? "LANDMARK · ONE OF ONE"
+            : "REPEATABLE"}
         </span>
-        {#if source}
+        <span class={styles.noSource}>{era.confidence}</span>
+        {#if found && source}
           <a href={source.url} target="_blank" rel="noreferrer">
             Science reference · {source.organization}: {source.label} ↗
           </a>
+        {:else if !found}
+          <span class={styles.noSource}>Science reference unlocks with this find</span>
         {:else}
           <span class={styles.noSource}>Reference unavailable</span>
         {/if}
@@ -477,14 +584,16 @@
   oncancel={handleCancel}
   onclick={handleDialogClick}
 >
-  <div class={styles.panel}>
+  {#if open}
+    <div class={styles.panel}>
     <header class={styles.header}>
       <div>
-        <span class={styles.kicker}>EVERYTHING RIDING ALONG</span>
+        <span class={styles.kicker}>FOUND FRIENDS · MISSING WONDERS</span>
         <h2 id={titleId}>Your rolled-up field guide</h2>
         <p id={descriptionId}>
-          Every portrait keeps one real shape cue, then softens it into
-          something that could become a very small plush friend.
+          Found friends reveal their science. Missing entries keep a real
+          silhouette clue so you can hunt every scale without losing the
+          surprise.
         </p>
       </div>
       <button
@@ -505,8 +614,8 @@
           <dd>{totalRolled.toLocaleString()}</dd>
         </div>
         <div>
-          <dt>Different things</dt>
-          <dd>{resolvedCollection.records.length.toLocaleString()}</dd>
+          <dt>Discoveries</dt>
+          <dd>{foundRecords.length.toLocaleString()}</dd>
         </div>
         <div>
           <dt>Scales represented</dt>
@@ -515,7 +624,7 @@
         <div>
           <dt>Guide found</dt>
           <dd>
-            {resolvedCollection.records.length.toLocaleString()}
+            {foundRecords.length.toLocaleString()}
             <small> / {availableThings.toLocaleString()}</small>
           </dd>
         </div>
@@ -532,20 +641,33 @@
           placeholder="Try atom, mushroom, galaxy..."
         />
       </label>
-      <div class={styles.viewChoice} role="group" aria-label="Guide order">
+      <div
+        class={styles.viewChoice}
+        role="group"
+        aria-label="Guide entries"
+        style="grid-template-columns: repeat(3, minmax(0, 1fr))"
+      >
         <button
           type="button"
-          aria-pressed={view === "recent"}
-          onclick={() => (view = "recent")}
+          aria-pressed={guideFilter === "all"}
+          onclick={() => (guideFilter = "all")}
         >
-          Recent
+          All
         </button>
         <button
           type="button"
-          aria-pressed={view === "scale"}
-          onclick={() => (view = "scale")}
+          aria-pressed={guideFilter === "found"}
+          onclick={() => (guideFilter = "found")}
+          style="border-radius: 0"
         >
-          By scale
+          Found
+        </button>
+        <button
+          type="button"
+          aria-pressed={guideFilter === "missing"}
+          onclick={() => (guideFilter = "missing")}
+        >
+          Missing
         </button>
       </div>
       <label class={styles.eraFilter}>
@@ -553,7 +675,11 @@
         <select bind:value={eraFilter}>
           <option value="">All scales</option>
           {#each ERAS as era (era.id)}
-            <option value={era.id}>{era.name}</option>
+            <option value={era.id}>
+              {era.name} · {completionByEra.get(era.id)?.found ?? 0}/{completionByEra.get(
+                era.id,
+              )?.total ?? era.curios.length}
+            </option>
           {/each}
         </select>
       </label>
@@ -563,10 +689,10 @@
       <div class={styles.resultsMeta} role="status" aria-live="polite">
         <span>
           {filteredRecords.length.toLocaleString()}
-          {filteredRecords.length === 1 ? "specimen" : "specimens"}
+          {filteredRecords.length === 1 ? "guide entry" : "guide entries"}
         </span>
         <span>
-          {view === "recent" ? "Newest finds first" : "Grouped by scale"}
+          {foundRecords.length.toLocaleString()} / {availableThings.toLocaleString()} found
         </span>
       </div>
 
@@ -580,27 +706,26 @@
         </aside>
       {/if}
 
-      {#if resolvedCollection.records.length === 0 && hiddenCount === 0}
-        <div class={styles.emptyState}>
-          <div aria-hidden="true">○</div>
-          <h3>Your guide is waiting</h3>
-          <p>
-            Roll over your first small thing. Its portrait, fact, and source
-            will appear here.
-          </p>
-          <button type="button" onclick={onClose}>Go find something</button>
-        </div>
-      {:else if resolvedCollection.records.length === 0}
-        <div class={styles.emptyState}>
-          <div aria-hidden="true">?</div>
-          <h3>Older finds, unnamed</h3>
-          <p>
-            Your total is safe. The old save simply did not record which
-            individual things were rolled up.
-          </p>
-          <button type="button" onclick={onClose}>Add a new portrait</button>
-        </div>
-      {:else if filteredRecords.length === 0}
+      <aside class={styles.legacyNote} aria-label="Collection achievements">
+        <b>
+          {unlockedAchievements.length.toLocaleString()} / {visibleAchievements.length.toLocaleString()}
+          achievements · {completedScales.toLocaleString()} / {ERAS.length.toLocaleString()}
+          scales complete
+        </b>
+        <span>
+          {landmarkFound.toLocaleString()} / {landmarkTotal.toLocaleString()} landmarks found.
+          {#if latestAchievements.length > 0}
+            Earned: {latestAchievements.map((achievement) => achievement.name).join(" · ")}.
+          {:else if nextAchievement}
+            Next: {nextAchievement.name} ({Math.min(
+              nextAchievement.progress,
+              nextAchievement.target,
+            ).toLocaleString()}/{nextAchievement.target.toLocaleString()}).
+          {/if}
+        </span>
+      </aside>
+
+      {#if filteredRecords.length === 0}
         <div class={styles.emptyState}>
           <div aria-hidden="true">⌕</div>
           <h3>
@@ -612,20 +737,21 @@
           <button type="button" onclick={clearFilters}>Clear filters</button>
         </div>
       {:else}
-        {#each groupedRecords as group (group.era?.id ?? "recent")}
-          <section
-            class={styles.group}
-            aria-label={group.era?.name ?? "Recent finds"}
-          >
-            {#if group.era}
-              <header class={styles.groupHeader}>
-                <h3>{group.era.name}</h3>
-                <span>
-                  {group.records.length.toLocaleString()}
-                  {group.records.length === 1 ? "kind" : "kinds"}
-                </span>
-              </header>
-            {/if}
+        {#each groupedRecords as group (group.era.id)}
+          <section class={styles.group} aria-label={group.era.name}>
+            <header class={styles.groupHeader}>
+              <h3>{group.era.name}</h3>
+              <span>
+                {completionByEra.get(group.era.id)?.found ?? 0} / {completionByEra.get(
+                  group.era.id,
+                )?.total ?? group.era.curios.length} found
+                {#if (completionByEra.get(group.era.id)?.landmarksTotal ?? 0) > 0}
+                  · {completionByEra.get(group.era.id)?.landmarksFound ?? 0}/{completionByEra.get(
+                    group.era.id,
+                  )?.landmarksTotal ?? 0} landmarks
+                {/if}
+              </span>
+            </header>
             <div class={styles.grid}>
               {#each group.records as record (`${record.era.id}:${record.curio.id}`)}
                 {@render EntryCard(record)}
@@ -633,7 +759,20 @@
             </div>
           </section>
         {/each}
+        {#if visibleRecords.length < filteredRecords.length}
+          <button
+            class={styles.loadMore}
+            type="button"
+            onclick={() => (visibleLimit += GUIDE_BATCH_SIZE)}
+          >
+            Show {Math.min(
+              GUIDE_BATCH_SIZE,
+              filteredRecords.length - visibleRecords.length,
+            ).toLocaleString()} more finds
+          </button>
+        {/if}
       {/if}
     </div>
-  </div>
+    </div>
+  {/if}
 </dialog>

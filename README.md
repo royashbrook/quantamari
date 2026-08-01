@@ -7,7 +7,7 @@ particles, atoms, cells, dust, rooms, planets, and galaxies, then continue
 forever: completing the fictional beyond folds the journey back into a fresh
 quantum foam as a new cycle.
 
-The current release contains 34 scale layers and 220 collectible identities.
+The current release contains 34 scale layers and 234 collectible identities.
 The default Long Game pace is forty times the Learning Tour pace; switching
 pace never rewrites earned progress. Every find is saved by stable ID in an
 animated, searchable Field Guide. Scale Lab can preview any layer without
@@ -29,13 +29,16 @@ steps available later. All gameplay and persistence stay in the browser.
   mass or energy.
 - Collection fills one logarithmic layer. Long Game is the default 40× journey;
   Learning Tour keeps the former fast testing pace. Only current-layer pickups
-  advance progress.
-- Long Game crosses scale boundaries continuously: camera distance grows with
-  the physical ball, then rebases with it without replaying a level animation
-  or braking momentum. Learning Tour keeps a deliberate scale-skip animation
-  whose endpoint matches the next layer. Attached toys and the immediate prior
-  pickup field rebase with the ball, while the next lower layer becomes dense,
-  non-colliding fabric.
+  advance progress. Reaching 100% makes the next scale ready but never forces
+  the jump: the mash and collision envelope stay capped while the player keeps
+  collecting, and a visible Grow action advances whenever they choose.
+- When the player chooses to grow, Long Game crosses scale boundaries
+  continuously: camera distance has already grown with the physical ball, then
+  rebases with it without replaying a level animation or braking momentum.
+  Learning Tour keeps a deliberate scale-skip animation whose endpoint matches
+  the next layer. Attached toys and the immediate prior pickup field rebase
+  with the ball, while the next lower layer becomes dense, non-colliding
+  fabric.
 - Theory Playground begins in unsupported empty space: its playful foam,
   strings, notes, and other ideas are pickups rather than a claimed floor.
   Ambient density and the first prior-layer rug appear only after scaling up.
@@ -55,6 +58,12 @@ steps available later. All gameplay and persistence stay in the browser.
 - Every named collectible has a stable-ID model signature, motion personality,
   synthesized three-note pickup voice, Field Guide portrait, reality-based form
   note, fact, confidence label, and authoritative scale/topic reference.
+- Catalog entries are common, uncommon, or rare. Repeatable specimens keep a
+  scale populated; named landmarks use a globally unique subject ID, appear
+  only once at a time, and never respawn after collection. Deterministic pity
+  prevents completion-critical landmarks from being starved by luck. The Field
+  Guide shows the complete catalog, locked silhouette clues, scale and landmark
+  completion, scientific sets, and achievements.
 - Rendering uses a fixed, player-selected profile instead of changing the world
   from frame-rate samples. Standard is the default; Battery Optimized is an
   explicit persistent choice that lowers frame rate and GPU detail without
@@ -69,7 +78,7 @@ steps available later. All gameplay and persistence stay in the browser.
 
 ## Science contract
 
-Last reviewed: 2026-07-26.
+Last reviewed: 2026-08-01.
 
 Quantamari is an educational scale journey wrapped in an impossible rolling
 toy. It aims for scientific honesty without pretending the central mechanic is
@@ -141,13 +150,18 @@ Deliberate simplifications:
 - Macroscopic and cosmic bodies are not drawn at mutually exact ratios inside
   one playfield. Current-layer interaction plus a clearly oversized next-layer
   preview preserves readability.
+- Adjacent named astronomical landmarks form a compressed scale gallery, not a
+  literal spatial map. The Orion Nebula is a physical star-forming cloud; the
+  perspective-defined Orion constellation is not treated as an object or
+  cluster.
 - The game does not claim a confirmed physical structure below current
   particle probes or beyond the observable universe.
 
 Before adding or changing a collectible:
 
 1. Add the specimen to `src/lib/data/scale-catalog.json` with a stable ID,
-   relative size, and authored visual form.
+   relative size, authored visual form, rarity, and spawn mode. A singleton
+   also needs a globally unique scientific `subjectId`.
 2. Assign a characteristic scale and confidence class.
 3. Write one plain-language fact without implying more certainty than its era.
 4. Add or reuse an authoritative government, laboratory, or primary scientific
@@ -189,6 +203,9 @@ Important code:
 - `src/lib/game/collectible-markers.ts` — generated character marker sprites
 - `src/lib/game/runtime-performance.ts` — opt-in named phase measurements
 - `src/lib/game/spawn-queue.ts` — deterministic, time-budgeted world population
+- `src/lib/game/spawn-policy.ts` — rarity weighting, singleton eligibility, and
+  deterministic pity
+- `src/lib/collection-progress.ts` — catalog completion and derived achievements
 - `src/lib/data/scale-catalog.json` — editable era and collectible catalog
 - `src/lib/scale-data.ts` — catalog validation and scale helpers
 - `src/lib/game-rules.ts` — deterministic identities and gameplay budgets
@@ -298,6 +315,13 @@ player during Learning Tour transitions and are retired when their rug takes
 over. This work
 is tracked under [issues #52](https://github.com/royashbrook/quantamari/issues/52)
 and [#54](https://github.com/royashbrook/quantamari/issues/54).
+v3.5 makes scale growth player-paced: reaching 100% unlocks Grow while play and
+collection continue at a capped physical size. It expands the catalog to 234
+specimens, adds deterministic rarity and one-of-one landmarks, keeps unique
+subjects out of repeated rugs, turns the Field Guide into a complete found and
+missing catalog, and derives achievements and scientific collection sets from
+the same stable save records. This work is tracked under
+[issue #56](https://github.com/royashbrook/quantamari/issues/56).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

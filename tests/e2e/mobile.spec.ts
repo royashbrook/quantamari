@@ -6,7 +6,10 @@ import {
 
 const appPath = "/";
 
-async function startLearningTour(page: Page) {
+async function startMode(
+  page: Page,
+  buttonName: "Play Learning Tour" | "Play Long Game",
+) {
   await page.addInitScript(({ coachKey, installedValue }) => {
     (
       window as typeof window & {
@@ -19,10 +22,14 @@ async function startLearningTour(page: Page) {
     installedValue: INSTALL_COACH_INSTALLED_VALUE,
   });
   await page.goto(appPath);
-  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await page.getByRole("button", { name: buttonName }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
     timeout: 30_000,
   });
+}
+
+async function startLearningTour(page: Page) {
+  await startMode(page, "Play Learning Tour");
 }
 
 async function closeGeometry(locator: Locator) {
@@ -36,6 +43,13 @@ async function closeGeometry(locator: Locator) {
     return {
       width: rect.width,
       height: rect.height,
+      rect: {
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        left: rect.left,
+      },
+      viewport: { top, right, bottom, left },
       inside:
         rect.left >= left &&
         rect.top >= top &&
@@ -341,6 +355,186 @@ test("iPhone gameplay uses one passive bottom dock across browser and PWA-sized 
   expect(cooldownPickup).not.toBeNull();
   await expect(fact).toHaveCount(0);
   await expect(page.locator(".journey-dock")).toBeVisible();
+});
+
+test("iPhone keeps player-paced growth compact and reachable", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: "theory-playground",
+        progress: 1,
+        picked: 0,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 0,
+        cycles: 0,
+        sound: false,
+        mash: [],
+        collection: [],
+      }),
+    );
+  });
+  await startLearningTour(page);
+
+  const grow = page.getByTestId("grow-layer");
+  await expect(grow).toBeVisible();
+  for (const viewport of [
+    { name: "browser portrait", width: 420, height: 719 },
+    { name: "standalone portrait", width: 420, height: 912 },
+    { name: "browser landscape", width: 794, height: 370 },
+    { name: "standalone landscape", width: 912, height: 420 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const button = await closeGeometry(grow);
+    const dock = await closeGeometry(page.locator(".journey-dock"));
+    expect(button.width, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(button.height, viewport.name).toBeGreaterThanOrEqual(44);
+    expect(button.inside, viewport.name).toBe(true);
+    expect(dock.inside, viewport.name).toBe(true);
+    expect(dock.height, viewport.name).toBeLessThanOrEqual(72);
+  }
+
+  await page.setViewportSize({ width: 420, height: 719 });
+  const readyRadius = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            snapshot: () => { runtime: { radius: number } };
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__?.snapshot().runtime.radius ?? 0,
+  );
+  await page.waitForTimeout(1_000);
+  await collectCurrentPickup(page);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __QUARKATAMARI_PERFORMANCE__?: {
+                snapshot: () => {
+                  runtime: {
+                    era: number;
+                    progress: number;
+                    readyToGrow: boolean;
+                    radius: number;
+                  };
+                };
+              };
+            }
+          ).__QUARKATAMARI_PERFORMANCE__?.snapshot().runtime ?? null,
+      ),
+    )
+    .toMatchObject({ era: 0, progress: 1, readyToGrow: true });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __QUARKATAMARI_PERFORMANCE__?: {
+                snapshot: () => { runtime: { radius: number } };
+              };
+            }
+          ).__QUARKATAMARI_PERFORMANCE__?.snapshot().runtime.radius ?? 0,
+      ),
+    )
+    .toBeCloseTo(readyRadius, 6);
+  await expect(page.locator(".fact-card")).toHaveCount(0, {
+    timeout: 7_000,
+  });
+  await grow.click();
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                __QUARKATAMARI_PERFORMANCE__?: {
+                  snapshot: () => { runtime: { era: number } };
+                };
+              }
+            ).__QUARKATAMARI_PERFORMANCE__?.snapshot().runtime.era ?? -1,
+        ),
+      { timeout: 10_000 },
+    )
+    .toBe(1);
+  await expect(grow).toHaveCount(0);
+});
+
+test("iPhone keeps a scale-crossing landmark fact and bundled achievements on screen", async ({
+  page,
+}) => {
+  test.setTimeout(75_000);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "journey",
+        eraId: "moon-scale",
+        progress: 0.999999,
+        picked: 0,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 0,
+        cycles: 0,
+        sound: false,
+        mash: [],
+        collection: [],
+      }),
+    );
+  });
+  await page.setViewportSize({ width: 420, height: 719 });
+  await startMode(page, "Play Long Game");
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                __QUARKATAMARI_PERFORMANCE__?: {
+                  collectSingletonPickup: () => string | null;
+                };
+              }
+            ).__QUARKATAMARI_PERFORMANCE__?.collectSingletonPickup() ?? null,
+        ),
+      { timeout: 20_000 },
+    )
+    .not.toBeNull();
+
+  const fact = page.locator(".fact-card");
+  const milestone = fact.locator(".scale-ready-unlock");
+  await expect(fact).toBeVisible();
+  await expect(milestone).toContainText("Moon Scale is ready");
+  await expect(fact.locator(".achievement-unlock")).toContainText(
+    "First Find",
+  );
+  await expect(fact.locator(".achievement-unlock")).toContainText(
+    "One of One",
+  );
+  const factGeometry = await closeGeometry(fact);
+  const milestoneGeometry = await closeGeometry(milestone);
+  expect(factGeometry).toMatchObject({ inside: true });
+  expect(factGeometry.height).toBeLessThanOrEqual(140);
+  expect(milestoneGeometry.inside).toBe(true);
+  expect(milestoneGeometry.width).toBeGreaterThan(120);
+
+  await expect(fact).toHaveCount(0, { timeout: 7_000 });
+  await expect(page.getByTestId("grow-layer")).toBeVisible();
 });
 
 test("iPhone menu routes keep Field Guide and Scale Lab exits visible", async ({

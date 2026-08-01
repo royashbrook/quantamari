@@ -5,11 +5,14 @@ import test from "node:test";
 
 import {
   AUTHORED_CATALOG_IDS,
+  CURIO_RARITIES,
+  CURIO_SPAWN_MODES,
   ERAS,
   JOURNEY_HOURS,
   LEGACY_V3_ERA_NAMES,
   VISUAL_FORMS,
   eraIndexForId,
+  loadScaleCatalog,
   withAuthoredCatalogIds,
 } from "../../src/lib/scale-data.ts";
 
@@ -29,11 +32,28 @@ const CONFIDENCE_LEVELS = new Set([
   "SPECULATIVE",
 ]);
 
+const V35_ADDED_CURIO_IDS = new Set([
+  "moon-scale/dwarf-world",
+  "moon-scale/cratered-moonlet",
+  "moon-scale/icy-moon-archetype",
+  "planetary-pantry/venus",
+  "giant-worlds/exoplanet-giant",
+  "giant-worlds/ice-giant-archetype",
+  "giant-worlds/ringed-giant-archetype",
+  "stellar-buffet/sun",
+  "system-sweep/solar-system",
+  "stellar-neighborhood/pleiades",
+  "stellar-neighborhood/orion-nebula-m42",
+  "galaxy-garden/milky-way",
+  "galaxy-garden/andromeda-galaxy",
+  "galaxy-garden/triangulum-galaxy",
+]);
+
 test("the expanded journey has stable, strictly increasing layers", () => {
   assert.equal(ERAS.length, 34);
   assert.equal(
     ERAS.reduce((total, era) => total + era.curios.length, 0),
-    220,
+    234,
   );
   assert.equal(JOURNEY_HOURS, 500);
 
@@ -75,8 +95,13 @@ test("authored IDs survive display-copy changes and preserve the v4 save contrac
   ]);
   assert.equal(AUTHORED_CATALOG_IDS.length, ERAS.length);
   assert.equal(
-    createHash("sha256").update(JSON.stringify(savedIds)).digest("hex"),
+    createHash("sha256")
+      .update(
+        JSON.stringify(savedIds.filter((id) => !V35_ADDED_CURIO_IDS.has(id))),
+      )
+      .digest("hex"),
     "d3dae188178ca70eb35eb9d901ba4a67523d9fb5f04dc9c2eb840adde042da2b",
+    "v3.5 additions must not rename or remove any v4 save identity",
   );
 
   const renamed = withAuthoredCatalogIds(
@@ -122,15 +147,162 @@ test("every layer and curio has valid science metadata", () => {
         era.sources.includes(curio.source),
         `${curio.id} source must belong to its era`,
       );
+      assert.ok(CURIO_RARITIES.includes(curio.rarity), `${curio.id} rarity`);
+      assert.ok(
+        CURIO_SPAWN_MODES.includes(curio.spawnMode),
+        `${curio.id} spawn mode`,
+      );
     }
   }
+});
+
+test("singleton landmarks have globally unique subjects and every layer remains replayable", () => {
+  const singletonSubjects = new Set();
+
+  for (const era of ERAS) {
+    assert.ok(
+      era.curios.some((curio) => curio.spawnMode === "repeatable"),
+      `${era.id} needs a repeatable collectible after landmarks are found`,
+    );
+
+    for (const curio of era.curios) {
+      if (curio.spawnMode === "singleton") {
+        assert.equal(curio.rarity, "rare", `${curio.id} landmark rarity`);
+        assert.match(
+          curio.subjectId,
+          /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/,
+          `${curio.id} needs a stable global subject identity`,
+        );
+        assert.ok(
+          !singletonSubjects.has(curio.subjectId),
+          `${curio.subjectId} represents more than one singleton`,
+        );
+        singletonSubjects.add(curio.subjectId);
+      } else {
+        assert.equal(
+          curio.subjectId,
+          undefined,
+          `${curio.id} is repeatable and must not claim a singleton subject`,
+        );
+      }
+    }
+  }
+
+  assert.equal(singletonSubjects.size, 21);
+});
+
+test("catalog validation rejects invalid collection metadata", () => {
+  const duplicateSubject = structuredClone(catalog);
+  duplicateSubject
+    .find((era) => era.id === "planetary-pantry")
+    .curios.find((curio) => curio.id === "venus").subjectId =
+    "solar-system/earth";
+  assert.throws(
+    () => loadScaleCatalog(duplicateSubject),
+    /solar-system\/earth is assigned to more than one singleton/,
+  );
+
+  const invalidRarity = structuredClone(catalog);
+  invalidRarity[0].curios[0].rarity = "mythic";
+  assert.throws(
+    () => loadScaleCatalog(invalidRarity),
+    /theory-playground\/foam-bubble\.rarity/,
+  );
+
+  const noRepeatable = structuredClone(catalog);
+  const moonScale = noRepeatable.find((era) => era.id === "moon-scale");
+  moonScale.curios = moonScale.curios.filter(
+    (curio) => curio.spawnMode === "singleton",
+  );
+  assert.throws(
+    () => loadScaleCatalog(noRepeatable),
+    /moon-scale\.curios needs at least one repeatable collectible/,
+  );
+});
+
+test("named cosmic anchors are one-of-one, physical, and scale-appropriate", () => {
+  const byId = new Map(
+    ERAS.flatMap((era) => era.curios).map((curio) => [curio.id, curio]),
+  );
+  const expected = new Map([
+    ["planetary-pantry/venus", "solar-system/venus"],
+    ["planetary-pantry/earth", "solar-system/earth"],
+    ["giant-worlds/saturn", "solar-system/saturn"],
+    ["stellar-buffet/sun", "solar-system/sun"],
+    ["system-sweep/solar-system", "solar-system"],
+    [
+      "stellar-neighborhood/orion-nebula-m42",
+      "milky-way/orion-nebula-m42",
+    ],
+    ["galaxy-garden/milky-way", "local-group/milky-way"],
+    ["galaxy-garden/andromeda-galaxy", "local-group/andromeda"],
+    ["galaxy-cluster-web/local-group", "large-scale/local-group"],
+  ]);
+
+  for (const [id, subjectId] of expected) {
+    assert.deepEqual(
+      {
+        spawnMode: byId.get(id)?.spawnMode,
+        subjectId: byId.get(id)?.subjectId,
+      },
+      { spawnMode: "singleton", subjectId },
+      `${id} should be an identifiable one-of-one landmark`,
+    );
+  }
+
+  const relativeSize = (id) => byId.get(id)?.relativeSize ?? 0;
+  assert.ok(
+    relativeSize("planetary-pantry/mercury") <
+      relativeSize("planetary-pantry/mars"),
+  );
+  assert.ok(
+    relativeSize("planetary-pantry/mars") <
+      relativeSize("planetary-pantry/venus"),
+  );
+  assert.ok(
+    relativeSize("planetary-pantry/venus") <
+      relativeSize("planetary-pantry/earth"),
+  );
+  assert.ok(
+    relativeSize("giant-worlds/neptune") <
+      relativeSize("giant-worlds/saturn"),
+  );
+  assert.ok(
+    relativeSize("giant-worlds/saturn") <
+      relativeSize("giant-worlds/jupiter"),
+  );
+  assert.ok(
+    relativeSize("galaxy-garden/triangulum-galaxy") <
+      relativeSize("galaxy-garden/milky-way"),
+  );
+  assert.ok(
+    relativeSize("galaxy-garden/milky-way") <
+      relativeSize("galaxy-garden/andromeda-galaxy"),
+  );
+  assert.equal(ERAS.find((era) => era.id === "giant-worlds")?.logMeters, 8.15);
+
+  assert.deepEqual(
+    {
+      id: byId.get("planetary-pantry/saturn")?.id,
+      name: byId.get("planetary-pantry/saturn")?.name,
+      spawnMode: byId.get("planetary-pantry/saturn")?.spawnMode,
+      subjectId: byId.get("planetary-pantry/saturn")?.subjectId,
+    },
+    {
+      id: "planetary-pantry/saturn",
+      name: "super-Earth",
+      spawnMode: "repeatable",
+      subjectId: undefined,
+    },
+    "the legacy duplicate Saturn ID stays save-compatible but is now Earth-scale",
+  );
 });
 
 test("every collectible has an explicit plush-ready visual form", () => {
   const validForms = new Set(VISUAL_FORMS);
   const curios = ERAS.flatMap((era) => era.curios);
 
-  assert.equal(curios.length, 220);
+  assert.equal(curios.length, 234);
   for (const curio of curios) {
     assert.ok(
       validForms.has(curio.visualForm),
@@ -177,7 +349,7 @@ test("the JSON catalog owns editable collectible properties", () => {
   assert.equal(catalog.length, ERAS.length);
   assert.equal(
     catalog.reduce((count, era) => count + era.curios.length, 0),
-    220,
+    234,
   );
   for (const era of catalog) {
     for (const curio of era.curios) {
