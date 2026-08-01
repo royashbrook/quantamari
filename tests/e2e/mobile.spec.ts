@@ -514,3 +514,106 @@ test("iPhone update notice stays persistent without replacing the bottom dock", 
   await page.waitForTimeout(5_700);
   await expect(banner).toBeVisible();
 });
+
+test("iPhone backdrop bands keep their depth order while rolling", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await startLearningTour(page);
+  const selected = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          previewEra: (eraIndex: number) => number;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.previewEra(2);
+  });
+  expect(selected).toBe(2);
+
+  const readDepth = () =>
+    page.evaluate(() => {
+      const snapshot = (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            snapshot: () => {
+              runtime: {
+                era: number;
+                player: { z: number };
+                pickups: { queued: number };
+                backgroundDepth: {
+                  nearRate: number;
+                  nearPitch: number;
+                  nearChildren: number;
+                  midRate: number;
+                  midPitch: number;
+                  midChildren: number;
+                  farRate: number;
+                  farPitch: number;
+                  farChildren: number;
+                };
+              };
+            };
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__?.snapshot();
+      return snapshot
+        ? {
+            era: snapshot.runtime.era,
+            z: snapshot.runtime.player.z,
+            queued: snapshot.runtime.pickups.queued,
+            ...snapshot.runtime.backgroundDepth,
+          }
+        : null;
+    });
+
+  await expect
+    .poll(async () => {
+      const depth = await readDepth();
+      return depth
+        ? {
+            era: depth.era,
+            queued: depth.queued,
+            nearChildren: depth.nearChildren,
+            midChildren: depth.midChildren,
+            farChildren: depth.farChildren,
+          }
+        : null;
+    })
+    .toEqual({
+      era: 2,
+      queued: 0,
+      nearChildren: expect.any(Number),
+      midChildren: expect.any(Number),
+      farChildren: expect.any(Number),
+    });
+  const before = await readDepth();
+  expect(before?.nearChildren).toBeGreaterThan(0);
+  expect(before?.midChildren).toBeGreaterThan(0);
+  expect(before?.farChildren).toBeGreaterThan(0);
+  expect(before?.nearRate).toBeGreaterThan(before?.midRate ?? Infinity);
+  expect(before?.midRate).toBeGreaterThan(before?.farRate ?? Infinity);
+
+  const startZ = before?.z ?? 0;
+  await page.keyboard.down("ArrowUp");
+  try {
+    await expect
+      .poll(async () => Math.abs(((await readDepth())?.z ?? startZ) - startZ))
+      .toBeGreaterThan(3);
+  } finally {
+    await page.keyboard.up("ArrowUp");
+  }
+  const after = await readDepth();
+  const angleDelta = (next = 0, previous = 0) =>
+    Math.abs(Math.atan2(Math.sin(next - previous), Math.cos(next - previous)));
+  const nearTravel = angleDelta(after?.nearPitch, before?.nearPitch);
+  const midTravel = angleDelta(after?.midPitch, before?.midPitch);
+  const farTravel = angleDelta(after?.farPitch, before?.farPitch);
+  expect(nearTravel).toBeGreaterThan(midTravel);
+  expect(midTravel).toBeGreaterThan(farTravel);
+  expect(nearTravel).toBeGreaterThan(0.0035);
+  expect(midTravel).toBeGreaterThan(0.0017);
+  expect(farTravel).toBeGreaterThan(0.00075);
+  expect(nearTravel).toBeLessThan(0.05);
+});

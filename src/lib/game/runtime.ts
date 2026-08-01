@@ -60,6 +60,15 @@ import {
   type RuntimePhase,
 } from "./runtime-performance";
 import {
+  type BackgroundBand,
+  COSMIC_BACKDROP_SHELLS,
+  backgroundDepthCue,
+  environmentDepthCue,
+  foundationDepthCue,
+  parallaxPitch,
+  parallaxYaw,
+} from "./background-depth";
+import {
   type CollectibleGeometryLibrary,
   createCollectibleGeometryLibrary,
   createCollectibleLodPool,
@@ -352,6 +361,20 @@ export function mountGame(
   // otherwise be classified as a desktop GPU.
   const coarsePointer =
     window.matchMedia?.("(pointer: coarse)").matches === true;
+  const reducedMotion =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  const midBackdropTravelRate = backgroundDepthCue(
+    "mid",
+    reducedMotion,
+  ).travelRate;
+  const nearBackdropTravelRate = backgroundDepthCue(
+    "near",
+    reducedMotion,
+  ).travelRate;
+  const farBackdropTravelRate = backgroundDepthCue(
+    "far",
+    reducedMotion,
+  ).travelRate;
   const isCompactView = (viewportWidth: number) =>
     coarsePointer || viewportWidth <= 860;
   const compactGpu = isCompactView(window.innerWidth);
@@ -510,9 +533,45 @@ export function mountGame(
   let unaccountedDrawCallReserve = minimumDrawCallPipelineReserve;
 
   const environmentGroup = new THREE.Group();
+  environmentGroup.name = "environment:physical";
   scene.add(environmentGroup);
+  const nearBackdropGroup = new THREE.Group();
+  nearBackdropGroup.name = "environment:near";
+  nearBackdropGroup.renderOrder = -10;
+  scene.add(nearBackdropGroup);
+  const midBackdropGroup = new THREE.Group();
+  midBackdropGroup.name = "environment:mid";
+  midBackdropGroup.renderOrder = -20;
+  scene.add(midBackdropGroup);
+  const farBackdropGroup = new THREE.Group();
+  farBackdropGroup.name = "environment:far";
+  farBackdropGroup.renderOrder = -30;
+  scene.add(farBackdropGroup);
   const substrateGroup = new THREE.Group();
+  substrateGroup.name = "substrate:root";
+  const substrateNearestGroup = new THREE.Group();
+  substrateNearestGroup.name = "substrate:nearest";
+  substrateNearestGroup.renderOrder = -10;
+  const substrateCompressedGroup = new THREE.Group();
+  substrateCompressedGroup.name = "substrate:compressed";
+  substrateCompressedGroup.renderOrder = -20;
+  substrateGroup.add(substrateNearestGroup, substrateCompressedGroup);
   scene.add(substrateGroup);
+  const backdropRenderOrder: Readonly<Record<BackgroundBand, number>> = {
+    near: -10,
+    mid: -20,
+    far: -30,
+  };
+  const stampBackdropRenderOrder = (
+    root: THREE.Object3D,
+    band: BackgroundBand,
+  ) => {
+    root.traverse((object) => {
+      if (object instanceof THREE.Group) {
+        object.renderOrder = backdropRenderOrder[band];
+      }
+    });
+  };
   let centralSceneryCompact: boolean | null = null;
 
   const PERIODIC_TILE_OFFSETS = [
@@ -793,6 +852,10 @@ export function mountGame(
   let substrateRenderedAuthoredInstances = 0;
   let substrateRenderedGenericInstances = 0;
   let substrateFoundationPlan: FoundationPlan = foundationPlan(0, ERAS);
+  let substrateUsesPeriodicCopies = false;
+  let environmentTravelRate = 0;
+  let substrateNearestTravelRate = 0;
+  let substrateCompressedTravelRate = 0;
   let collectibleGeometryLibrary: CollectibleGeometryLibrary | null = null;
 
   const substrateKeyFor = (viewScale: number) =>
@@ -933,7 +996,8 @@ export function mountGame(
     });
     ownedGeometries.forEach((geometry) => geometry.dispose());
     ownedMaterials.forEach((material) => material.dispose());
-    substrateGroup.clear();
+    substrateNearestGroup.clear();
+    substrateCompressedGroup.clear();
     substrateAuthoredInstances = 0;
     substrateGenericInstances = 0;
     substrateRenderedAuthoredInstances = 0;
@@ -942,6 +1006,9 @@ export function mountGame(
     const plan = foundationPlan(viewScale, ERAS);
     substrateFoundationPlan = plan;
     substrateLayerIndices = [...plan.visibleLayerIndices];
+    substrateNearestTravelRate = 0;
+    substrateCompressedTravelRate = 0;
+    substrateUsesPeriodicCopies = false;
     if (!plan.nearest) {
       substrateGroup.visible = false;
       semanticResidencyKey = plan.key;
@@ -954,6 +1021,17 @@ export function mountGame(
       throw new TypeError("Collectible geometry library is not ready");
     }
     const era = ERAS[plan.nearest.index];
+    const nearestCue = foundationDepthCue(
+      plan.presentation,
+      "nearest",
+      plan.nearest.depth,
+      reducedMotion,
+    );
+    substrateNearestTravelRate = nearestCue.travelRate;
+    const fogColor =
+      scene.fog instanceof THREE.FogExp2 || scene.fog instanceof THREE.Fog
+        ? scene.fog.color
+        : deepColor;
     const count =
       qualityTier === "high" ? 128 : qualityTier === "balanced" ? 96 : 64;
     const families = new Map<string, { curio: Curio; items: number[] }>();
@@ -963,15 +1041,27 @@ export function mountGame(
       family.items.push(item);
       families.set(curio.id, family);
     }
+    const volumetricFoundation =
+      plan.presentation === "field" ||
+      plan.presentation === "distant-field";
     const solidMaterial = new THREE.MeshToonMaterial({
-      color: "#ffffff",
+      color: new THREE.Color("#ffffff").lerp(
+        fogColor,
+        nearestCue.fogMix * 0.34,
+      ),
       vertexColors: true,
+      transparent: volumetricFoundation,
+      opacity: volumetricFoundation ? nearestCue.opacityCap : 1,
+      depthWrite: !volumetricFoundation,
     });
     const effectMaterial = new THREE.MeshBasicMaterial({
-      color: "#ffffff",
+      color: new THREE.Color("#ffffff").lerp(
+        fogColor,
+        nearestCue.fogMix * 0.52,
+      ),
       vertexColors: true,
       transparent: true,
-      opacity: 0.3,
+      opacity: Math.min(nearestCue.opacityCap * 0.72, 0.2),
       depthWrite: false,
       side: THREE.DoubleSide,
     });
@@ -1034,7 +1124,7 @@ export function mountGame(
         instances.instanceMatrix.needsUpdate = true;
         instances.receiveShadow = false;
         instances.castShadow = false;
-        substrateGroup.add(instances);
+        substrateNearestGroup.add(instances);
       };
       addInstances(geometries.solid, solidMaterial, "solid");
       addInstances(geometries.effect, effectMaterial, "effect");
@@ -1042,6 +1132,17 @@ export function mountGame(
     });
 
     if (plan.compressed.length > 0 || plan.ancestryCount > 0) {
+      const compressedDepth = Math.max(
+        plan.ancestryCount > 0 ? 4 : 2,
+        ...plan.compressed.map((layer) => layer.depth),
+      );
+      const compressedCue = foundationDepthCue(
+        plan.presentation,
+        "compressed",
+        compressedDepth,
+        reducedMotion,
+      );
+      substrateCompressedTravelRate = compressedCue.travelRate;
       const positions: number[] = [];
       const colors: number[] = [];
       const pointCount = reducedWorldDetail() ? 320 : 520;
@@ -1056,8 +1157,11 @@ export function mountGame(
         );
         positions.push(position.x, position.y, position.z);
         const faded = new THREE.Color(ERAS[layer.index].palette[2]).lerp(
-          new THREE.Color("#fff4d6"),
-          Math.min(0.68, 0.14 + layer.depth * 0.1),
+          fogColor,
+          Math.min(
+            0.86,
+            compressedCue.fogMix + Math.max(0, layer.depth - 2) * 0.04,
+          ),
         );
         colors.push(faded.r, faded.g, faded.b);
       }
@@ -1075,20 +1179,27 @@ export function mountGame(
         new THREE.PointsMaterial({
           size: plan.presentation === "distant-field" ? 0.12 : 0.07,
           transparent: true,
-          opacity: 0.42,
+          opacity: compressedCue.opacityCap,
           vertexColors: true,
           depthWrite: false,
         }),
       );
       points.name = "substrate:compressed-ancestry";
-      substrateGroup.add(points);
+      substrateCompressedGroup.add(points);
       substrateGenericInstances = pointCount;
     }
 
-    const periodicFoundation = PERIODIC_WORLD_KINDS.has(activeWorldKind);
+    const periodicFoundation =
+      plan.presentation === "surface" &&
+      PERIODIC_WORLD_KINDS.has(activeWorldKind);
+    substrateUsesPeriodicCopies = periodicFoundation;
     if (periodicFoundation) {
       addPeriodicSubstrateCopies(
-        substrateGroup,
+        substrateNearestGroup,
+        worldChunkSize(activeWorldKind),
+      );
+      addPeriodicSubstrateCopies(
+        substrateCompressedGroup,
         worldChunkSize(activeWorldKind),
       );
     }
@@ -1282,21 +1393,29 @@ export function mountGame(
   let worldGeneration = 0;
 
   const disposeEnvironment = () => {
-    environmentGroup.traverse((object) => {
-      if (
-        object instanceof THREE.Mesh ||
-        object instanceof THREE.Points ||
-        object instanceof THREE.Line
-      ) {
-        if (object instanceof THREE.InstancedMesh) object.dispose();
-        object.geometry.dispose();
-        const materials = Array.isArray(object.material)
-          ? object.material
-          : [object.material];
-        materials.forEach((material) => material.dispose());
-      }
+    [
+      environmentGroup,
+      nearBackdropGroup,
+      midBackdropGroup,
+      farBackdropGroup,
+    ].forEach((group) => {
+      group.traverse((object) => {
+        if (
+          object instanceof THREE.Mesh ||
+          object instanceof THREE.Points ||
+          object instanceof THREE.Line
+        ) {
+          if (object instanceof THREE.InstancedMesh) object.dispose();
+          object.geometry.dispose();
+          const materials = Array.isArray(object.material)
+            ? object.material
+            : [object.material];
+          materials.forEach((material) => material.dispose());
+        }
+      });
+      group.clear();
+      group.rotation.set(0, 0, 0);
     });
-    environmentGroup.clear();
     foundationSurfaceMaterials.clear();
     sceneryColliders = [];
   };
@@ -1344,6 +1463,24 @@ export function mountGame(
       depthWrite: false,
     });
 
+  const backdropGlow = (
+    color: THREE.ColorRepresentation,
+    band: BackgroundBand,
+    opacity: number,
+    wireframe = false,
+  ) => {
+    const cue = backgroundDepthCue(band, reducedMotion);
+    const fogColor =
+      scene.fog instanceof THREE.FogExp2 || scene.fog instanceof THREE.Fog
+        ? scene.fog.color
+        : deepColor;
+    return sceneryGlow(
+      new THREE.Color(color).lerp(fogColor, cue.fogMix),
+      Math.min(opacity, cue.opacityCap),
+      wireframe,
+    );
+  };
+
   const addStarField = (count: number, radius: number, seed: number) => {
     const positions: number[] = [];
     const colors: number[] = [];
@@ -1364,14 +1501,15 @@ export function mountGame(
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    const farCue = backgroundDepthCue("far", reducedMotion);
     const material = new THREE.PointsMaterial({
       size: reducedWorldDetail() ? 0.17 : 0.22,
       transparent: true,
-      opacity: 0.88,
+      opacity: Math.max(0.48, farCue.opacityCap),
       vertexColors: true,
       depthWrite: false,
     });
-    environmentGroup.add(new THREE.Points(geometry, material));
+    farBackdropGroup.add(new THREE.Points(geometry, material));
   };
 
   let groundTexture: THREE.CanvasTexture | null = null;
@@ -2139,12 +2277,67 @@ export function mountGame(
     }
   };
 
+  const addBackdropEraSignature = (
+    index: number,
+    band: BackgroundBand,
+  ) => {
+    const firstNewChild = environmentGroup.children.length;
+    addEraSignature(index);
+    const cue = backgroundDepthCue(band, reducedMotion);
+    const fogColor =
+      scene.fog instanceof THREE.FogExp2 || scene.fog instanceof THREE.Fog
+        ? scene.fog.color
+        : deepColor;
+    const newRoots = environmentGroup.children.slice(firstNewChild);
+    newRoots.forEach((root) => {
+      stampBackdropRenderOrder(root, band);
+      root.traverse((object) => {
+        if (
+          !(
+            object instanceof THREE.Mesh ||
+            object instanceof THREE.Points ||
+            object instanceof THREE.Line
+          )
+        ) {
+          return;
+        }
+        object.castShadow = false;
+        object.receiveShadow = false;
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material];
+        materials.forEach((material) => {
+          if ("color" in material) {
+            (material as THREE.MeshBasicMaterial).color.lerp(
+              fogColor,
+              cue.fogMix,
+            );
+          }
+          if (material.transparent) {
+            material.opacity = Math.min(material.opacity, cue.opacityCap);
+            material.depthWrite = false;
+          }
+          material.needsUpdate = true;
+        });
+      });
+    });
+    const targetGroup =
+      band === "mid"
+        ? midBackdropGroup
+        : band === "far"
+          ? farBackdropGroup
+          : nearBackdropGroup;
+    newRoots.forEach((root) => targetGroup.add(root));
+  };
+
   const buildEnvironment = (index: number) => {
     disposeEnvironment();
     environmentGroup.visible = true;
     applyScaleTextures(index);
     environmentMode = environmentModeFor(index);
     activeWorldKind = worldSpecForEra(ERAS[index].name).kind;
+    environmentTravelRate =
+      environmentDepthCue(activeWorldKind, reducedMotion)?.travelRate ?? 0;
     const nextFoundation = foundationPlan(index, ERAS);
     foundationOverlay.visible =
       nextFoundation.presentation === "surface" &&
@@ -2159,6 +2352,9 @@ export function mountGame(
     grid.visible = false;
     dustField.visible = true;
     environmentGroup.rotation.set(0, 0, 0);
+    nearBackdropGroup.visible = true;
+    midBackdropGroup.visible = true;
+    farBackdropGroup.visible = true;
 
     if (
       activeWorldKind === "void" ||
@@ -2181,13 +2377,13 @@ export function mountGame(
         const foamCount = reducedWorldDetail() ? 72 : 110;
         const foam = new THREE.InstancedMesh(
           new THREE.IcosahedronGeometry(0.42, 1),
-          sceneryGlow(activeEra.palette[2], 0.2, true),
+          backdropGlow(activeEra.palette[2], "mid", 0.18, true),
           foamCount,
         );
         const dummy = new THREE.Object3D();
         for (let cell = 0; cell < foamCount; cell += 1) {
           const angle = pseudo(cell * 5.17 + index) * Math.PI * 2;
-          const radius = 2 + pseudo(cell * 8.73 + index) * 58;
+          const radius = 24 + pseudo(cell * 8.73 + index) * 48;
           dummy.position.set(
             Math.cos(angle) * radius,
             -0.2 + pseudo(cell * 3.11 + 8) * 5.4,
@@ -2203,37 +2399,50 @@ export function mountGame(
           foam.setMatrixAt(cell, dummy.matrix);
         }
         foam.instanceMatrix.needsUpdate = true;
-        environmentGroup.add(foam);
+        midBackdropGroup.add(foam);
       }
       for (let ring = 0; ring < 11; ring += 1) {
         const radius = 1.8 + pseudo(ring + 17) * 5.2;
+        const angle = pseudo(ring + 31) * Math.PI * 2;
+        const distance = 30 + pseudo(ring + 51) * 31;
         addScenery(
           new THREE.TorusGeometry(radius, 0.025 + pseudo(ring + 5) * 0.05, 5, 42),
-          sceneryGlow(ring % 2 ? activeEra.palette[2] : "#baf8ff", 0.22 + pseudo(ring) * 0.2),
+          backdropGlow(
+            ring % 2 ? activeEra.palette[2] : "#baf8ff",
+            "mid",
+            0.13 + pseudo(ring) * 0.08,
+          ),
           [
-            (pseudo(ring + 31) - 0.5) * 40,
+            Math.cos(angle) * distance,
             2.5 + pseudo(ring + 41) * 13,
-            (pseudo(ring + 51) - 0.5) * 44,
+            Math.sin(angle) * distance,
           ],
           [
             pseudo(ring + 61) * Math.PI,
             pseudo(ring + 71) * Math.PI,
             pseudo(ring + 81) * Math.PI,
           ],
+          [1, 1, 1],
+          midBackdropGroup,
         );
       }
       for (let bubble = 0; bubble < 8; bubble += 1) {
+        const angle = pseudo(bubble + 101) * Math.PI * 2;
+        const distance = 48 + pseudo(bubble + 121) * 24;
         addScenery(
           new THREE.IcosahedronGeometry(0.8 + pseudo(bubble + 90) * 2.4, 2),
-          sceneryGlow(activeEra.palette[2], 0.09, true),
+          backdropGlow(activeEra.palette[2], "far", 0.075, true),
           [
-            (pseudo(bubble + 101) - 0.5) * 36,
-            3 + pseudo(bubble + 111) * 10,
-            (pseudo(bubble + 121) - 0.5) * 38,
+            Math.cos(angle) * distance,
+            6 + pseudo(bubble + 111) * 14,
+            Math.sin(angle) * distance,
           ],
+          [0, 0, 0],
+          [1, 1, 1],
+          farBackdropGroup,
         );
       }
-      addEraSignature(index);
+      addBackdropEraSignature(index, "near");
       return;
     }
 
@@ -2266,7 +2475,8 @@ export function mountGame(
           pseudo(cell + 52) * Math.PI,
           pseudo(cell + 62),
         );
-        environmentGroup.add(cellGroup);
+        stampBackdropRenderOrder(cellGroup, "near");
+        nearBackdropGroup.add(cellGroup);
         addScenery(
           new THREE.IcosahedronGeometry(2.2 + pseudo(cell + 72) * 2.4, 2),
           sceneryGlow(cell % 2 ? "#62e6cb" : "#ff8ad8", 0.13),
@@ -2287,16 +2497,22 @@ export function mountGame(
       for (let strand = 0; strand < 7; strand += 1) {
         addScenery(
           new THREE.TorusKnotGeometry(2.4, 0.08, 56, 5, 2, 3),
-          sceneryGlow(strand % 2 ? "#84f7ff" : "#ffb3e1", 0.34),
+          backdropGlow(
+            strand % 2 ? "#84f7ff" : "#ffb3e1",
+            "mid",
+            0.15,
+          ),
           [
             (pseudo(strand + 142) - 0.5) * 48,
             3 + pseudo(strand + 152) * 7,
             (pseudo(strand + 162) - 0.5) * 48,
           ],
           [pseudo(strand) * Math.PI, pseudo(strand + 2) * Math.PI, 0],
+          [1, 1, 1],
+          midBackdropGroup,
         );
       }
-      addEraSignature(index);
+      addBackdropEraSignature(index, "near");
       return;
     }
 
@@ -2699,12 +2915,14 @@ export function mountGame(
           sceneryToon(mountain % 3 ? "#6a7f6d" : "#8b7891"),
           [Math.cos(angle) * distance, 2.3, Math.sin(angle) * distance],
           [0, pseudo(mountain + 241) * Math.PI, 0],
+          [1, 1, 1],
+          midBackdropGroup,
         );
       }
       if (!atmosphere) {
         addStarField(reducedWorldDetail() ? 260 : 430, 100, 315);
       }
-      addEraSignature(index);
+      addBackdropEraSignature(index, "near");
       return;
     }
 
@@ -2788,7 +3006,7 @@ export function mountGame(
       clouds.receiveShadow = false;
       environmentGroup.add(clouds);
       addStarField(reducedWorldDetail() ? 180 : 300, 104, index * 29);
-      addEraSignature(index);
+      addBackdropEraSignature(index, "mid");
       return;
     }
 
@@ -2822,29 +3040,45 @@ export function mountGame(
         pseudo(galaxy + 321) * Math.PI,
         pseudo(galaxy + 331) * Math.PI,
       );
-      environmentGroup.add(galaxyGroup);
+      stampBackdropRenderOrder(galaxyGroup, "mid");
+      midBackdropGroup.add(galaxyGroup);
       const galaxyColor = ["#c5b4ff", "#ffafd9", "#9ef6ff"][galaxy % 3];
       for (let ring = 0; ring < 3; ring += 1) {
         addScenery(
           new THREE.TorusGeometry(2.2 + ring * 1.1, 0.1, 5, 54),
-          sceneryGlow(galaxyColor, 0.38 - ring * 0.07),
+          backdropGlow(galaxyColor, "mid", 0.15 - ring * 0.025),
           [0, 0, 0],
           [Math.PI / 2, ring * 0.28, 0],
           [1.8, 1, 0.72],
           galaxyGroup,
         );
       }
-      addScenery(new THREE.IcosahedronGeometry(0.62, 1), sceneryGlow("#fff4b0", 0.86), [0, 0, 0], [0, 0, 0], [1, 1, 1], galaxyGroup);
+      addScenery(
+        new THREE.IcosahedronGeometry(0.62, 1),
+        backdropGlow("#fff4b0", "mid", 0.15),
+        [0, 0, 0],
+        [0, 0, 0],
+        [1, 1, 1],
+        galaxyGroup,
+      );
     }
     if (
       activeWorldKind === "cosmic-web" ||
       activeWorldKind === "speculative-beyond"
     ) {
-      [42, 68, 98].forEach((radius, shell) => {
+      COSMIC_BACKDROP_SHELLS.forEach(({ radius, position }, shell) => {
         addScenery(
           new THREE.SphereGeometry(radius, 28, 18),
-          sceneryGlow(shell === 1 ? "#7c71ff" : "#ff78ca", 0.055, true),
+          backdropGlow(
+            shell === 1 ? "#7c71ff" : "#ff78ca",
+            "far",
+            0.065,
+            true,
+          ),
+          position,
           [0, 0, 0],
+          [1, 1, 1],
+          farBackdropGroup,
         );
       });
     }
@@ -2853,16 +3087,24 @@ export function mountGame(
         const angle = (bubble / 9) * Math.PI * 2;
         addScenery(
           new THREE.SphereGeometry(5 + (bubble % 3) * 2, 18, 12),
-          sceneryGlow(["#8cf3ff", "#ff85d2", "#c9a0ff"][bubble % 3], 0.12, true),
+          backdropGlow(
+            ["#8cf3ff", "#ff85d2", "#c9a0ff"][bubble % 3],
+            "far",
+            0.075,
+            true,
+          ),
           [
-            Math.cos(angle) * (28 + (bubble % 2) * 18),
+            Math.cos(angle) * (40 + (bubble % 2) * 18),
             9 + (bubble % 4) * 8,
-            Math.sin(angle) * (28 + (bubble % 2) * 18),
+            Math.sin(angle) * (40 + (bubble % 2) * 18),
           ],
+          [0, 0, 0],
+          [1, 1, 1],
+          farBackdropGroup,
         );
       }
     }
-    addEraSignature(index);
+    addBackdropEraSignature(index, "mid");
   };
 
   const rebuildEnvironment = (index: number) => {
@@ -3821,6 +4063,9 @@ export function mountGame(
 
     transitionWorldScale = 1;
     environmentGroup.scale.setScalar(1);
+    nearBackdropGroup.scale.setScalar(1);
+    midBackdropGroup.scale.setScalar(1);
+    farBackdropGroup.scale.setScalar(1);
     substrateGroup.scale.setScalar(1);
     ground.scale.setScalar(1);
     foundationOverlay.scale.setScalar(1);
@@ -4116,6 +4361,35 @@ export function mountGame(
             profileSettings,
             worldGeneration,
             transitionActive: scaleTransitionStarted >= 0,
+            backgroundDepth: {
+              reducedMotion,
+              environmentRate: environmentTravelRate,
+              environmentYaw: environmentGroup.rotation.y,
+              environmentPitch: environmentGroup.rotation.x,
+              environmentChildren: environmentGroup.children.length,
+              nearRate: nearBackdropTravelRate,
+              nearYaw: nearBackdropGroup.rotation.y,
+              nearPitch: nearBackdropGroup.rotation.x,
+              nearChildren: nearBackdropGroup.children.length,
+              midRate: midBackdropTravelRate,
+              midYaw: midBackdropGroup.rotation.y,
+              midPitch: midBackdropGroup.rotation.x,
+              midChildren: midBackdropGroup.children.length,
+              farRate: farBackdropTravelRate,
+              farYaw: farBackdropGroup.rotation.y,
+              farPitch: farBackdropGroup.rotation.x,
+              farChildren: farBackdropGroup.children.length,
+              foundationNearestRate: substrateNearestTravelRate,
+              foundationNearestYaw: substrateNearestGroup.rotation.y,
+              foundationNearestPitch: substrateNearestGroup.rotation.x,
+              foundationNearestChildren:
+                substrateNearestGroup.children.length,
+              foundationCompressedRate: substrateCompressedTravelRate,
+              foundationCompressedYaw: substrateCompressedGroup.rotation.y,
+              foundationCompressedPitch: substrateCompressedGroup.rotation.x,
+              foundationCompressedChildren:
+                substrateCompressedGroup.children.length,
+            },
             pickups: {
               active: pickups.length,
               current: activeScalePickupCount(),
@@ -4169,13 +4443,19 @@ export function mountGame(
               groundVisible: ground.visible,
               foundationSurfaceMemory: foundationOverlay.visible,
               dustVisible: dustField.visible,
-              environmentChildren: environmentGroup.children.length,
+              environmentChildren:
+                environmentGroup.children.length +
+                nearBackdropGroup.children.length +
+                midBackdropGroup.children.length +
+                farBackdropGroup.children.length,
               atmosphericCloudTop: Boolean(
                 environmentGroup.getObjectByName(
                   "giant-atmosphere:cloud-top",
                 ),
               ),
-              substrateChildren: substrateGroup.children.length,
+              substrateChildren:
+                substrateNearestGroup.children.length +
+                substrateCompressedGroup.children.length,
               substrateAuthoredInstances,
               substrateGenericInstances,
               substrateRenderedAuthoredInstances,
@@ -4616,6 +4896,9 @@ export function mountGame(
       transitionWorldScale = transition.worldScale;
       playerRoot.scale.setScalar(transition.playerScale);
       environmentGroup.scale.setScalar(transitionWorldScale);
+      nearBackdropGroup.scale.setScalar(transitionWorldScale);
+      midBackdropGroup.scale.setScalar(transitionWorldScale);
+      farBackdropGroup.scale.setScalar(transitionWorldScale);
       substrateGroup.scale.setScalar(transitionWorldScale);
       ground.scale.setScalar(transitionWorldScale);
       foundationOverlay.scale.setScalar(transitionWorldScale);
@@ -4721,14 +5004,50 @@ export function mountGame(
     if (PERIODIC_WORLD_KINDS.has(activeWorldKind)) {
       environmentGroup.position.set(chunkX, 0, chunkZ);
     } else {
-      // Sky/planet/cosmic environments are centered continuously instead of
-      // snapping a single diorama at chunk boundaries.
+      // Finite sky/planet/cosmic dioramas stay resident around the player;
+      // their depth bands rotate from absolute travel below so they do not
+      // become camera-locked.
       environmentGroup.position.set(game.x, 0, game.z);
     }
+    nearBackdropGroup.position.set(game.x, 0, game.z);
+    midBackdropGroup.position.set(game.x, 0, game.z);
+    farBackdropGroup.position.set(game.x, 0, game.z);
     substrateGroup.position.set(
-      PERIODIC_WORLD_KINDS.has(activeWorldKind) ? chunkX : game.x,
+      substrateUsesPeriodicCopies ? chunkX : game.x,
       0,
-      PERIODIC_WORLD_KINDS.has(activeWorldKind) ? chunkZ : game.z,
+      substrateUsesPeriodicCopies ? chunkZ : game.z,
+    );
+    const absoluteX = game.x + game.originX;
+    const absoluteZ = game.z + game.originZ;
+    environmentGroup.rotation.set(
+      parallaxPitch(absoluteZ, environmentTravelRate),
+      parallaxYaw(absoluteX, environmentTravelRate),
+      0,
+    );
+    nearBackdropGroup.rotation.set(
+      parallaxPitch(absoluteZ, nearBackdropTravelRate),
+      parallaxYaw(absoluteX, nearBackdropTravelRate),
+      0,
+    );
+    midBackdropGroup.rotation.set(
+      parallaxPitch(absoluteZ, midBackdropTravelRate),
+      parallaxYaw(absoluteX, midBackdropTravelRate),
+      0,
+    );
+    farBackdropGroup.rotation.set(
+      parallaxPitch(absoluteZ, farBackdropTravelRate),
+      parallaxYaw(absoluteX, farBackdropTravelRate),
+      0,
+    );
+    substrateNearestGroup.rotation.set(
+      parallaxPitch(absoluteZ, substrateNearestTravelRate),
+      parallaxYaw(absoluteX, substrateNearestTravelRate),
+      0,
+    );
+    substrateCompressedGroup.rotation.set(
+      parallaxPitch(absoluteZ, substrateCompressedTravelRate),
+      parallaxYaw(absoluteX, substrateCompressedTravelRate),
+      0,
     );
     ground.position.set(game.x, 0, game.z);
     foundationOverlay.position.set(game.x, 0.18, game.z);
