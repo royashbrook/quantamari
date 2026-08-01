@@ -84,11 +84,11 @@ What the game means:
   can be collected.
 - **Growth** is collection-driven. Shape-specific gameplay bulk creates
   satisfying variation but is not a physical mass or energy calculation.
-- **Earlier layers remain nested.** The immediately previous layer stays
-  recognizable as simplified objects, the layer below becomes a dense visual
-  fabric, and deeper structure is implied rather than rendered individually.
-  At most three semantic layers are resident at once, and retained lower layers
-  are non-interactive.
+- **Earlier layers remain nested.** The immediately previous layer becomes an
+  underfoot rug of flattened, recognizable objects and its scientific motif.
+  Older layers soften into visual fabric and distant depth rather than sharing
+  the current play plane. At most three semantic layers are resident at once,
+  and retained lower layers are non-interactive.
 - **The Theory Playground, pre-matter rolling, magical adhesion, and the
   metaversal region are visual/game metaphors.** Foam, strings, musical notes,
   topology, and extra dimensions are deliberately mixed together as a playful
@@ -289,6 +289,15 @@ its one-tap action. Dismissal snoozes the coach for fourteen days, installed
 apps suppress it, and the pause menu keeps installation available on demand.
 This work is tracked under
 [issue #47](https://github.com/royashbrook/quantamari/issues/47).
+v3.4 gives environmental and older-scale backdrops restrained, floating-origin
+safe parallax while keeping grounded play surfaces stable. v3.4.1 separates
+that depth from the immediate prior scale: N−1 is flattened into the rug,
+periodically tiled on flat worlds, and wrapped around planetary ground shells;
+only N−2 and older history may recede. Loose outgoing pickups fold toward the
+player during Learning Tour transitions and are retired when their rug takes
+over. This work
+is tracked under [issues #52](https://github.com/royashbrook/quantamari/issues/52)
+and [#54](https://github.com/royashbrook/quantamari/issues/54).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

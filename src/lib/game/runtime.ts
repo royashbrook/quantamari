@@ -64,9 +64,15 @@ import {
   COSMIC_BACKDROP_SHELLS,
   backgroundDepthCue,
   environmentDepthCue,
+  foundationChunkAnchor,
   foundationDepthCue,
+  foundationShellHeight,
+  foundationShellTextureRates,
+  foundationTextureRate,
   parallaxPitch,
   parallaxYaw,
+  wrappedFoundationOffset,
+  wrappedTextureOffset,
 } from "./background-depth";
 import {
   type CollectibleGeometryLibrary,
@@ -106,6 +112,10 @@ type Pickup = {
   retireStartedAt: number | null;
   wantsRichDetail: boolean;
   richAdmitted: boolean;
+  handoffX: number | null;
+  handoffY: number | null;
+  handoffZ: number | null;
+  renderedScaleY: number;
 };
 
 function pseudo(seed: number) {
@@ -125,6 +135,12 @@ const PERIODIC_WORLD_KINDS = new Set<WorldKind>([
 ]);
 const MASH_HISTORY_LIMIT = 96;
 const MAX_VISIBLE_MASH_PIECES = 32;
+const FOUNDATION_OVERLAY_RADIUS = 94;
+const LOCAL_FOUNDATION_CHUNK_SIZE = 56;
+const PLANET_FOUNDATION_CHUNK_SIZE = 80;
+const PLANET_FOUNDATION_ACTIVE_RADIUS = 32;
+const PLANET_FOUNDATION_RADIUS = 80;
+const PLANET_FOUNDATION_CENTER_Y = -79;
 
 function worldChunkSize(kind: WorldKind) {
   return kind === "interior" ? 256 : 128;
@@ -341,6 +357,7 @@ export function mountGame(
       };
       completeLayer: () => boolean;
       previewEra: (index: number) => number;
+      setPlayerPosition: (x: number, z: number) => { x: number; z: number };
       setLens: (value: number) => number;
       emitPickupBursts: (count: number) => number;
       collectCurrentPickup: () => string | null;
@@ -465,7 +482,7 @@ export function mountGame(
     polygonOffsetUnits: -2,
   });
   const foundationOverlay = new THREE.Mesh(
-    new THREE.CircleGeometry(94, 72),
+    new THREE.CircleGeometry(FOUNDATION_OVERLAY_RADIUS, 72),
     foundationOverlayMaterial,
   );
   foundationOverlay.name = "foundation:surface-memory";
@@ -474,6 +491,51 @@ export function mountGame(
   foundationOverlay.renderOrder = 2;
   foundationOverlay.visible = false;
   scene.add(foundationOverlay);
+  let foundationOverlayHeight = 0.18;
+  let foundationMemoryVisible = false;
+  const transitionRugMaterial = new THREE.MeshBasicMaterial({
+    color: "#ffffff",
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+  });
+  const transitionRug = new THREE.Mesh(
+    new THREE.CircleGeometry(FOUNDATION_OVERLAY_RADIUS, 72),
+    transitionRugMaterial,
+  );
+  transitionRug.name = "foundation:incoming-rug";
+  transitionRug.rotation.x = -Math.PI / 2;
+  transitionRug.renderOrder = 3;
+  transitionRug.visible = false;
+  scene.add(transitionRug);
+  const transitionShellMaterial = new THREE.MeshBasicMaterial({
+    color: "#ffffff",
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const transitionShell = new THREE.Mesh(
+    new THREE.SphereGeometry(
+      PLANET_FOUNDATION_RADIUS,
+      compactGpu ? 40 : 56,
+      compactGpu ? 28 : 38,
+    ),
+    transitionShellMaterial,
+  );
+  transitionShell.name = "foundation:incoming-shell";
+  transitionShell.rotation.x = Math.PI / 2;
+  transitionShell.renderOrder = 3;
+  transitionShell.visible = false;
+  scene.add(transitionShell);
+  let transitionRugTexture: THREE.CanvasTexture | null = null;
+  let transitionRugKey = "";
+  let transitionRugMode: "none" | "plane" | "shell" = "none";
+  let transitionRugHeight = 0.035;
+  let transitionRugTargetOpacity = 0;
+  let transitionHandoffBlend = 0;
   const grid = new THREE.GridHelper(170, 90, activeEra.palette[2], activeEra.palette[2]);
   const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
   gridMaterials.forEach((material) => {
@@ -852,10 +914,41 @@ export function mountGame(
   let substrateRenderedAuthoredInstances = 0;
   let substrateRenderedGenericInstances = 0;
   let substrateFoundationPlan: FoundationPlan = foundationPlan(0, ERAS);
-  let substrateUsesPeriodicCopies = false;
+  let substrateNearestUsesPeriodicCopies = false;
+  let substrateNearestUsesPlanetWrap = false;
+  let substrateCompressedUsesPeriodicCopies = false;
+  let substrateNearestChunkSize = LOCAL_FOUNDATION_CHUNK_SIZE;
   let environmentTravelRate = 0;
   let substrateNearestTravelRate = 0;
   let substrateCompressedTravelRate = 0;
+  let substrateNearestGrounded = false;
+  let substrateNearestPlacement: FoundationPlan["presentation"] = "none";
+  let substrateNearestVerticalScale = 1;
+  let substrateNearestLocalRadius = 0;
+  let substrateNearestMinY = 0;
+  let substrateNearestMaxY = 0;
+  let substrateNearestSampleX = 0;
+  let substrateNearestSampleZ = 0;
+  let substrateNearestUnderfootInstances = 0;
+  let substratePlanetFoundationPhaseX = Number.NaN;
+  let substratePlanetFoundationPhaseZ = Number.NaN;
+  let substrateCompressedGrounded = false;
+  let substrateCompressedPlacement: FoundationPlan["presentation"] = "none";
+  type PlanetFoundationTransform = {
+    anchorX: number;
+    anchorZ: number;
+    yaw: number;
+    scale: number;
+    verticalScale: number;
+  };
+  type PlanetFoundationBatch = {
+    transforms: PlanetFoundationTransform[];
+    meshes: THREE.InstancedMesh[];
+  };
+  const substratePlanetFoundationBatches: PlanetFoundationBatch[] = [];
+  const substratePlanetFoundationDummy = new THREE.Object3D();
+  const substratePlanetFoundationNormal = new THREE.Vector3();
+  const substratePlanetFoundationUp = new THREE.Vector3(0, 1, 0);
   let collectibleGeometryLibrary: CollectibleGeometryLibrary | null = null;
 
   const substrateKeyFor = (viewScale: number) =>
@@ -977,6 +1070,154 @@ export function mountGame(
     return new THREE.Vector3(x, 0.025 - shellDrop - depth * 0.004, z);
   };
 
+  const nearestSubstratePosition = (
+    placement: Exclude<FoundationPlan["presentation"], "none">,
+    motif: FoundationMotif,
+    seed: number,
+    depth: number,
+    compact: boolean,
+  ) => {
+    const position = substratePosition(placement, motif, seed, depth);
+    if (!compact) return position;
+    position.x *= 0.38;
+    position.z *= 0.38;
+    position.y =
+      placement === "shell" && activeWorldKind === "planet-surface"
+        ? foundationShellHeight(
+            position.x,
+            position.z,
+            PLANET_FOUNDATION_RADIUS,
+            PLANET_FOUNDATION_CENTER_Y,
+            0.08,
+          ) - PLANET_FOUNDATION_CENTER_Y
+        : 0.035;
+    return position;
+  };
+
+  const applyPlanetFoundationTransform = (
+    target: THREE.Object3D,
+    transform: PlanetFoundationTransform,
+    absoluteX: number,
+    absoluteZ: number,
+  ) => {
+    const x = wrappedFoundationOffset(
+      transform.anchorX,
+      absoluteX,
+      substrateNearestChunkSize,
+    );
+    const z = wrappedFoundationOffset(
+      transform.anchorZ,
+      absoluteZ,
+      substrateNearestChunkSize,
+    );
+    const y =
+      foundationShellHeight(
+        x,
+        z,
+        PLANET_FOUNDATION_RADIUS,
+        PLANET_FOUNDATION_CENTER_Y,
+        0.08,
+      ) - PLANET_FOUNDATION_CENTER_Y;
+    target.position.set(x, y, z);
+    substratePlanetFoundationNormal
+      .set(x, y - 0.08, z)
+      .normalize();
+    target.quaternion.setFromUnitVectors(
+      substratePlanetFoundationUp,
+      substratePlanetFoundationNormal,
+    );
+    target.rotateY(transform.yaw);
+    const halfChunk = substrateNearestChunkSize / 2;
+    const edgeDistance = Math.max(Math.abs(x), Math.abs(z));
+    const edgeFade =
+      1 -
+      THREE.MathUtils.smoothstep(
+        edgeDistance,
+        PLANET_FOUNDATION_ACTIVE_RADIUS,
+        halfChunk,
+      );
+    const visibleScale = transform.scale * edgeFade;
+    target.scale.set(
+      visibleScale,
+      visibleScale * transform.verticalScale,
+      visibleScale,
+    );
+    target.updateMatrix();
+  };
+
+  const updatePlanetFoundationShell = (
+    absoluteX: number,
+    absoluteZ: number,
+  ) => {
+    if (
+      absoluteX === substratePlanetFoundationPhaseX &&
+      absoluteZ === substratePlanetFoundationPhaseZ
+    ) {
+      return;
+    }
+    substratePlanetFoundationPhaseX = absoluteX;
+    substratePlanetFoundationPhaseZ = absoluteZ;
+    substrateNearestSampleX = 0;
+    substrateNearestSampleZ = 0;
+    substrateNearestUnderfootInstances = 0;
+    let logicalIndex = 0;
+    substratePlanetFoundationBatches.forEach((batch) => {
+      batch.transforms.forEach((transform, instance) => {
+        applyPlanetFoundationTransform(
+          substratePlanetFoundationDummy,
+          transform,
+          absoluteX,
+          absoluteZ,
+        );
+        const x = substratePlanetFoundationDummy.position.x;
+        const z = substratePlanetFoundationDummy.position.z;
+        if (logicalIndex === 0) {
+          substrateNearestSampleX = x;
+          substrateNearestSampleZ = z;
+        }
+        if (
+          Math.hypot(x, z) <= PLANET_FOUNDATION_ACTIVE_RADIUS
+        ) {
+          substrateNearestUnderfootInstances += 1;
+        }
+        batch.meshes.forEach((mesh) => {
+          mesh.setMatrixAt(instance, substratePlanetFoundationDummy.matrix);
+        });
+        logicalIndex += 1;
+      });
+      batch.meshes.forEach((mesh) => {
+        mesh.instanceMatrix.needsUpdate = true;
+      });
+    });
+  };
+
+  const foundationMemoryStyle = (
+    presentation: FoundationPlan["presentation"],
+    worldKind: WorldKind,
+  ) => {
+    if (presentation === "field") {
+      return { overlayVisible: true, height: 0.035, opacity: 0.34 };
+    }
+    if (presentation === "distant-field") {
+      return { overlayVisible: true, height: 0.035, opacity: 0.3 };
+    }
+    if (presentation === "shell") {
+      return worldKind === "planet-surface"
+        ? { overlayVisible: false, height: 1.08, opacity: 0.24 }
+        : { overlayVisible: true, height: 0.035, opacity: 0.2 };
+    }
+    return {
+      overlayVisible: true,
+      height: 0.18,
+      opacity:
+        worldKind === "city" || worldKind === "yard"
+          ? 0.24
+          : worldKind === "interior"
+            ? 0.2
+            : 0.18,
+    };
+  };
+
   const buildSubstrate = (viewScale: number) => {
     const startedAt = phaseStart();
     substrateGroup.visible = true;
@@ -1008,9 +1249,37 @@ export function mountGame(
     substrateLayerIndices = [...plan.visibleLayerIndices];
     substrateNearestTravelRate = 0;
     substrateCompressedTravelRate = 0;
-    substrateUsesPeriodicCopies = false;
+    substrateNearestUsesPeriodicCopies = false;
+    substrateNearestUsesPlanetWrap = false;
+    substrateCompressedUsesPeriodicCopies = false;
+    substratePlanetFoundationBatches.length = 0;
+    substrateNearestChunkSize = LOCAL_FOUNDATION_CHUNK_SIZE;
+    substrateNearestGrounded = false;
+    substrateNearestPlacement = "none";
+    substrateNearestVerticalScale = 1;
+    substrateNearestLocalRadius = 0;
+    substrateNearestMinY = 0;
+    substrateNearestMaxY = 0;
+    substrateNearestSampleX = 0;
+    substrateNearestSampleZ = 0;
+    substrateNearestUnderfootInstances = 0;
+    substratePlanetFoundationPhaseX = Number.NaN;
+    substratePlanetFoundationPhaseZ = Number.NaN;
+    substrateCompressedGrounded = false;
+    substrateCompressedPlacement = "none";
+    const memoryStyle = foundationMemoryStyle(
+      plan.presentation,
+      activeWorldKind,
+    );
+    foundationMemoryVisible = plan.nearest !== null;
+    foundationOverlay.visible =
+      foundationMemoryVisible && memoryStyle.overlayVisible;
+    foundationOverlayHeight = memoryStyle.height;
+    foundationOverlayMaterial.opacity = memoryStyle.opacity;
     if (!plan.nearest) {
       substrateGroup.visible = false;
+      foundationOverlay.visible = false;
+      foundationMemoryVisible = false;
       semanticResidencyKey = plan.key;
       baseSceneDrawCallsDirty = true;
       phaseEnd("substrate-rebuild", startedAt);
@@ -1028,12 +1297,48 @@ export function mountGame(
       reducedMotion,
     );
     substrateNearestTravelRate = nearestCue.travelRate;
+    substrateNearestGrounded = nearestCue.grounded;
+    substrateNearestPlacement = nearestCue.placement;
+    substrateNearestVerticalScale = nearestCue.verticalScale;
     const fogColor =
       scene.fog instanceof THREE.FogExp2 || scene.fog instanceof THREE.Fog
         ? scene.fog.color
         : deepColor;
-    const count =
-      qualityTier === "high" ? 128 : qualityTier === "balanced" ? 96 : 64;
+    const alreadyPeriodicSurface =
+      plan.presentation === "surface" &&
+      PERIODIC_WORLD_KINDS.has(activeWorldKind);
+    const playerCenteredPlanetShell =
+      plan.presentation === "shell" &&
+      activeWorldKind === "planet-surface";
+    const substrateChunkSize = worldChunkSize(activeWorldKind);
+    substrateNearestChunkSize = playerCenteredPlanetShell
+      ? PLANET_FOUNDATION_CHUNK_SIZE
+      : alreadyPeriodicSurface
+        ? substrateChunkSize
+        : LOCAL_FOUNDATION_CHUNK_SIZE;
+    substrateNearestUsesPlanetWrap = playerCenteredPlanetShell;
+    substrateNearestLocalRadius = 0;
+    substrateNearestMinY = Number.POSITIVE_INFINITY;
+    substrateNearestMaxY = Number.NEGATIVE_INFINITY;
+    const count = playerCenteredPlanetShell
+      ? qualityTier === "high"
+        ? 64
+        : qualityTier === "balanced"
+          ? 48
+          : 32
+      : alreadyPeriodicSurface
+        ? qualityTier === "high"
+          ? 128
+          : qualityTier === "balanced"
+            ? 96
+            : 64
+        : qualityTier === "high"
+          ? 32
+          : qualityTier === "balanced"
+            ? 24
+            : 16;
+    const planetGridColumns = Math.ceil(Math.sqrt(count));
+    const planetGridRows = Math.ceil(count / planetGridColumns);
     const families = new Map<string, { curio: Curio; items: number[] }>();
     for (let item = 0; item < count; item += 1) {
       const curio = era.curios[item % era.curios.length];
@@ -1041,9 +1346,7 @@ export function mountGame(
       family.items.push(item);
       families.set(curio.id, family);
     }
-    const volumetricFoundation =
-      plan.presentation === "field" ||
-      plan.presentation === "distant-field";
+    const volumetricFoundation = !nearestCue.grounded;
     const solidMaterial = new THREE.MeshToonMaterial({
       color: new THREE.Color("#ffffff").lerp(
         fogColor,
@@ -1067,50 +1370,118 @@ export function mountGame(
     });
     const dummy = new THREE.Object3D();
     families.forEach(({ curio, items }) => {
-      const matrices = items.map((item) => {
-        dummy.position.copy(
-          substratePosition(
-            plan.presentation,
-            plan.nearest!.motif,
-            plan.nearest!.index * 379 + item * 17.3,
-            1,
-          ),
+      const transforms = items.map((item) => {
+        const position = nearestSubstratePosition(
+          nearestCue.placement,
+          plan.nearest!.motif,
+          plan.nearest!.index * 379 + item * 17.3,
+          1,
+          !alreadyPeriodicSurface,
         );
-        dummy.rotation.set(
-          pseudo(item + 31) * 0.24,
-          pseudo(item + 47) * Math.PI * 2,
-          pseudo(item + 71) * 0.24,
-        );
+        if (playerCenteredPlanetShell) {
+          const column = item % planetGridColumns;
+          const row = Math.floor(item / planetGridColumns);
+          const jitterX = (pseudo(item * 17.3 + 5) - 0.5) * 0.48;
+          const jitterZ = (pseudo(item * 29.7 + 11) - 0.5) * 0.48;
+          position.x =
+            ((column + 0.5 + jitterX) / planetGridColumns - 0.5) *
+            PLANET_FOUNDATION_CHUNK_SIZE;
+          position.z =
+            ((row + 0.5 + jitterZ) / planetGridRows - 0.5) *
+            PLANET_FOUNDATION_CHUNK_SIZE;
+          position.y =
+            foundationShellHeight(
+              position.x,
+              position.z,
+              PLANET_FOUNDATION_RADIUS,
+              PLANET_FOUNDATION_CENTER_Y,
+              0.08,
+            ) - PLANET_FOUNDATION_CENTER_Y;
+        }
         const scaleBase =
-          plan.presentation === "distant-field"
+          nearestCue.placement === "distant-field"
             ? 0.52
-            : plan.presentation === "surface"
+            : nearestCue.placement === "surface"
               ? 0.48
-              : plan.presentation === "shell"
+              : nearestCue.placement === "shell"
                 ? 0.38
                 : 0.42;
         const scaleRange =
-          plan.presentation === "distant-field"
+          nearestCue.placement === "distant-field"
             ? 0.7
-            : plan.presentation === "surface"
+            : nearestCue.placement === "surface"
               ? 0.48
-              : plan.presentation === "shell"
+              : nearestCue.placement === "shell"
                 ? 0.4
                 : 0.5;
         const scale =
           scaleBase +
           pseudo(item + plan.nearest!.index * 23) * scaleRange;
-        dummy.scale.setScalar(scale);
-        dummy.updateMatrix();
+        return {
+          position,
+          planet: {
+            anchorX: position.x,
+            anchorZ: position.z,
+            yaw: pseudo(item + 47) * Math.PI * 2,
+            scale,
+            verticalScale: nearestCue.verticalScale,
+          } satisfies PlanetFoundationTransform,
+        };
+      });
+      const planetTransforms = transforms.map(({ planet }) => planet);
+      const matrices = transforms.map(({ position, planet }) => {
+        if (playerCenteredPlanetShell) {
+          applyPlanetFoundationTransform(dummy, planet, 0, 0);
+        } else {
+          dummy.position.copy(position);
+          dummy.rotation.set(0, planet.yaw, 0);
+          dummy.scale.set(
+            planet.scale,
+            planet.scale * planet.verticalScale,
+            planet.scale,
+          );
+          dummy.updateMatrix();
+        }
         return dummy.matrix.clone();
       });
       const geometries = collectibleGeometryLibrary!.geometryFor(curio, false);
+      const planetMeshes: THREE.InstancedMesh[] = [];
       const addInstances = (
         geometry: THREE.BufferGeometry | null,
         material: THREE.Material,
         layer: "solid" | "effect",
       ) => {
         if (!geometry) return;
+        if (!geometry.boundingBox) geometry.computeBoundingBox();
+        if (geometry.boundingBox) {
+          const transformedBounds = new THREE.Box3();
+          matrices.forEach((matrix) => {
+            transformedBounds.copy(geometry.boundingBox!).applyMatrix4(matrix);
+            const maxX = Math.max(
+              Math.abs(transformedBounds.min.x),
+              Math.abs(transformedBounds.max.x),
+            );
+            const maxZ = Math.max(
+              Math.abs(transformedBounds.min.z),
+              Math.abs(transformedBounds.max.z),
+            );
+            const pivotY = playerCenteredPlanetShell
+              ? PLANET_FOUNDATION_CENTER_Y
+              : 0;
+            substrateNearestLocalRadius = Math.max(
+              substrateNearestLocalRadius,
+              Math.hypot(maxX, maxZ),
+            );
+            substrateNearestMinY = Math.min(
+              substrateNearestMinY,
+              transformedBounds.min.y + pivotY,
+            );
+            substrateNearestMaxY = Math.max(
+              substrateNearestMaxY,
+              transformedBounds.max.y + pivotY,
+            );
+          });
+        }
         const instances = new THREE.InstancedMesh(
           geometry,
           material,
@@ -1124,14 +1495,31 @@ export function mountGame(
         instances.instanceMatrix.needsUpdate = true;
         instances.receiveShadow = false;
         instances.castShadow = false;
+        if (playerCenteredPlanetShell) {
+          instances.frustumCulled = false;
+          instances.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+          planetMeshes.push(instances);
+        }
         substrateNearestGroup.add(instances);
       };
       addInstances(geometries.solid, solidMaterial, "solid");
       addInstances(geometries.effect, effectMaterial, "effect");
+      if (playerCenteredPlanetShell) {
+        substratePlanetFoundationBatches.push({
+          transforms: planetTransforms,
+          meshes: planetMeshes,
+        });
+      }
       substrateAuthoredInstances += items.length;
     });
+    if (playerCenteredPlanetShell) updatePlanetFoundationShell(0, 0);
+    if (!Number.isFinite(substrateNearestMinY)) substrateNearestMinY = 0;
+    if (!Number.isFinite(substrateNearestMaxY)) substrateNearestMaxY = 0;
 
-    if (plan.compressed.length > 0 || plan.ancestryCount > 0) {
+    if (
+      plan.presentation !== "shell" &&
+      (plan.compressed.length > 0 || plan.ancestryCount > 0)
+    ) {
       const compressedDepth = Math.max(
         plan.ancestryCount > 0 ? 4 : 2,
         ...plan.compressed.map((layer) => layer.depth),
@@ -1143,6 +1531,8 @@ export function mountGame(
         reducedMotion,
       );
       substrateCompressedTravelRate = compressedCue.travelRate;
+      substrateCompressedGrounded = compressedCue.grounded;
+      substrateCompressedPlacement = compressedCue.placement;
       const positions: number[] = [];
       const colors: number[] = [];
       const pointCount = reducedWorldDetail() ? 320 : 520;
@@ -1150,7 +1540,7 @@ export function mountGame(
         const layer =
           plan.compressed[point % plan.compressed.length] ?? plan.nearest;
         const position = substratePosition(
-          plan.presentation,
+          compressedCue.placement,
           layer.motif,
           layer.index * 317 + point * 11.3,
           layer.depth,
@@ -1189,27 +1579,33 @@ export function mountGame(
       substrateGenericInstances = pointCount;
     }
 
-    const periodicFoundation =
+    const periodicCompressedFoundation =
       plan.presentation === "surface" &&
       PERIODIC_WORLD_KINDS.has(activeWorldKind);
-    substrateUsesPeriodicCopies = periodicFoundation;
-    if (periodicFoundation) {
+    substrateNearestUsesPeriodicCopies = !playerCenteredPlanetShell;
+    substrateCompressedUsesPeriodicCopies = periodicCompressedFoundation;
+    if (substrateNearestUsesPeriodicCopies) {
       addPeriodicSubstrateCopies(
         substrateNearestGroup,
-        worldChunkSize(activeWorldKind),
-      );
-      addPeriodicSubstrateCopies(
-        substrateCompressedGroup,
-        worldChunkSize(activeWorldKind),
+        substrateNearestChunkSize,
       );
     }
-    const renderedCopies = periodicFoundation
+    if (periodicCompressedFoundation) {
+      addPeriodicSubstrateCopies(
+        substrateCompressedGroup,
+        substrateChunkSize,
+      );
+    }
+    const nearestRenderedCopies = substrateNearestUsesPeriodicCopies
+      ? PERIODIC_TILE_OFFSETS.length + 1
+      : 1;
+    const compressedRenderedCopies = periodicCompressedFoundation
       ? PERIODIC_TILE_OFFSETS.length + 1
       : 1;
     substrateRenderedAuthoredInstances =
-      substrateAuthoredInstances * renderedCopies;
+      substrateAuthoredInstances * nearestRenderedCopies;
     substrateRenderedGenericInstances =
-      substrateGenericInstances * renderedCopies;
+      substrateGenericInstances * compressedRenderedCopies;
     semanticResidencyKey = plan.key;
     baseSceneDrawCallsDirty = true;
     phaseEnd("substrate-rebuild", startedAt);
@@ -2065,15 +2461,70 @@ export function mountGame(
     return texture;
   };
 
+  const clearTransitionRug = () => {
+    if (transitionRug.visible || transitionShell.visible) {
+      baseSceneDrawCallsDirty = true;
+    }
+    transitionRug.visible = false;
+    transitionRug.scale.setScalar(1);
+    transitionShell.visible = false;
+    transitionShell.scale.setScalar(1);
+    transitionRugMaterial.opacity = 0;
+    transitionShellMaterial.opacity = 0;
+    transitionRugMaterial.map = null;
+    transitionRugMaterial.needsUpdate = true;
+    transitionShellMaterial.map = null;
+    transitionShellMaterial.needsUpdate = true;
+    transitionRugTexture?.dispose();
+    transitionRugTexture = null;
+    transitionRugKey = "";
+    transitionRugMode = "none";
+    transitionRugTargetOpacity = 0;
+    transitionHandoffBlend = 0;
+  };
+
+  const prepareTransitionRug = (nextIndex: number) => {
+    clearTransitionRug();
+    const plan = foundationPlan(nextIndex, ERAS);
+    if (!plan.nearest) return;
+    const nextWorldKind = worldSpecForEra(ERAS[nextIndex].name).kind;
+    const style = foundationMemoryStyle(plan.presentation, nextWorldKind);
+    transitionRugMode =
+      plan.presentation === "shell" && nextWorldKind === "planet-surface"
+        ? "shell"
+        : style.overlayVisible
+          ? "plane"
+          : "none";
+    if (transitionRugMode === "none") return;
+    transitionRugTexture = makeFoundationPatternTexture(plan);
+    transitionRugKey = plan.key;
+    const material =
+      transitionRugMode === "shell"
+        ? transitionShellMaterial
+        : transitionRugMaterial;
+    material.map = transitionRugTexture;
+    material.needsUpdate = true;
+    transitionRugHeight = style.height;
+    transitionRugTargetOpacity =
+      transitionRugMode === "shell" ? 0.72 : style.opacity;
+  };
+
   const applyGroundScaleTexture = (viewScale: number) => {
     const plan = foundationPlan(viewScale, ERAS);
-    foundationOverlay.visible =
-      plan.presentation === "surface" &&
-      PERIODIC_WORLD_KINDS.has(activeWorldKind);
     if (plan.key === groundTextureKey) return;
     const startedAt = phaseStart();
     groundTexture?.dispose();
-    groundTexture = makeFoundationPatternTexture(plan);
+    if (transitionRugTexture && transitionRugKey === plan.key) {
+      groundTexture = transitionRugTexture;
+      transitionRugTexture = null;
+      transitionRugKey = "";
+      transitionRugMaterial.map = null;
+      transitionRugMaterial.needsUpdate = true;
+      transitionShellMaterial.map = null;
+      transitionShellMaterial.needsUpdate = true;
+    } else {
+      groundTexture = makeFoundationPatternTexture(plan);
+    }
     groundTextureKey = plan.key;
     groundMaterial.map = groundTexture;
     groundMaterial.needsUpdate = true;
@@ -2338,16 +2789,6 @@ export function mountGame(
     activeWorldKind = worldSpecForEra(ERAS[index].name).kind;
     environmentTravelRate =
       environmentDepthCue(activeWorldKind, reducedMotion)?.travelRate ?? 0;
-    const nextFoundation = foundationPlan(index, ERAS);
-    foundationOverlay.visible =
-      nextFoundation.presentation === "surface" &&
-      PERIODIC_WORLD_KINDS.has(activeWorldKind);
-    foundationOverlayMaterial.opacity =
-      activeWorldKind === "city" || activeWorldKind === "yard"
-        ? 0.24
-        : activeWorldKind === "interior"
-          ? 0.2
-          : 0.16;
     ground.visible = true;
     grid.visible = false;
     dustField.visible = true;
@@ -3513,6 +3954,17 @@ export function mountGame(
       }
     });
   };
+  const deferredVisualDisposals: THREE.Object3D[] = [];
+  const drainDeferredVisualDisposals = (limit: number) => {
+    const count = Math.min(
+      Math.max(0, Math.floor(limit)),
+      deferredVisualDisposals.length,
+    );
+    for (let index = 0; index < count; index += 1) {
+      const visual = deferredVisualDisposals.shift();
+      if (visual) disposeVisual(visual);
+    }
+  };
 
   const retainedMashRecords = mashHistoryRef.current.filter((record) => {
     const sourceEraIndex = ERAS.findIndex((era) => era.id === record.eraId);
@@ -3580,9 +4032,16 @@ export function mountGame(
     startedAt: number;
   }[] = [];
 
-  const removePickup = (pickup: Pickup, preserveVisual = false) => {
+  const removePickup = (
+    pickup: Pickup,
+    preserveVisual = false,
+    deferDisposal = false,
+  ) => {
     scene.remove(pickup.root);
-    if (!preserveVisual) disposeVisual(pickup.visual);
+    if (!preserveVisual) {
+      if (deferDisposal) deferredVisualDisposals.push(pickup.visual);
+      else disposeVisual(pickup.visual);
+    }
   };
 
   const retireVisibleMash = () => {
@@ -3893,6 +4352,10 @@ export function mountGame(
       retireStartedAt: null,
       wantsRichDetail: false,
       richAdmitted: false,
+      handoffX: null,
+      handoffY: null,
+      handoffZ: null,
+      renderedScaleY: 0,
     });
     game.id += 1;
     return { spawned: true, builtTemplate };
@@ -4004,13 +4467,30 @@ export function mountGame(
   let scaleTransitionDurationMs = 0;
   let pendingLayerAdvance = false;
 
+  const preparePickupHandoff = () => {
+    const outgoingEra = game.era;
+    pickups.forEach((pickup) => {
+      if (pickup.sourceEra === outgoingEra) {
+        pickup.handoffX = pickup.root.position.x;
+        pickup.handoffY = pickup.baseY;
+        pickup.handoffZ = pickup.root.position.z;
+      } else {
+        pickup.handoffX = null;
+        pickup.handoffY = null;
+        pickup.handoffZ = null;
+      }
+    });
+    prepareTransitionRug(
+      nextLayerAdvance(outgoingEra, ERAS.length).nextIndex,
+    );
+  };
+
   const advanceLayer = (animated: boolean) => {
     const previousIndex = game.era;
     const { nextIndex, wrapped } = nextLayerAdvance(
       previousIndex,
       ERAS.length,
     );
-    const outgoingWorldScale = transitionWorldScale;
     // Only the first arrival at the final layer announces the unlock; after a
     // wrap the lens has been open the whole time (deepLensUnlocked cycles>0).
     const unlockedDeepLens =
@@ -4034,8 +4514,6 @@ export function mountGame(
       game.vx = 0;
       game.vz = 0;
       retireVisibleMash();
-      pickups.forEach((pickup) => removePickup(pickup));
-      pickups = [];
     }
     if (animated) {
       game.vx *= 0.25;
@@ -4072,31 +4550,10 @@ export function mountGame(
     grid.scale.setScalar(1);
     dustField.scale.setScalar(1);
 
-    const pickupScale = animated ? outgoingWorldScale : radiusRebase;
-    const pickupPositionScale = animated ? 1 : radiusRebase;
-    pickups = pickups.filter((pickup) => {
-      if (
-        pickup.sourceEra !== previousIndex ||
-        pickup.retireStartedAt !== null
-      ) {
-        removePickup(pickup);
-        return false;
-      }
-      pickup.root.position.x =
-        game.x + (pickup.root.position.x - game.x) * pickupPositionScale;
-      pickup.root.position.z =
-        game.z + (pickup.root.position.z - game.z) * pickupPositionScale;
-      pickup.visual.scale.multiplyScalar(pickupScale);
-      pickup.size *= pickupScale;
-      pickup.visualRadius *= pickupScale;
-      pickup.bulkRadius *= pickupScale;
-      pickup.baseY *= pickupPositionScale;
-      pickup.big = false;
-      pickup.wantsRichDetail = false;
-      if (pickup.marker) pickup.marker.visible = false;
-      return true;
-    });
+    pickups.forEach((pickup) => removePickup(pickup, false, true));
+    pickups = [];
     applyEraTheme(nextIndex, false);
+    clearTransitionRug();
     attachments.forEach((attachment) => {
       const sourceEra = Number(attachment.userData.sourceEra ?? previousIndex);
       attachment.traverse((child) => {
@@ -4270,6 +4727,7 @@ export function mountGame(
     ) {
       scaleTransitionDurationMs = scaleTransitionDuration(game.mode);
       if (scaleTransitionDurationMs > 0) {
+        preparePickupHandoff();
         scaleTransitionStarted = now;
         setToast(
           "Learning skip! You grow while this whole layer settles beneath you.",
@@ -4345,6 +4803,83 @@ export function mountGame(
     };
   };
 
+  const transitionFoundationHeight = (
+    relativeX: number,
+    relativeZ: number,
+  ) =>
+    transitionRugMode === "shell"
+      ? foundationShellHeight(
+          relativeX,
+          relativeZ,
+          PLANET_FOUNDATION_RADIUS,
+          PLANET_FOUNDATION_CENTER_Y,
+          0.08,
+        )
+      : 0.035;
+
+  const handoffPickupDiagnostics = () => {
+    const outgoing = pickups.filter((pickup) => pickup.handoffX !== null);
+    const incoming = pickups.filter(
+      (pickup) =>
+        pickup.handoffX === null && pickup.sourceEra > activeIndex,
+    );
+    const mean = (
+      values: readonly number[],
+    ) =>
+      values.length > 0
+        ? values.reduce((total, value) => total + value, 0) / values.length
+        : 0;
+    const outgoingSurfaceClearances = outgoing.map(
+      (pickup) =>
+        pickup.root.position.y -
+        transitionFoundationHeight(
+          pickup.root.position.x - game.x,
+          pickup.root.position.z - game.z,
+        ),
+    );
+    return {
+      transitionOutgoingPickups: outgoing.length,
+      transitionIncomingPickups: incoming.length,
+      transitionOutgoingMeanDistance: mean(
+        outgoing.map((pickup) =>
+          Math.hypot(
+            pickup.root.position.x - game.x,
+            pickup.root.position.z - game.z,
+          ),
+        ),
+      ),
+      transitionOutgoingMeanBaseY: mean(
+        outgoing.map((pickup) => pickup.baseY),
+      ),
+      transitionOutgoingMeanSurfaceClearance: mean(
+        outgoingSurfaceClearances,
+      ),
+      transitionOutgoingMeanRenderedY: mean(
+        outgoing.map((pickup) => pickup.root.position.y),
+      ),
+      transitionOutgoingMeanAbsoluteSurfaceClearance: mean(
+        outgoingSurfaceClearances.map(Math.abs),
+      ),
+      transitionOutgoingMaxAbsoluteSurfaceClearance:
+        outgoingSurfaceClearances.reduce(
+          (largest, clearance) =>
+            Math.max(largest, Math.abs(clearance)),
+          0,
+        ),
+      transitionOutgoingMinSurfaceClearance:
+        outgoingSurfaceClearances.length > 0
+          ? Math.min(...outgoingSurfaceClearances)
+          : 0,
+      transitionOutgoingMeanRenderedScaleY: mean(
+        outgoing.map((pickup) => pickup.renderedScaleY),
+      ),
+      transitionIncomingMaxRenderedScaleY: incoming.reduce(
+        (largest, pickup) => Math.max(largest, pickup.renderedScaleY),
+        0,
+      ),
+    };
+  };
+
   const performanceDebug = phaseRecorder
     ? {
         snapshot: () => ({
@@ -4382,13 +4917,51 @@ export function mountGame(
               foundationNearestRate: substrateNearestTravelRate,
               foundationNearestYaw: substrateNearestGroup.rotation.y,
               foundationNearestPitch: substrateNearestGroup.rotation.x,
+              foundationNearestRoll: substrateNearestGroup.rotation.z,
               foundationNearestChildren:
                 substrateNearestGroup.children.length,
+              foundationNearestGrounded: substrateNearestGrounded,
+              foundationNearestPlacement: substrateNearestPlacement,
+              foundationNearestVerticalScale:
+                substrateNearestVerticalScale,
+              foundationNearestChunkSize: substrateNearestChunkSize,
+              foundationNearestLocalRadius: substrateNearestLocalRadius,
+              foundationNearestMinY: substrateNearestMinY,
+              foundationNearestMaxY: substrateNearestMaxY,
+              foundationNearestSampleX: substrateNearestSampleX,
+              foundationNearestSampleZ: substrateNearestSampleZ,
+              foundationNearestUnderfootInstances:
+                substrateNearestUnderfootInstances,
+              foundationNearestAnchorX:
+                substrateGroup.position.x +
+                substrateNearestGroup.position.x,
+              foundationNearestAnchorZ:
+                substrateGroup.position.z +
+                substrateNearestGroup.position.z,
               foundationCompressedRate: substrateCompressedTravelRate,
               foundationCompressedYaw: substrateCompressedGroup.rotation.y,
               foundationCompressedPitch: substrateCompressedGroup.rotation.x,
               foundationCompressedChildren:
                 substrateCompressedGroup.children.length,
+              foundationCompressedGrounded: substrateCompressedGrounded,
+              foundationCompressedPlacement: substrateCompressedPlacement,
+              foundationRugVisible: foundationMemoryVisible,
+              foundationOverlayVisible: foundationOverlay.visible,
+              foundationRugOffsetX: groundTexture?.offset.x ?? 0,
+              foundationRugOffsetY: groundTexture?.offset.y ?? 0,
+              transitionRugVisible:
+                transitionRug.visible || transitionShell.visible,
+              transitionRugMode,
+              transitionRugOpacity: Math.max(
+                transitionRugMaterial.opacity,
+                transitionShellMaterial.opacity,
+              ),
+              transitionHandoffFlatten:
+                1 - transitionHandoffBlend * 0.9,
+              ...handoffPickupDiagnostics(),
+              transitionIncomingScale:
+                transitionWorldScale *
+                (1 - transitionHandoffBlend * 0.82),
             },
             pickups: {
               active: pickups.length,
@@ -4409,6 +4982,7 @@ export function mountGame(
               maxPerFrame: MAX_PICKUP_PROMOTIONS_PER_FRAME,
               workBudgetMs:
                 worldPerformanceBudget(qualityTier).maxSpawnWorkMs,
+              deferredDisposals: deferredVisualDisposals.length,
             },
             representations: {
               richPickups: pickups.filter((pickup) => pickup.root.visible).length,
@@ -4441,7 +5015,7 @@ export function mountGame(
               surface: worldSpecForEra(activeEra.name).surface,
               ...semanticWorldDiagnostics(),
               groundVisible: ground.visible,
-              foundationSurfaceMemory: foundationOverlay.visible,
+              foundationSurfaceMemory: foundationMemoryVisible,
               dustVisible: dustField.visible,
               environmentChildren:
                 environmentGroup.children.length +
@@ -4524,6 +5098,7 @@ export function mountGame(
           const now = readPerformanceClock();
           scaleTransitionDurationMs = scaleTransitionDuration(game.mode);
           if (scaleTransitionDurationMs > 0) {
+            preparePickupHandoff();
             scaleTransitionStarted = now;
           } else {
             pendingLayerAdvance = true;
@@ -4539,6 +5114,13 @@ export function mountGame(
             Math.min(ERAS.length - 1, requestedIndex),
           );
           return debugEraOverride;
+        },
+        setPlayerPosition: (x: number, z: number) => {
+          if (Number.isFinite(x)) game.x = x;
+          if (Number.isFinite(z)) game.z = z;
+          game.vx = 0;
+          game.vz = 0;
+          return { x: game.x, z: game.z };
         },
         setLens: (value: number) => {
           game.lens = Math.max(
@@ -4719,6 +5301,7 @@ export function mountGame(
     last = now;
     phaseRecorder?.record("frame-interval", frameInterval);
     const simulationStartedAt = phaseStart();
+    drainDeferredVisualDisposals(8);
     performanceFrames += 1;
     const performanceWindow = now - performanceWindowStarted;
     if (performanceWindow >= 5000) {
@@ -4894,7 +5477,57 @@ export function mountGame(
       );
       const transition = scaleTransitionFrame(progress);
       transitionWorldScale = transition.worldScale;
+      const rugProgress = THREE.MathUtils.clamp(
+        (progress - 0.48) / 0.52,
+        0,
+        1,
+      );
+      transitionHandoffBlend =
+        rugProgress * rugProgress * (3 - 2 * rugProgress);
+      const transitionMemoryVisible =
+        transitionRugTexture !== null && transitionHandoffBlend > 0;
+      const transitionPlaneVisible =
+        transitionMemoryVisible && transitionRugMode === "plane";
+      const transitionShellVisible =
+        transitionMemoryVisible && transitionRugMode === "shell";
+      if (
+        transitionRug.visible !== transitionPlaneVisible ||
+        transitionShell.visible !== transitionShellVisible
+      ) {
+        transitionRug.visible = transitionPlaneVisible;
+        transitionShell.visible = transitionShellVisible;
+        baseSceneDrawCallsDirty = true;
+      }
+      transitionRugMaterial.opacity =
+        transitionRugTargetOpacity * transitionHandoffBlend;
+      transitionShellMaterial.opacity =
+        transitionRugTargetOpacity * transitionHandoffBlend;
+      transitionRug.scale.setScalar(
+        0.92 + transitionHandoffBlend * 0.08,
+      );
       playerRoot.scale.setScalar(transition.playerScale);
+      pickups.forEach((pickup) => {
+        if (
+          pickup.handoffX === null ||
+          pickup.handoffY === null ||
+          pickup.handoffZ === null
+        ) {
+          return;
+        }
+        pickup.root.position.x =
+          game.x + (pickup.handoffX - game.x) * transitionWorldScale;
+        pickup.root.position.z =
+          game.z + (pickup.handoffZ - game.z) * transitionWorldScale;
+        const foundationY = transitionFoundationHeight(
+          pickup.root.position.x - game.x,
+          pickup.root.position.z - game.z,
+        );
+        pickup.baseY = THREE.MathUtils.lerp(
+          pickup.handoffY * transitionWorldScale,
+          foundationY,
+          transitionHandoffBlend,
+        );
+      });
       environmentGroup.scale.setScalar(transitionWorldScale);
       nearBackdropGroup.scale.setScalar(transitionWorldScale);
       midBackdropGroup.scale.setScalar(transitionWorldScale);
@@ -5012,10 +5645,38 @@ export function mountGame(
     nearBackdropGroup.position.set(game.x, 0, game.z);
     midBackdropGroup.position.set(game.x, 0, game.z);
     farBackdropGroup.position.set(game.x, 0, game.z);
-    substrateGroup.position.set(
-      substrateUsesPeriodicCopies ? chunkX : game.x,
+    substrateGroup.position.set(game.x, 0, game.z);
+    const nearestAnchorX = substrateNearestUsesPeriodicCopies
+      ? foundationChunkAnchor(
+          game.x,
+          game.originX,
+          substrateNearestChunkSize,
+        )
+      : game.x;
+    const nearestAnchorZ = substrateNearestUsesPeriodicCopies
+      ? foundationChunkAnchor(
+          game.z,
+          game.originZ,
+          substrateNearestChunkSize,
+        )
+      : game.z;
+    substrateNearestGroup.position.set(
+      nearestAnchorX - game.x,
+      substrateNearestUsesPlanetWrap
+        ? PLANET_FOUNDATION_CENTER_Y
+        : 0,
+      nearestAnchorZ - game.z,
+    );
+    const compressedAnchorX = substrateCompressedUsesPeriodicCopies
+      ? foundationChunkAnchor(game.x, game.originX, activeChunkSize)
+      : game.x;
+    const compressedAnchorZ = substrateCompressedUsesPeriodicCopies
+      ? foundationChunkAnchor(game.z, game.originZ, activeChunkSize)
+      : game.z;
+    substrateCompressedGroup.position.set(
+      compressedAnchorX - game.x,
       0,
-      substrateUsesPeriodicCopies ? chunkZ : game.z,
+      compressedAnchorZ - game.z,
     );
     const absoluteX = game.x + game.originX;
     const absoluteZ = game.z + game.originZ;
@@ -5039,22 +5700,77 @@ export function mountGame(
       parallaxYaw(absoluteX, farBackdropTravelRate),
       0,
     );
-    substrateNearestGroup.rotation.set(
-      parallaxPitch(absoluteZ, substrateNearestTravelRate),
-      parallaxYaw(absoluteX, substrateNearestTravelRate),
-      0,
-    );
+    if (substrateNearestUsesPlanetWrap) {
+      substrateNearestGroup.rotation.set(0, 0, 0);
+      updatePlanetFoundationShell(absoluteX, absoluteZ);
+    } else {
+      substrateNearestGroup.rotation.set(
+        parallaxPitch(absoluteZ, substrateNearestTravelRate),
+        parallaxYaw(absoluteX, substrateNearestTravelRate),
+        0,
+      );
+    }
     substrateCompressedGroup.rotation.set(
       parallaxPitch(absoluteZ, substrateCompressedTravelRate),
       parallaxYaw(absoluteX, substrateCompressedTravelRate),
       0,
     );
     ground.position.set(game.x, 0, game.z);
-    foundationOverlay.position.set(game.x, 0.18, game.z);
+    foundationOverlay.position.set(
+      game.x,
+      foundationOverlayHeight,
+      game.z,
+    );
+    transitionRug.position.set(game.x, transitionRugHeight, game.z);
+    transitionShell.position.set(
+      game.x,
+      PLANET_FOUNDATION_CENTER_Y,
+      game.z,
+    );
     if (groundTexture) {
+      const shellMappedTexture =
+        activeWorldKind === "planet-surface" &&
+        substrateFoundationPlan.presentation === "shell";
+      const shellRates = foundationShellTextureRates(
+        groundTexture.repeat.x,
+        PLANET_FOUNDATION_RADIUS,
+      );
+      const xRate = shellMappedTexture
+        ? shellRates.longitude
+        : foundationTextureRate(
+            groundTexture.repeat.x,
+            FOUNDATION_OVERLAY_RADIUS * 2,
+          );
+      const zRate = shellMappedTexture ? shellRates.latitude : xRate;
       groundTexture.offset.set(
-        (game.x + game.originX) * 0.018,
-        -(game.z + game.originZ) * 0.018,
+        wrappedTextureOffset(game.x + game.originX, xRate),
+        wrappedTextureOffset(
+          -(game.z + game.originZ),
+          zRate,
+        ),
+      );
+    }
+    if (transitionRugTexture) {
+      const shellRates = foundationShellTextureRates(
+        transitionRugTexture.repeat.x,
+        PLANET_FOUNDATION_RADIUS,
+      );
+      const xRate =
+        transitionRugMode === "shell"
+          ? shellRates.longitude
+          : foundationTextureRate(
+              transitionRugTexture.repeat.x,
+              FOUNDATION_OVERLAY_RADIUS * 2,
+            );
+      const zRate = transitionRugMode === "shell"
+        ? shellRates.latitude
+        : xRate;
+      transitionRugTexture.offset.set(
+        wrappedTextureOffset(game.x + game.originX, xRate),
+        wrappedTextureOffset(
+          -(game.z + game.originZ),
+          zRate,
+        ),
       );
     }
     const gridCell = 170 / 90;
@@ -5137,13 +5853,20 @@ export function mountGame(
     const richPickupBudget = richPickupLimit;
     const pickupDetail = pickups.map((pickup, index) => {
       const entranceScale = pickupLifecycleScale(pickup, now);
+      const outgoingHandoff = pickup.handoffX !== null;
+      const pickupWorldScale = outgoingHandoff
+        ? transitionWorldScale
+        : transitionWorldScale * (1 - transitionHandoffBlend * 0.82);
+      const handoffVerticalScale = outgoingHandoff
+        ? 1 - transitionHandoffBlend * 0.9
+        : 1;
       const distance = Math.hypot(
         pickup.root.position.x - game.x,
         pickup.root.position.z - game.z,
       );
       pickup.big = pickup.visualRadius > effectiveRollRadius * 1.08;
       const projectedSize = projectedDiameterPixels(
-        pickup.visualRadius * 2 * transitionWorldScale,
+        pickup.visualRadius * 2 * pickupWorldScale,
         camera.position.distanceTo(pickup.root.position),
         camera.fov,
         height,
@@ -5162,6 +5885,8 @@ export function mountGame(
         pickup,
         index,
         entranceScale,
+        pickupWorldScale,
+        handoffVerticalScale,
         distance,
         projectedSize,
         projectedLod,
@@ -5204,10 +5929,13 @@ export function mountGame(
       pickup,
       index,
       entranceScale,
+      pickupWorldScale,
+      handoffVerticalScale,
       distance,
       projectedSize,
       projectedLod,
     }) => {
+      pickup.renderedScaleY = 0;
       const useRichVisual = richPickupSet.has(pickup);
       pickup.richAdmitted = useRichVisual;
       pickup.root.visible = useRichVisual;
@@ -5221,7 +5949,10 @@ export function mountGame(
       const motionTime =
         now * 0.001 * identity.motionRate + pickup.wiggle + index * 0.017;
       const motionAmount =
-        identity.motionAmount * (early ? 1.35 : 1) * (pickup.big ? 0.65 : 1);
+        identity.motionAmount *
+        (early ? 1.35 : 1) *
+        (pickup.big ? 0.65 : 1) *
+        (pickup.handoffX !== null ? 1 - transitionHandoffBlend : 1);
       const baseSpin = pickup.big ? 0.07 : 0.18;
       pickup.root.position.y = pickup.baseY;
       if (identity.motion !== "tumble") {
@@ -5256,13 +5987,18 @@ export function mountGame(
           pickup.sourceEra >= activeIndex && projectedSize > 0
             ? THREE.MathUtils.clamp(6 / projectedSize, 1, 2.5)
             : 1;
-        farPickupDummy.scale.setScalar(
+        const silhouetteScale =
           pickup.size *
-            motionScale *
-            transitionWorldScale *
-            entranceScale *
-            readabilityScale,
+          motionScale *
+          pickupWorldScale *
+          entranceScale *
+          readabilityScale;
+        farPickupDummy.scale.set(
+          silhouetteScale,
+          silhouetteScale * handoffVerticalScale,
+          silhouetteScale,
         );
+        pickup.renderedScaleY = farPickupDummy.scale.y;
         farPickupDummy.updateMatrix();
         if (
           collectibleLodPool.add(
@@ -5272,12 +6008,17 @@ export function mountGame(
         ) {
           return;
         }
-        farPickupDummy.scale.setScalar(
+        const fallbackScale =
           pickup.visualRadius *
-            motionScale *
-            transitionWorldScale *
-            entranceScale,
+          motionScale *
+          pickupWorldScale *
+          entranceScale;
+        farPickupDummy.scale.set(
+          fallbackScale,
+          fallbackScale * handoffVerticalScale,
+          fallbackScale,
         );
+        pickup.renderedScaleY = farPickupDummy.scale.y;
         farPickupDummy.updateMatrix();
         farPickupMesh.setMatrixAt(farPickupCount, farPickupDummy.matrix);
         farPickupMesh.setColorAt(
@@ -5288,9 +6029,13 @@ export function mountGame(
         return;
       }
 
-      pickup.root.scale.setScalar(
-        motionScale * transitionWorldScale * entranceScale,
+      const richScale = motionScale * pickupWorldScale * entranceScale;
+      pickup.root.scale.set(
+        richScale,
+        richScale * handoffVerticalScale,
+        richScale,
       );
+      pickup.renderedScaleY = pickup.root.scale.y * pickup.size;
 
       switch (identity.motion) {
         case "bob":
@@ -5489,6 +6234,8 @@ export function mountGame(
       delete debugWindow.__QUARKATAMARI_PERFORMANCE__;
     }
     pickups.forEach((pickup) => removePickup(pickup));
+    drainDeferredVisualDisposals(deferredVisualDisposals.length);
+    clearTransitionRug();
     disposeEnvironment();
     collectibleLodPool.dispose();
     collectibleGeometryLibrary?.dispose();

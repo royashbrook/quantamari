@@ -99,8 +99,14 @@ Long Game and Learning Tour share one logical layer-advance path. Long Game
 keeps camera distance proportional to the physical radius and rebases both
 together; Learning Tour alone runs the explicit scale-skip animation. That
 animation ends at the exact next-layer player radius. Attached transforms and
-their save records rebase at the same handoff, and one prior pickup population
-remains as recognizable lower-scale context. The opening Theory Playground has
+their save records rebase at the same handoff. Loose outgoing pickups fold
+toward the player, settle flat, and are then retired while the incoming N−1
+rug crossfades underneath them. Planet-scale transitions use the same handoff
+on a curved shell. Next-era blockers shrink independently instead of being
+mistaken for outgoing fabric. Flat rugs are periodic and chunk-anchored;
+planetary rugs wrap a small authored population continuously across the curved
+surface from absolute travel. Both are non-interactive lower-scale
+representations. The opening Theory Playground has
 no passive environment or substrate; its first rug appears only after the next
 layer is reached.
 

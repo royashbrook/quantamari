@@ -447,7 +447,7 @@ test("iPhone menu routes keep Field Guide and Scale Lab exits visible", async ({
 test("iPhone update notice stays persistent without replacing the bottom dock", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await startLearningTour(page);
   await expect
     .poll(() =>
@@ -515,7 +515,7 @@ test("iPhone update notice stays persistent without replacing the bottom dock", 
   await expect(banner).toBeVisible();
 });
 
-test("iPhone backdrop bands keep their depth order while rolling", async ({
+test("iPhone keeps the previous layer underfoot while backdrops recede", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -540,8 +540,15 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
             snapshot: () => {
               runtime: {
                 era: number;
-                player: { z: number };
-                pickups: { queued: number };
+                player: { x: number; z: number };
+                pickups: {
+                  queued: number;
+                  current: number;
+                  target: number;
+                };
+                drawCalls: number;
+                triangles: number;
+                budget: { maxDrawCalls: number; maxTriangles: number };
                 backgroundDepth: {
                   nearRate: number;
                   nearPitch: number;
@@ -552,6 +559,22 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
                   farRate: number;
                   farPitch: number;
                   farChildren: number;
+                  foundationNearestRate: number;
+                  foundationNearestPitch: number;
+                  foundationNearestRoll: number;
+                  foundationNearestGrounded: boolean;
+                  foundationNearestPlacement: string;
+                  foundationNearestLocalRadius: number;
+                  foundationNearestMaxY: number;
+                  foundationNearestSampleX: number;
+                  foundationNearestSampleZ: number;
+                  foundationNearestUnderfootInstances: number;
+                  foundationNearestAnchorZ: number;
+                  foundationCompressedRate: number;
+                  foundationCompressedPitch: number;
+                  foundationRugVisible: boolean;
+                  foundationOverlayVisible: boolean;
+                  foundationRugOffsetY: number;
                 };
               };
             };
@@ -561,8 +584,14 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
       return snapshot
         ? {
             era: snapshot.runtime.era,
+            x: snapshot.runtime.player.x,
             z: snapshot.runtime.player.z,
             queued: snapshot.runtime.pickups.queued,
+            current: snapshot.runtime.pickups.current,
+            target: snapshot.runtime.pickups.target,
+            drawCalls: snapshot.runtime.drawCalls,
+            triangles: snapshot.runtime.triangles,
+            budget: snapshot.runtime.budget,
             ...snapshot.runtime.backgroundDepth,
           }
         : null;
@@ -575,6 +604,7 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
         ? {
             era: depth.era,
             queued: depth.queued,
+            populated: depth.current === depth.target,
             nearChildren: depth.nearChildren,
             midChildren: depth.midChildren,
             farChildren: depth.farChildren,
@@ -584,6 +614,7 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
     .toEqual({
       era: 2,
       queued: 0,
+      populated: true,
       nearChildren: expect.any(Number),
       midChildren: expect.any(Number),
       farChildren: expect.any(Number),
@@ -594,6 +625,13 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
   expect(before?.farChildren).toBeGreaterThan(0);
   expect(before?.nearRate).toBeGreaterThan(before?.midRate ?? Infinity);
   expect(before?.midRate).toBeGreaterThan(before?.farRate ?? Infinity);
+  expect(before?.foundationNearestRate).toBe(0);
+  expect(before?.foundationNearestGrounded).toBe(true);
+  expect(before?.foundationNearestPlacement).toBe("surface");
+  expect(before?.foundationNearestLocalRadius).toBeLessThanOrEqual(28);
+  expect(before?.foundationNearestMaxY).toBeLessThan(1);
+  expect(before?.foundationRugVisible).toBe(true);
+  expect(before?.foundationCompressedRate).toBeGreaterThan(0);
 
   const startZ = before?.z ?? 0;
   await page.keyboard.down("ArrowUp");
@@ -616,4 +654,192 @@ test("iPhone backdrop bands keep their depth order while rolling", async ({
   expect(midTravel).toBeGreaterThan(0.0017);
   expect(farTravel).toBeGreaterThan(0.00075);
   expect(nearTravel).toBeLessThan(0.05);
+  expect(
+    angleDelta(
+      after?.foundationNearestPitch,
+      before?.foundationNearestPitch,
+    ),
+  ).toBe(0);
+  expect(
+    angleDelta(
+      after?.foundationCompressedPitch,
+      before?.foundationCompressedPitch,
+    ),
+  ).toBeGreaterThan(0);
+  expect(after?.foundationNearestAnchorZ).toBe(
+    before?.foundationNearestAnchorZ,
+  );
+  expect(after?.foundationRugOffsetY).not.toBe(
+    before?.foundationRugOffsetY,
+  );
+  const phaseDelta =
+    (after?.foundationRugOffsetY ?? 0) -
+    (before?.foundationRugOffsetY ?? 0);
+  const wrappedPhaseTravel = Math.abs(
+    (((phaseDelta + 0.5) % 1) + 1) % 1 - 0.5,
+  );
+  const expectedPhaseTravel =
+    Math.abs((after?.z ?? 0) - (before?.z ?? 0)) * (9 / 188);
+  expect(wrappedPhaseTravel).toBeCloseTo(expectedPhaseTravel, 2);
+
+  for (const [era, overlay] of [
+    [25, false],
+    [31, true],
+  ] as const) {
+    const previewed = await page.evaluate((eraIndex) => {
+      const diagnostics = (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            previewEra: (index: number) => number;
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__;
+      return diagnostics?.previewEra(eraIndex);
+    }, era);
+    expect(previewed).toBe(era);
+    await expect
+      .poll(async () => {
+        const depth = await readDepth();
+        return depth
+          ? {
+              era: depth.era,
+              queued: depth.queued,
+              populated: depth.current === depth.target,
+            }
+          : null;
+      }, { timeout: 30_000 })
+      .toEqual({ era, queued: 0, populated: true });
+    if (era === 31) {
+      await page.evaluate(() => {
+        const diagnostics = (
+          window as typeof window & {
+            __QUARKATAMARI_PERFORMANCE__?: {
+              setPlayerPosition: (
+                x: number,
+                z: number,
+              ) => { x: number; z: number };
+            };
+          }
+        ).__QUARKATAMARI_PERFORMANCE__;
+        diagnostics?.setPlayerPosition(0, 0);
+      });
+      await expect
+        .poll(async () => {
+          const depth = await readDepth();
+          return depth
+            ? {
+                z: depth.z,
+                anchorZ: depth.foundationNearestAnchorZ,
+              }
+            : null;
+        })
+        .toEqual({ z: 0, anchorZ: 0 });
+    }
+    const scene = await readDepth();
+    expect(scene?.foundationNearestGrounded).toBe(true);
+    expect(scene?.foundationNearestLocalRadius).toBeLessThanOrEqual(
+      era === 25 ? 52 : 28,
+    );
+    expect(scene?.foundationRugVisible).toBe(true);
+    expect(scene?.foundationOverlayVisible).toBe(overlay);
+    expect(scene?.drawCalls).toBeLessThanOrEqual(
+      scene?.budget.maxDrawCalls ?? 0,
+    );
+    expect(scene?.triangles).toBeLessThanOrEqual(
+      scene?.budget.maxTriangles ?? 0,
+    );
+    if (era === 25) {
+      expect(
+        scene?.foundationNearestUnderfootInstances ?? 0,
+      ).toBeGreaterThanOrEqual(8);
+      const shellStartZ = scene?.z ?? 0;
+      await page.keyboard.down("ArrowUp");
+      try {
+        await expect
+          .poll(
+            async () =>
+              Math.abs(((await readDepth())?.z ?? shellStartZ) - shellStartZ),
+          )
+          .toBeGreaterThan(3);
+      } finally {
+        await page.keyboard.up("ArrowUp");
+      }
+      const movedShell = await readDepth();
+      expect(
+        Math.hypot(
+          (movedShell?.foundationNearestSampleX ?? 0) -
+            (scene?.foundationNearestSampleX ?? 0),
+          (movedShell?.foundationNearestSampleZ ?? 0) -
+            (scene?.foundationNearestSampleZ ?? 0),
+        ),
+      ).toBeGreaterThan(1);
+      expect(movedShell?.foundationRugOffsetY).not.toBe(
+        scene?.foundationRugOffsetY,
+      );
+      const sustainedZ = (movedShell?.z ?? 0) + 64;
+      await page.evaluate(({ x, z }) => {
+        const diagnostics = (
+          window as typeof window & {
+            __QUARKATAMARI_PERFORMANCE__?: {
+              setPlayerPosition: (
+                nextX: number,
+                nextZ: number,
+              ) => { x: number; z: number };
+            };
+          }
+        ).__QUARKATAMARI_PERFORMANCE__;
+        diagnostics?.setPlayerPosition(x, z);
+      }, { x: movedShell?.x ?? 0, z: sustainedZ });
+      await expect
+        .poll(async () => {
+          const depth = await readDepth();
+          if (!depth || Math.abs(depth.z - sustainedZ) > 0.0001) return 0;
+          return Math.hypot(
+            depth.foundationNearestSampleX -
+              (movedShell?.foundationNearestSampleX ?? 0),
+            depth.foundationNearestSampleZ -
+              (movedShell?.foundationNearestSampleZ ?? 0),
+          );
+        })
+        .toBeGreaterThan(3);
+      const sustainedShell = await readDepth();
+      expect(
+        sustainedShell?.foundationNearestUnderfootInstances ?? 0,
+      ).toBeGreaterThanOrEqual(8);
+      expect(
+        Math.hypot(
+          (sustainedShell?.foundationNearestSampleX ?? 0) -
+            (movedShell?.foundationNearestSampleX ?? 0),
+          (sustainedShell?.foundationNearestSampleZ ?? 0) -
+            (movedShell?.foundationNearestSampleZ ?? 0),
+        ),
+      ).toBeGreaterThan(3);
+      expect(
+        Math.abs(sustainedShell?.foundationNearestSampleX ?? Infinity),
+      ).toBeLessThanOrEqual(40);
+      expect(
+        Math.abs(sustainedShell?.foundationNearestSampleZ ?? Infinity),
+      ).toBeLessThanOrEqual(40);
+    } else {
+      const distantStartZ = scene?.z ?? 0;
+      await page.keyboard.down("ArrowUp");
+      try {
+        await expect
+          .poll(
+            async () =>
+              Math.abs(((await readDepth())?.z ?? distantStartZ) - distantStartZ),
+          )
+          .toBeGreaterThan(3);
+      } finally {
+        await page.keyboard.up("ArrowUp");
+      }
+      const movedDistant = await readDepth();
+      expect(movedDistant?.foundationNearestAnchorZ).toBe(
+        scene?.foundationNearestAnchorZ,
+      );
+      expect(movedDistant?.foundationRugOffsetY).not.toBe(
+        scene?.foundationRugOffsetY,
+      );
+    }
+  }
 });

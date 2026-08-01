@@ -48,9 +48,14 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   batched.
 - Decorative near, mid, and far backdrop bands derive small angular parallax
   from that same accumulated origin phase. Only the band roots move each
-  frame; instance matrices and materials remain unchanged. Volumetric prior
-  layers use separate nearest and compressed roots, while surface rugs stay
-  aligned with their periodic world and colliders.
+  frame; instance matrices and materials remain unchanged. The immediate prior
+  layer never uses backdrop parallax. On flat worlds its flattened authored
+  models use a periodic, chunk-anchored root; on planetary worlds 32–64 dynamic
+  instance transforms wrap outside the visible active patch, fade at that seam,
+  and align to the local surface normal. Their buffers update only after travel.
+  Motif texture phase comes from the same absolute travel, so the models and
+  fabric both read as the rug underfoot. Only compressed N−2-and-older history
+  may recede.
 - Native menu, Field Guide, and Scale Lab dialogs pause the renderer while open.
   The Field Guide remains CSS-only and uses `content-visibility`.
 
