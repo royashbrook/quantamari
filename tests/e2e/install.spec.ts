@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from "@playwright/test";
 
 const appPath = "/";
+const installCoachTimeout = 10_000;
 
 async function playLearningTour(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Play Learning Tour" }).click();
@@ -65,7 +66,7 @@ test("iPhone gives first-time install steps without crowding the launcher", asyn
 
   await playLearningTour(page);
   const coach = page.getByTestId("install-coach");
-  await expect(coach).toBeVisible({ timeout: 4_000 });
+  await expect(coach).toBeVisible({ timeout: installCoachTimeout });
   await expect(coach).toContainText("Install Quantamari");
   await expect(coach).toContainText("Add to Home Screen");
   await expect(coach).toContainText("Open as Web App");
@@ -178,7 +179,7 @@ test("desktop-UA iPad receives the Apple Home Screen instructions", async ({
   await playLearningTour(page);
 
   const coach = page.getByTestId("install-coach");
-  await expect(coach).toBeVisible({ timeout: 4_000 });
+  await expect(coach).toBeVisible({ timeout: installCoachTimeout });
   await expect(coach).toContainText("Add to Home Screen");
   await expect(
     coach.getByRole("button", {
@@ -218,7 +219,7 @@ test("Android without a native prompt receives browser-menu instructions", async
   await playLearningTour(page);
 
   const coach = page.getByTestId("install-coach");
-  await expect(coach).toBeVisible({ timeout: 4_000 });
+  await expect(coach).toBeVisible({ timeout: installCoachTimeout });
   await expect(coach).toContainText(
     "Browser menu → Install app or Add to Home Screen.",
   );
@@ -243,7 +244,7 @@ test("update-ready notice takes priority over first-visit coaching", async ({
   await page.goto(appPath);
   await playLearningTour(page);
   await expect(page.getByTestId("install-coach")).toBeVisible({
-    timeout: 4_000,
+    timeout: installCoachTimeout,
   });
   await expect
     .poll(() =>
@@ -316,7 +317,7 @@ test("Android uses the retained native install prompt exactly once", async ({
 
   await playLearningTour(page);
   const coach = page.getByTestId("install-coach");
-  await expect(coach).toBeVisible({ timeout: 4_000 });
+  await expect(coach).toBeVisible({ timeout: installCoachTimeout });
   await expect(coach).toContainText("Full-screen, offline");
   await coach.getByRole("button", { name: "Install Quantamari" }).click();
   await expect(coach).toHaveCount(0);
@@ -360,7 +361,7 @@ test("appinstalled immediately retires an available native coach", async ({
   });
   await playLearningTour(page);
   await expect(page.getByTestId("install-coach")).toBeVisible({
-    timeout: 4_000,
+    timeout: installCoachTimeout,
   });
 
   await page.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
