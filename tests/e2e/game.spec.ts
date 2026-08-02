@@ -2368,7 +2368,7 @@ test("long game crosses a layer without a skip animation or size pop", async ({
                 snapshot.runtime.player.projectedDiameter < 9,
               mashStillReadsLarge:
                 snapshot.runtime.representations.effectiveRadius >
-                snapshot.runtime.radius * 1.6,
+                snapshot.runtime.representations.contactCoreRadius * 1.6,
               attachmentsStayAuthored:
                 !snapshot.runtime.representations.attachmentProxyActive,
             }
