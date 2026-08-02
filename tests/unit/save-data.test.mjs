@@ -126,6 +126,7 @@ test("v4 loading keeps valid records while dropping malformed records", () => {
   assert.equal(loaded?.save.unitemizedPicked, 4);
   assert.equal(loaded?.save.picked, 9);
   assert.equal(loaded?.save.sound, false);
+  assert.deepEqual(loaded?.save.rollQuaternion, [0, 0, 0, 1]);
   // Pre-v3.0 saves carry no cycles field and default to cycle 0.
   assert.equal(loaded?.save.cycles, 0);
 });
@@ -139,6 +140,7 @@ test("completed journey cycles survive a save round trip and legacy saves defaul
     unitemizedPicked: 0,
     x: 3,
     z: 4,
+    rollQuaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2],
     zooms: 40,
     cycles: 2,
     sound: true,
@@ -148,12 +150,28 @@ test("completed journey cycles survive a save round trip and legacy saves defaul
   const raw = serializeSaveData(createSaveData(snapshot));
   const loaded = loadSaveCandidates({ v4: raw }, catalog);
   assert.equal(loaded?.save.cycles, 2);
+  assert.ok(
+    loaded?.save.rollQuaternion.every(
+      (value, index) => Math.abs(value - snapshot.rollQuaternion[index]) < 1e-12,
+    ),
+  );
 
   const negative = loadSaveCandidates(
     { v4: JSON.stringify({ ...JSON.parse(raw), cycles: -3 }) },
     catalog,
   );
   assert.equal(negative?.save.cycles, 0);
+
+  const overflowingQuaternion = loadSaveCandidates(
+    {
+      v4: JSON.stringify({
+        ...JSON.parse(raw),
+        rollQuaternion: [1e308, 1e308, 1e308, 1e308],
+      }),
+    },
+    catalog,
+  );
+  assert.deepEqual(overflowingQuaternion?.save.rollQuaternion, [0, 0, 0, 1]);
 });
 
 test("v4 migration collapses newly one-of-one collection and mash records", () => {
@@ -170,6 +188,7 @@ test("v4 migration collapses newly one-of-one collection and mash records", () =
     unitemizedPicked: 0,
     x: 0,
     z: 0,
+    rollQuaternion: [0, 0, 0, 1],
     zooms: 0,
     sound: false,
     mash: [earthMash, { ...earthMash, position: [4, 5, 6] }],
@@ -346,6 +365,7 @@ test("recordPickup and serialization provide a small page integration API", () =
   assert.equal(initial.picked, 4);
   assert.deepEqual(initial.collectedAuthoredAnchors, []);
   assert.equal(initial.literalSceneOrigin, null);
+  assert.deepEqual(initial.rollQuaternion, [0, 0, 0, 1]);
   assert.equal(initial.collection.length, 0);
   assert.equal(next.picked, 5);
   assert.equal(next.unitemizedPicked, 4);

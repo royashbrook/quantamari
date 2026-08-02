@@ -15,12 +15,21 @@ export type AttachmentCircleXZ = {
   radius: number;
 };
 
+export type AttachmentSphere = AttachmentCircleXZ & {
+  y: number;
+};
+
+export type OrientedContactBox = Readonly<{
+  center: Vec3Like;
+  halfExtents: Vec3Like;
+  quaternion: QuaternionLike;
+}>;
+
 export type DirectionXZ = { x: number; z: number };
 
 export const MIN_ATTACHMENT_OUTSIDE_SHARE = 0.55;
 export const DEFAULT_ATTACHMENT_OUTSIDE_SHARE = 0.6;
 export const MAX_ATTACHMENT_OUTSIDE_SHARE = 0.65;
-export const MAX_ATTACHMENT_SUPPORT_CORE_SHARE = 0.6;
 
 const EPSILON = 1e-8;
 
@@ -123,27 +132,6 @@ export function targetAttachmentCenterDistance(
 }
 
 /**
- * Returns one uniform multiplier for an attachment's already-authored scale.
- * A scalar fit preserves every axis ratio and becomes idempotent once the
- * model's radial support is within budget, so authored and batched LODs can
- * store and reuse the exact same fitted scale.
- */
-export function attachmentSupportScaleFit(
-  authoredSupportRadius: number,
-  visibleCoreRadius: number,
-  maximumSupportShare = MAX_ATTACHMENT_SUPPORT_CORE_SHARE,
-) {
-  const support = Math.max(0, finite(authoredSupportRadius));
-  const core = Math.max(0, finite(visibleCoreRadius));
-  const share = Math.max(
-    0,
-    finite(maximumSupportShare, MAX_ATTACHMENT_SUPPORT_CORE_SHARE),
-  );
-  if (support <= EPSILON || core <= EPSILON || share <= EPSILON) return 1;
-  return Math.min(1, (core * share) / support);
-}
-
-/**
  * Moves an existing attachment by the visible core's positive radius delta.
  * Its distance changes, but its angular direction does not.
  */
@@ -187,20 +175,299 @@ export function directionalAttachmentEnvelopeXZ(
   directionZ: number,
   attachments: readonly AttachmentCircleXZ[],
 ) {
+  return directionalAttachmentEnvelope3D(
+    coreRadius,
+    directionX,
+    0,
+    directionZ,
+    attachments,
+  );
+}
+
+/**
+ * Support of the core plus attached solid spheres toward any 3D direction.
+ * This is used both horizontally for obstacles and downward for the changing
+ * ground contact of an uneven roll.
+ */
+export function directionalAttachmentEnvelope3D(
+  coreRadius: number,
+  directionX: number,
+  directionY: number,
+  directionZ: number,
+  attachments: readonly (AttachmentSphere | AttachmentCircleXZ)[],
+) {
   let envelope = Math.max(0, finite(coreRadius));
   const dx = finite(directionX);
+  const dy = finite(directionY);
   const dz = finite(directionZ);
-  const directionLength = Math.hypot(dx, dz);
+  const directionLength = Math.hypot(dx, dy, dz);
   if (directionLength <= EPSILON) return envelope;
 
   const nx = dx / directionLength;
+  const ny = dy / directionLength;
   const nz = dz / directionLength;
   for (const attachment of attachments) {
     const radius = Math.max(0, finite(attachment.radius));
-    const support = finite(attachment.x) * nx + finite(attachment.z) * nz + radius;
+    const support =
+      finite(attachment.x) * nx +
+      finite("y" in attachment ? attachment.y : 0) * ny +
+      finite(attachment.z) * nz +
+      radius;
     envelope = Math.max(envelope, support);
   }
   return envelope;
+}
+
+type Axis3 = { x: number; y: number; z: number };
+
+function quaternionAxes(quaternion: QuaternionLike): [Axis3, Axis3, Axis3] {
+  const length = Math.hypot(
+    finite(quaternion.x),
+    finite(quaternion.y),
+    finite(quaternion.z),
+    finite(quaternion.w),
+  );
+  if (length <= EPSILON) {
+    return [
+      { x: 1, y: 0, z: 0 },
+      { x: 0, y: 1, z: 0 },
+      { x: 0, y: 0, z: 1 },
+    ];
+  }
+  const x = finite(quaternion.x) / length;
+  const y = finite(quaternion.y) / length;
+  const z = finite(quaternion.z) / length;
+  const w = finite(quaternion.w) / length;
+  const xx = x * x;
+  const yy = y * y;
+  const zz = z * z;
+  const xy = x * y;
+  const xz = x * z;
+  const yz = y * z;
+  const xw = x * w;
+  const yw = y * w;
+  const zw = z * w;
+  return [
+    {
+      x: 1 - 2 * (yy + zz),
+      y: 2 * (xy + zw),
+      z: 2 * (xz - yw),
+    },
+    {
+      x: 2 * (xy - zw),
+      y: 1 - 2 * (xx + zz),
+      z: 2 * (yz + xw),
+    },
+    {
+      x: 2 * (xz + yw),
+      y: 2 * (yz - xw),
+      z: 1 - 2 * (xx + yy),
+    },
+  ];
+}
+
+function dot(first: Vec3Like, second: Vec3Like) {
+  return first.x * second.x + first.y * second.y + first.z * second.z;
+}
+
+function cross(first: Vec3Like, second: Vec3Like): Axis3 {
+  return {
+    x: first.y * second.z - first.z * second.y,
+    y: first.z * second.x - first.x * second.z,
+    z: first.x * second.y - first.y * second.x,
+  };
+}
+
+function boxProjectionRadius(
+  box: OrientedContactBox,
+  axes: readonly Axis3[],
+  direction: Vec3Like,
+) {
+  return (
+    Math.abs(dot(axes[0], direction)) * Math.max(0, finite(box.halfExtents.x)) +
+    Math.abs(dot(axes[1], direction)) * Math.max(0, finite(box.halfExtents.y)) +
+    Math.abs(dot(axes[2], direction)) * Math.max(0, finite(box.halfExtents.z))
+  );
+}
+
+/** Exact support of transformed attachment boxes toward any 3D direction. */
+export function directionalOrientedBoxEnvelope3D(
+  coreRadius: number,
+  directionX: number,
+  directionY: number,
+  directionZ: number,
+  attachments: readonly OrientedContactBox[],
+) {
+  let envelope = Math.max(0, finite(coreRadius));
+  const length = Math.hypot(directionX, directionY, directionZ);
+  if (length <= EPSILON) return envelope;
+  const directionXNormalized = finite(directionX) / length;
+  const directionYNormalized = finite(directionY) / length;
+  const directionZNormalized = finite(directionZ) / length;
+  for (const attachment of attachments) {
+    const quaternionLength = Math.hypot(
+      finite(attachment.quaternion.x),
+      finite(attachment.quaternion.y),
+      finite(attachment.quaternion.z),
+      finite(attachment.quaternion.w),
+    );
+    const reciprocalLength = quaternionLength > EPSILON ? 1 / quaternionLength : 0;
+    const x = finite(attachment.quaternion.x) * reciprocalLength;
+    const y = finite(attachment.quaternion.y) * reciprocalLength;
+    const z = finite(attachment.quaternion.z) * reciprocalLength;
+    const w = quaternionLength > EPSILON
+      ? finite(attachment.quaternion.w) * reciprocalLength
+      : 1;
+    const xx = x * x;
+    const yy = y * y;
+    const zz = z * z;
+    const xy = x * y;
+    const xz = x * z;
+    const yz = y * z;
+    const xw = x * w;
+    const yw = y * w;
+    const zw = z * w;
+    const axisXDot =
+      (1 - 2 * (yy + zz)) * directionXNormalized +
+      2 * (xy + zw) * directionYNormalized +
+      2 * (xz - yw) * directionZNormalized;
+    const axisYDot =
+      2 * (xy - zw) * directionXNormalized +
+      (1 - 2 * (xx + zz)) * directionYNormalized +
+      2 * (yz + xw) * directionZNormalized;
+    const axisZDot =
+      2 * (xz + yw) * directionXNormalized +
+      2 * (yz - xw) * directionYNormalized +
+      (1 - 2 * (xx + yy)) * directionZNormalized;
+    const projectionRadius =
+      Math.abs(axisXDot) * Math.max(0, finite(attachment.halfExtents.x)) +
+      Math.abs(axisYDot) * Math.max(0, finite(attachment.halfExtents.y)) +
+      Math.abs(axisZDot) * Math.max(0, finite(attachment.halfExtents.z));
+    envelope = Math.max(
+      envelope,
+      finite(attachment.center.x) * directionXNormalized +
+        finite(attachment.center.y) * directionYNormalized +
+        finite(attachment.center.z) * directionZNormalized +
+        projectionRadius,
+    );
+  }
+  return envelope;
+}
+
+function inverseRotateByQuaternion(
+  x: number,
+  y: number,
+  z: number,
+  quaternion: QuaternionLike,
+) {
+  const length = Math.hypot(
+    finite(quaternion.x),
+    finite(quaternion.y),
+    finite(quaternion.z),
+    finite(quaternion.w),
+  );
+  if (length <= EPSILON) return { x, y, z };
+  const qx = -finite(quaternion.x) / length;
+  const qy = -finite(quaternion.y) / length;
+  const qz = -finite(quaternion.z) / length;
+  const qw = finite(quaternion.w) / length;
+  const tx = 2 * (qy * z - qz * y);
+  const ty = 2 * (qz * x - qx * z);
+  const tz = 2 * (qx * y - qy * x);
+  return {
+    x: x + qw * tx + (qy * tz - qz * ty),
+    y: y + qw * ty + (qz * tx - qx * tz),
+    z: z + qw * tz + (qx * ty - qy * tx),
+  };
+}
+
+/** Exact sphere-to-OBB overlap. Visual effects are intentionally excluded. */
+export function sphereIntersectsOrientedBox(
+  sphereCenter: Vec3Like,
+  sphereRadius: number,
+  box: OrientedContactBox,
+) {
+  const relative = inverseRotateByQuaternion(
+    finite(sphereCenter.x) - finite(box.center.x),
+    finite(sphereCenter.y) - finite(box.center.y),
+    finite(sphereCenter.z) - finite(box.center.z),
+    box.quaternion,
+  );
+  const halfX = Math.max(0, finite(box.halfExtents.x));
+  const halfY = Math.max(0, finite(box.halfExtents.y));
+  const halfZ = Math.max(0, finite(box.halfExtents.z));
+  const nearestX = Math.max(-halfX, Math.min(halfX, relative.x));
+  const nearestY = Math.max(-halfY, Math.min(halfY, relative.y));
+  const nearestZ = Math.max(-halfZ, Math.min(halfZ, relative.z));
+  const radius = Math.max(0, finite(sphereRadius));
+  return (
+    (relative.x - nearestX) ** 2 +
+      (relative.y - nearestY) ** 2 +
+      (relative.z - nearestZ) ** 2 <=
+    radius ** 2 + EPSILON
+  );
+}
+
+/** Separating-axis test for two fully oriented solid bounds. */
+export function orientedContactBoxesIntersect(
+  first: OrientedContactBox,
+  second: OrientedContactBox,
+  firstCenterOffset: Vec3Like = { x: 0, y: 0, z: 0 },
+) {
+  const firstAxes = quaternionAxes(first.quaternion);
+  const secondAxes = quaternionAxes(second.quaternion);
+  const centerDelta = {
+    x:
+      finite(second.center.x) -
+      (finite(first.center.x) + finite(firstCenterOffset.x)),
+    y:
+      finite(second.center.y) -
+      (finite(first.center.y) + finite(firstCenterOffset.y)),
+    z:
+      finite(second.center.z) -
+      (finite(first.center.z) + finite(firstCenterOffset.z)),
+  };
+  const axes = [
+    ...firstAxes,
+    ...secondAxes,
+    ...firstAxes.flatMap((firstAxis) =>
+      secondAxes.map((secondAxis) => cross(firstAxis, secondAxis)),
+    ),
+  ];
+  for (const axis of axes) {
+    const lengthSquared = dot(axis, axis);
+    if (lengthSquared <= EPSILON) continue;
+    const firstRadius = boxProjectionRadius(first, firstAxes, axis);
+    const secondRadius = boxProjectionRadius(second, secondAxes, axis);
+    if (
+      Math.abs(dot(centerDelta, axis)) >
+      firstRadius + secondRadius + EPSILON
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Core sphere plus attached solid OBBs; effects and empty hull corners do not stick. */
+export function stickyBodyIntersectsOrientedBox(
+  coreCenter: Vec3Like,
+  coreRadius: number,
+  attachments: readonly OrientedContactBox[],
+  box: OrientedContactBox,
+) {
+  if (sphereIntersectsOrientedBox(coreCenter, coreRadius, box)) return true;
+  return attachments.some((attachment) =>
+    orientedContactBoxesIntersect(attachment, box, coreCenter),
+  );
+}
+
+/** Signed rotation needed to roll a travelled distance around current support. */
+export function rollingAngleForDistance(
+  distance: number,
+  supportRadius: number,
+) {
+  return finite(distance) / Math.max(0.05, Math.max(0, finite(supportRadius)));
 }
 
 /**

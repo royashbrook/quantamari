@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  MAX_ATTACHMENT_SUPPORT_CORE_SHARE,
   MAX_ATTACHMENT_OUTSIDE_SHARE,
   MIN_ATTACHMENT_OUTSIDE_SHARE,
-  attachmentSupportScaleFit,
   contactLocalSurfaceDirection,
+  directionalAttachmentEnvelope3D,
   directionalAttachmentEnvelopeXZ,
+  directionalOrientedBoxEnvelope3D,
   nearestAabbContactDirectionXZ,
+  orientedContactBoxesIntersect,
   relocateAttachmentForCoreGrowth,
+  rollingAngleForDistance,
+  sphereIntersectsOrientedBox,
+  stickyBodyIntersectsOrientedBox,
   targetAttachmentCenterDistance,
 } from "../../src/lib/game/attachment-physics.ts";
 
@@ -79,50 +83,6 @@ test("target placement clamps unsafe requested exposure to the 55–65% band", (
   closeTo((high + outward - core) / span, MAX_ATTACHMENT_OUTSIDE_SHARE);
 });
 
-test("oversized attachment support is uniformly capped to the visible core", () => {
-  const authoredScale = { x: 2, y: 1, z: 0.5 };
-  const authoredSupport = 3.2;
-  const coreRadius = 2;
-  const fit = attachmentSupportScaleFit(authoredSupport, coreRadius);
-  const fittedScale = {
-    x: authoredScale.x * fit,
-    y: authoredScale.y * fit,
-    z: authoredScale.z * fit,
-  };
-
-  closeTo(
-    authoredSupport * fit,
-    coreRadius * MAX_ATTACHMENT_SUPPORT_CORE_SHARE,
-  );
-  closeTo(fittedScale.x / fittedScale.y, authoredScale.x / authoredScale.y);
-  closeTo(fittedScale.y / fittedScale.z, authoredScale.y / authoredScale.z);
-  assert.ok(fit > 0 && fit < 1);
-});
-
-test("attachment support fitting is idempotent and never enlarges small models", () => {
-  const coreRadius = 2;
-  const smallSupport = 0.8;
-  assert.equal(attachmentSupportScaleFit(smallSupport, coreRadius), 1);
-
-  const firstFit = attachmentSupportScaleFit(4, coreRadius);
-  const fittedSupport = 4 * firstFit;
-  assert.equal(attachmentSupportScaleFit(fittedSupport, coreRadius), 1);
-  assert.equal(attachmentSupportScaleFit(4, coreRadius, 0.75), 0.375);
-});
-
-test("the default fit and placement keep the far edge within 1.72 core radii", () => {
-  const coreRadius = 2;
-  const authoredSupport = 8;
-  const fit = attachmentSupportScaleFit(authoredSupport, coreRadius);
-  const fittedSupport = authoredSupport * fit;
-  const center = targetAttachmentCenterDistance(
-    coreRadius,
-    fittedSupport,
-  );
-
-  closeTo(center + fittedSupport, coreRadius * 1.72);
-});
-
 test("core growth pushes attachments outward without changing their angle", () => {
   const original = { x: 3, y: 4, z: 0 };
   const moved = relocateAttachmentForCoreGrowth(original, 1.2, 1.7);
@@ -165,6 +125,145 @@ test("directional support normalizes query vectors and retains the core floor", 
   const diagonal = directionalAttachmentEnvelopeXZ(1, 10, 10, attachments);
   closeTo(diagonal, Math.SQRT2 * 1.4 + 0.2);
   assert.equal(directionalAttachmentEnvelopeXZ(1.25, 0, 0, attachments), 1.25);
+});
+
+test("3D support makes only an attachment beneath the core change ride height", () => {
+  const attachments = [
+    { x: 0, y: -1.7, z: 0, radius: 0.45 },
+    { x: 0, y: 1.9, z: 0, radius: 0.6 },
+  ];
+
+  assert.equal(
+    directionalAttachmentEnvelope3D(1, 0, -1, 0, attachments),
+    2.15,
+  );
+  assert.equal(
+    directionalAttachmentEnvelope3D(1, 0, 1, 0, attachments),
+    2.5,
+  );
+});
+
+test("sphere-to-oriented-box contact rejects horizontal and vertical air gaps", () => {
+  const halfAngle = Math.PI / 4;
+  const box = {
+    center: { x: 4, y: 1, z: 0 },
+    halfExtents: { x: 1, y: 0.25, z: 0.4 },
+    quaternion: {
+      x: 0,
+      y: Math.sin(halfAngle),
+      z: 0,
+      w: Math.cos(halfAngle),
+    },
+  };
+
+  assert.equal(
+    sphereIntersectsOrientedBox({ x: 4, y: 1.3, z: 1.3 }, 0.7, box),
+    true,
+    "the sphere reaches the rotated long face",
+  );
+  assert.equal(
+    sphereIntersectsOrientedBox({ x: 4, y: 2.01, z: 1.3 }, 0.7, box),
+    false,
+    "horizontal overlap cannot collect through a vertical gap",
+  );
+  assert.equal(
+    sphereIntersectsOrientedBox({ x: 4, y: 1.3, z: 1.71 }, 0.7, box),
+    false,
+    "a visible horizontal gap cannot be treated as attraction",
+  );
+});
+
+test("sticky contact uses the touching attachment, never one on the far side", () => {
+  const box = {
+    center: { x: 3.2, y: 0, z: 0 },
+    halfExtents: { x: 0.25, y: 0.25, z: 0.25 },
+    quaternion: IDENTITY,
+  };
+  const core = { x: 0, y: 0, z: 0 };
+
+  assert.equal(stickyBodyIntersectsOrientedBox(core, 1, [], box), false);
+  assert.equal(
+    stickyBodyIntersectsOrientedBox(
+      core,
+      1,
+      [{
+        center: { x: 2.5, y: 0, z: 0 },
+        halfExtents: { x: 0.5, y: 0.5, z: 0.5 },
+        quaternion: IDENTITY,
+      }],
+      box,
+    ),
+    true,
+  );
+  assert.equal(
+    stickyBodyIntersectsOrientedBox(
+      core,
+      1,
+      [{
+        center: { x: -2.5, y: 0, z: 0 },
+        halfExtents: { x: 0.5, y: 0.5, z: 0.5 },
+        quaternion: IDENTITY,
+      }],
+      box,
+    ),
+    false,
+  );
+});
+
+test("a long thin attachment has no sticky bounding-sphere corners", () => {
+  const attachment = {
+    center: { x: 2, y: 0, z: 0 },
+    halfExtents: { x: 1.5, y: 0.15, z: 0.15 },
+    quaternion: IDENTITY,
+  };
+  const emptyCorner = {
+    center: { x: 3.25, y: 0, z: 0.72 },
+    halfExtents: { x: 0.1, y: 0.1, z: 0.1 },
+    quaternion: IDENTITY,
+  };
+  const touchingTip = {
+    ...emptyCorner,
+    center: { x: 3.55, y: 0, z: 0 },
+  };
+
+  assert.equal(orientedContactBoxesIntersect(attachment, emptyCorner), false);
+  assert.equal(orientedContactBoxesIntersect(attachment, touchingTip), true);
+  assert.equal(
+    stickyBodyIntersectsOrientedBox(
+      { x: 0, y: 0, z: 0 },
+      0.5,
+      [attachment],
+      emptyCorner,
+    ),
+    false,
+  );
+});
+
+test("oriented attachment support changes as its long axis rotates underfoot", () => {
+  const halfAngle = Math.PI / 4;
+  const horizontal = {
+    center: { x: 0, y: -1, z: 0 },
+    halfExtents: { x: 1.5, y: 0.2, z: 0.2 },
+    quaternion: IDENTITY,
+  };
+  const vertical = {
+    ...horizontal,
+    quaternion: {
+      x: 0,
+      y: 0,
+      z: Math.sin(halfAngle),
+      w: Math.cos(halfAngle),
+    },
+  };
+
+  closeTo(directionalOrientedBoxEnvelope3D(0.8, 0, -1, 0, [horizontal]), 1.2);
+  closeTo(directionalOrientedBoxEnvelope3D(0.8, 0, -1, 0, [vertical]), 2.5);
+});
+
+test("uneven ground support changes angular travel instead of rolling uniformly", () => {
+  closeTo(rollingAngleForDistance(1, 1), 1);
+  closeTo(rollingAngleForDistance(1, 2.5), 0.4);
+  closeTo(rollingAngleForDistance(-1, 2.5), -0.4);
 });
 
 test("AABB direction targets the nearest wall face instead of its distant center", () => {
