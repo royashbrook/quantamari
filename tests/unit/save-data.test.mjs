@@ -70,6 +70,13 @@ test("v4 loading keeps valid records while dropping malformed records", () => {
       mash({ scale: [0, 1, 1] }),
       mash({ curioId: "not-in-the-atlas" }),
     ],
+    collectedAuthoredAnchors: [
+      "prop/room-shoe",
+      "prop/room-shoe",
+      "not-an-authored-prop",
+      42,
+    ],
+    literalSceneOrigin: { x: 81.5, z: -27.25 },
     collection: [
       {
         eraId: "atomic-cloud",
@@ -100,6 +107,13 @@ test("v4 loading keeps valid records while dropping malformed records", () => {
   assert.equal(loaded?.save.mode, "journey");
   assert.equal(loaded?.save.progress, 1);
   assert.equal(loaded?.save.mash.length, 1);
+  assert.deepEqual(loaded?.save.collectedAuthoredAnchors, [
+    "prop/room-shoe",
+  ]);
+  assert.deepEqual(loaded?.save.literalSceneOrigin, {
+    x: 81.5,
+    z: -27.25,
+  });
   assert.deepEqual(loaded?.save.collection, [
     {
       eraId: "atomic-cloud",
@@ -330,6 +344,8 @@ test("recordPickup and serialization provide a small page integration API", () =
   });
 
   assert.equal(initial.picked, 4);
+  assert.deepEqual(initial.collectedAuthoredAnchors, []);
+  assert.equal(initial.literalSceneOrigin, null);
   assert.equal(initial.collection.length, 0);
   assert.equal(next.picked, 5);
   assert.equal(next.unitemizedPicked, 4);

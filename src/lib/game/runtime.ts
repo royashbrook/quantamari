@@ -40,6 +40,7 @@ import {
   lodForProjectedDiameter,
   projectedDiameterPixels,
   semanticViewScale,
+  stableWorldSeed,
   wantsRichProjectedDetail,
   worldPerformanceBudget,
   worldSpecForEra,
@@ -76,12 +77,35 @@ import {
   wrappedTextureOffset,
 } from "./background-depth";
 import {
+  attachmentSupportScaleFit,
+  contactLocalSurfaceDirection,
+  directionalAttachmentEnvelopeXZ,
+  nearestAabbContactDirectionXZ,
+  relocateAttachmentForCoreGrowth,
+  targetAttachmentCenterDistance,
+  type AttachmentCircleXZ,
+} from "./attachment-physics";
+import {
   type CollectibleGeometryLibrary,
   createCollectibleGeometryLibrary,
   createCollectibleLodPool,
 } from "./collectible-lod";
 import { createCollectibleMarkerFactory } from "./collectible-markers";
 import { createCollectibleVisualFactory } from "./collectible-visuals";
+import {
+  literalArchitectureForStage,
+  literalPropsForStage,
+  literalStageForEra,
+  literalStageSurfaceY,
+  literalSupportBoundaries,
+  literalSupportTopForPoint,
+  LITERAL_ROUTE_HALF_WIDTH,
+  LITERAL_ROUTE_Z_OFFSET,
+  type LiteralArchitecturePrimitive,
+  type LiteralPropAnchor,
+  type LiteralStage,
+  type LiteralSupportRegion,
+} from "./literal-world-layout";
 import {
   type FoundationMotif,
   type FoundationPlan,
@@ -108,6 +132,7 @@ type Pickup = {
   bulkRadius: number;
   big: boolean;
   baseY: number;
+  grounded: boolean;
   wiggle: number;
   identity: CollectibleIdentity;
   drawCalls: number;
@@ -118,7 +143,9 @@ type Pickup = {
   handoffX: number | null;
   handoffY: number | null;
   handoffZ: number | null;
+  renderedScale: THREE.Vector3;
   renderedScaleY: number;
+  authoredAnchorId: string | null;
 };
 
 function pseudo(seed: number) {
@@ -126,7 +153,7 @@ function pseudo(seed: number) {
   return value - Math.floor(value);
 }
 
-const PERIODIC_WORLD_KINDS = new Set<WorldKind>([
+const PERIODIC_CAPABLE_WORLD_KINDS = new Set<WorldKind>([
   "microscopic-sea",
   "fiber-bed",
   "dust-surface",
@@ -147,6 +174,14 @@ const PLANET_FOUNDATION_CENTER_Y = -79;
 
 function worldChunkSize(kind: WorldKind) {
   return kind === "interior" ? 256 : 128;
+}
+
+function worldUsesPeriodicTiles(eraName: string) {
+  const world = worldSpecForEra(eraName);
+  return (
+    world.topology !== "finite" &&
+    PERIODIC_CAPABLE_WORLD_KINDS.has(world.kind)
+  );
 }
 
 function legacyVisualIndexForEra(index: number) {
@@ -252,6 +287,8 @@ export type GameState = {
   z: number;
   originX: number;
   originZ: number;
+  literalSceneOriginX: number | null;
+  literalSceneOriginZ: number | null;
   vx: number;
   vz: number;
   radius: number;
@@ -303,6 +340,7 @@ export type RuntimeBindings = {
   }>;
   modalOpenRef: MutableRef<boolean>;
   mashHistoryRef: MutableRef<MashRecordV4[]>;
+  collectedAuthoredAnchorIdsRef: MutableRef<Set<string>>;
   collectionRef: MutableRef<CollectionEntry[]>;
   advanceLayerRef: MutableRef<(() => boolean) | null>;
   labEra: number | null;
@@ -334,6 +372,7 @@ export function mountGame(
     joystickRef,
     modalOpenRef,
     mashHistoryRef,
+    collectedAuthoredAnchorIdsRef,
     collectionRef,
     advanceLayerRef,
     labEra,
@@ -478,6 +517,7 @@ export function mountGame(
     metalness: 0,
   });
   const foundationSurfaceMaterials = new Set<THREE.MeshStandardMaterial>();
+  const literalFoundationSurfaceMaterials = new Set<THREE.MeshStandardMaterial>();
   const ground = new THREE.Mesh(new THREE.CircleGeometry(95, 96), groundMaterial);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -918,6 +958,8 @@ export function mountGame(
     halfDepth: number;
   };
   let sceneryColliders: SceneryCollider[] = [];
+  let literalPlayableBounds: LiteralSupportRegion | null = null;
+  let literalPlayableRegions: LiteralSupportRegion[] = [];
   let semanticResidencyKey = "";
   let substrateLayerIndices: number[] = [];
   let substrateAuthoredInstances = 0;
@@ -1250,6 +1292,8 @@ export function mountGame(
     ownedMaterials.forEach((material) => material.dispose());
     substrateNearestGroup.clear();
     substrateCompressedGroup.clear();
+    substrateNearestGroup.visible = true;
+    substrateCompressedGroup.visible = true;
     substrateAuthoredInstances = 0;
     substrateGenericInstances = 0;
     substrateRenderedAuthoredInstances = 0;
@@ -1297,6 +1341,28 @@ export function mountGame(
       return;
     }
 
+    // Finite literal places already have an authored slide, table, floors,
+    // thresholds, and yard. Bake the prior scale onto the active support
+    // instead of leaving a player-centered field five metres below it or
+    // standing old objects upright through the room as duplicate scenery.
+    const activeWorldSpec = worldSpecForEra(activeEra.name);
+    const usesBakedLiteralRug =
+      activeWorldSpec.topology === "finite" &&
+      activeLiteralStage !== null;
+    if (usesBakedLiteralRug) {
+      substrateGroup.visible = false;
+      substrateNearestGroup.visible = false;
+      substrateCompressedGroup.visible = false;
+      // The authored floor/table meshes own the same foundation texture. A
+      // player-centered overlay would extend beyond their finite edges and
+      // falsely turn a desk or room back into an infinite plane.
+      foundationOverlay.visible = false;
+      semanticResidencyKey = plan.key;
+      baseSceneDrawCallsDirty = true;
+      phaseEnd("substrate-rebuild", startedAt);
+      return;
+    }
+
     if (!collectibleGeometryLibrary) {
       throw new TypeError("Collectible geometry library is not ready");
     }
@@ -1317,7 +1383,7 @@ export function mountGame(
         : deepColor;
     const alreadyPeriodicSurface =
       plan.presentation === "surface" &&
-      PERIODIC_WORLD_KINDS.has(activeWorldKind);
+      worldUsesPeriodicTiles(activeEra.name);
     const playerCenteredPlanetShell =
       plan.presentation === "shell" &&
       activeWorldKind === "planet-surface";
@@ -1598,8 +1664,10 @@ export function mountGame(
 
     const periodicCompressedFoundation =
       plan.presentation === "surface" &&
-      PERIODIC_WORLD_KINDS.has(activeWorldKind);
-    substrateNearestUsesPeriodicCopies = !playerCenteredPlanetShell;
+      worldUsesPeriodicTiles(activeEra.name);
+    substrateNearestUsesPeriodicCopies =
+      !playerCenteredPlanetShell &&
+      worldSpecForEra(activeEra.name).topology !== "finite";
     substrateCompressedUsesPeriodicCopies = periodicCompressedFoundation;
     if (substrateNearestUsesPeriodicCopies) {
       addPeriodicSubstrateCopies(
@@ -1830,7 +1898,10 @@ export function mountGame(
       group.rotation.set(0, 0, 0);
     });
     foundationSurfaceMaterials.clear();
+    literalFoundationSurfaceMaterials.clear();
     sceneryColliders = [];
+    literalPlayableBounds = null;
+    literalPlayableRegions = [];
   };
 
   const addScenery = (
@@ -1875,6 +1946,232 @@ export function mountGame(
       wireframe,
       depthWrite: false,
     });
+
+  let activeLiteralStage: LiteralStage | null = null;
+  let literalSceneOriginX = 0;
+  let literalSceneOriginZ = 0;
+  let literalPlayerSurfaceY = 0;
+  const literalWorldPosition = (
+    _stage: LiteralStage,
+    position: readonly [number, number, number],
+  ): [number, number, number] => [
+    literalSceneOriginX + position[0],
+    position[1],
+    literalSceneOriginZ + position[2] + LITERAL_ROUTE_Z_OFFSET,
+  ];
+  const literalPlayableClearanceAt = (
+    x: number,
+    z: number,
+    radius: number,
+  ) => {
+    if (literalPlayableRegions.length === 0) return Number.POSITIVE_INFINITY;
+    return literalPlayableRegions.reduce(
+      (best, region) =>
+        Math.max(
+          best,
+          Math.min(
+            x - region.minX - radius,
+            region.maxX - x - radius,
+            z - region.minZ - radius,
+            region.maxZ - z - radius,
+          ),
+        ),
+      Number.NEGATIVE_INFINITY,
+    );
+  };
+  const literalArchitectureColor = (
+    primitive: LiteralArchitecturePrimitive,
+  ) => {
+    const identity = primitive.semanticIdentity;
+    if (identity.includes("slide")) return "#d9fbff";
+    if (identity.includes("microscope")) return "#675884";
+    if (identity.includes("work-surface")) return "#a96b4e";
+    if (identity.includes("floor")) return "#aa7064";
+    if (identity.includes("wall")) return "#ffd8c8";
+    if (identity.includes("porch")) return "#b97861";
+    if (identity.includes("yard")) return "#72ad63";
+    return "#f4d4c7";
+  };
+  const buildLiteralArchitecture = (stage: LiteralStage) => {
+    activeLiteralStage = stage;
+    literalPlayerSurfaceY = literalStageSurfaceY(stage.id);
+    const transientPreview = labEra !== null || debugEraOverride !== null;
+    const stageCenterZ =
+      (stage.nearZ + stage.farZ) / 2 + LITERAL_ROUTE_Z_OFFSET;
+    if (transientPreview) {
+      literalSceneOriginX = game.x;
+      literalSceneOriginZ = game.z - stageCenterZ;
+    } else {
+      game.literalSceneOriginX ??= game.x + game.originX;
+      game.literalSceneOriginZ ??= game.z + game.originZ - stageCenterZ;
+      literalSceneOriginX = game.literalSceneOriginX - game.originX;
+      literalSceneOriginZ = game.literalSceneOriginZ - game.originZ;
+    }
+    const sky =
+      stage.id === "yard" || stage.id === "porch" ? "#82d7f3" : "#f4c6d2";
+    scene.background = new THREE.Color(sky);
+    scene.fog = new THREE.FogExp2(sky, stage.id === "room" ? 0.014 : 0.009);
+    groundMaterial.color.set(
+      stage.id === "yard" || stage.id === "porch"
+        ? "#72ad63"
+        : stage.id === "room"
+          ? "#aa7064"
+          : "#a96b4e",
+    );
+    dustMaterial.size = stage.id === "microscope-slide" ? 0.07 : 0.04;
+    dustMaterial.opacity = stage.id === "room" ? 0.1 : 0.16;
+    hemisphere.intensity = stage.id === "yard" ? 1.55 : 1.3;
+    keyLight.intensity = stage.id === "yard" ? 2.8 : 2.5;
+    ground.visible = false;
+
+    literalArchitectureForStage(stage.id).forEach((primitive) => {
+      if (primitive.primitive === "portal") return;
+      const [width, height, depth] = primitive.dimensions;
+      const geometry =
+        primitive.primitive === "cylinder"
+          ? new THREE.CylinderGeometry(width / 2, width / 2, height, 16)
+          : new THREE.BoxGeometry(width, height, depth);
+      const color = literalArchitectureColor(primitive);
+      const mapsLiteralFoundation =
+        primitive.collision === "support" &&
+        Math.abs(
+          primitive.position[1] +
+            primitive.dimensions[1] / 2 -
+            literalPlayerSurfaceY,
+        ) < 0.04;
+      let material: THREE.Material;
+      if (primitive.semanticIdentity.includes("slide")) {
+        const slideMaterial = new THREE.MeshStandardMaterial({
+          color,
+          transparent: true,
+          opacity: 0.62,
+          depthWrite: false,
+          roughness: 0.22,
+          metalness: 0,
+          map: mapsLiteralFoundation ? literalGroundTexture : null,
+        });
+        if (mapsLiteralFoundation) {
+          literalFoundationSurfaceMaterials.add(slideMaterial);
+        }
+        material = slideMaterial;
+      } else if (primitive.collision === "support") {
+        const supportMaterial = new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.88,
+          metalness: 0,
+          flatShading: true,
+          map: mapsLiteralFoundation ? literalGroundTexture : null,
+        });
+        if (mapsLiteralFoundation) {
+          literalFoundationSurfaceMaterials.add(supportMaterial);
+        }
+        material = supportMaterial;
+      } else {
+        material = sceneryToon(color);
+      }
+      const mesh = addScenery(
+        geometry,
+        material,
+        literalWorldPosition(stage, primitive.position),
+        [...primitive.rotation],
+      );
+      mesh.name = `literal:${primitive.id}`;
+      if (primitive.collision === "barrier") {
+        const [x, , z] = literalWorldPosition(stage, primitive.position);
+        addSceneryCollider(x, z, width / 2, depth / 2);
+      }
+    });
+
+    const playableSupports = literalArchitectureForStage(stage.id).filter(
+      (primitive) => {
+        if (primitive.collision !== "support") return false;
+        const [, worldY] = literalWorldPosition(stage, primitive.position);
+        return (
+          Math.abs(
+            worldY + primitive.dimensions[1] / 2 - literalPlayerSurfaceY,
+          ) < 0.04
+        );
+      },
+    );
+    if (playableSupports.length > 0) {
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minZ = Number.POSITIVE_INFINITY;
+      let maxZ = Number.NEGATIVE_INFINITY;
+      playableSupports.forEach((support) => {
+        const [supportX, , supportZ] = literalWorldPosition(
+          stage,
+          support.position,
+        );
+        const [supportWidth, , supportDepth] = support.dimensions;
+        const region = {
+          minX: supportX - supportWidth / 2,
+          maxX: supportX + supportWidth / 2,
+          minZ: supportZ - supportDepth / 2,
+          maxZ: supportZ + supportDepth / 2,
+        };
+        literalPlayableRegions.push(region);
+        minX = Math.min(minX, region.minX);
+        maxX = Math.max(maxX, region.maxX);
+        minZ = Math.min(minZ, region.minZ);
+        maxZ = Math.max(maxZ, region.maxZ);
+      });
+      literalPlayableBounds = { minX, maxX, minZ, maxZ };
+      const edge = 0.35;
+      literalSupportBoundaries(literalPlayableRegions).forEach((boundary) => {
+        const center = (boundary.min + boundary.max) / 2;
+        const halfLength = (boundary.max - boundary.min) / 2;
+        if (boundary.axis === "x") {
+          addSceneryCollider(
+            boundary.coordinate + boundary.outward * edge,
+            center,
+            edge,
+            halfLength,
+          );
+        } else {
+          addSceneryCollider(
+            center,
+            boundary.coordinate + boundary.outward * edge,
+            halfLength,
+            edge,
+          );
+        }
+      });
+
+      if (!transientPreview && literalPlayableClearanceAt(game.x, game.z, 0.75) < 0) {
+        let bestX = game.x;
+        let bestZ = game.z;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        literalPlayableRegions.forEach((region) => {
+          const inset = Math.min(
+            0.75,
+            (region.maxX - region.minX) / 2 - 0.05,
+            (region.maxZ - region.minZ) / 2 - 0.05,
+          );
+          const x = THREE.MathUtils.clamp(
+            game.x,
+            region.minX + inset,
+            region.maxX - inset,
+          );
+          const z = THREE.MathUtils.clamp(
+            game.z,
+            region.minZ + inset,
+            region.maxZ - inset,
+          );
+          const distance = Math.hypot(x - game.x, z - game.z);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestX = x;
+            bestZ = z;
+          }
+        });
+        game.x = bestX;
+        game.z = bestZ;
+        game.vx = 0;
+        game.vz = 0;
+      }
+    }
+  };
 
   const backdropGlow = (
     color: THREE.ColorRepresentation,
@@ -1926,6 +2223,7 @@ export function mountGame(
   };
 
   let groundTexture: THREE.CanvasTexture | null = null;
+  let literalGroundTexture: THREE.Texture | null = null;
   let coreSurfaceTexture: THREE.CanvasTexture | null = null;
   let groundTextureKey = "";
   let coreSurfaceTextureKey = -1;
@@ -2551,6 +2849,14 @@ export function mountGame(
       material.map = groundTexture;
       material.needsUpdate = true;
     });
+    literalGroundTexture?.dispose();
+    literalGroundTexture = groundTexture.clone();
+    literalGroundTexture.offset.set(0, 0);
+    literalGroundTexture.needsUpdate = true;
+    literalFoundationSurfaceMaterials.forEach((material) => {
+      material.map = literalGroundTexture;
+      material.needsUpdate = true;
+    });
     phaseEnd("ground-texture", startedAt);
   };
 
@@ -2800,6 +3106,8 @@ export function mountGame(
 
   const buildEnvironment = (index: number) => {
     disposeEnvironment();
+    activeLiteralStage = null;
+    literalPlayerSurfaceY = 0;
     environmentGroup.visible = true;
     applyScaleTextures(index);
     environmentMode = environmentModeFor(index);
@@ -2813,6 +3121,12 @@ export function mountGame(
     nearBackdropGroup.visible = true;
     midBackdropGroup.visible = true;
     farBackdropGroup.visible = true;
+
+    const literalStage = literalStageForEra(ERAS[index].id);
+    if (literalStage) {
+      buildLiteralArchitecture(literalStage);
+      return;
+    }
 
     if (
       activeWorldKind === "void" ||
@@ -3568,7 +3882,7 @@ export function mountGame(
   const rebuildEnvironment = (index: number) => {
     const startedAt = phaseStart();
     buildEnvironment(index);
-    if (PERIODIC_WORLD_KINDS.has(activeWorldKind)) {
+    if (worldUsesPeriodicTiles(activeEra.name)) {
       addPeriodicEnvironmentLod(
         environmentGroup,
         worldChunkSize(activeWorldKind),
@@ -3671,6 +3985,7 @@ export function mountGame(
     root: THREE.Object3D;
     visualRadius: number;
     bulkRadius: number;
+    minY: number;
     drawCalls: number;
   };
   const visualTemplates = new Map<string, VisualTemplate>();
@@ -3683,7 +3998,8 @@ export function mountGame(
       applyPhysicalMaterialQuality(root);
       root.updateMatrixWorld(true);
       const dimensions = new THREE.Vector3();
-      new THREE.Box3().setFromObject(root).getSize(dimensions);
+      const bounds = new THREE.Box3().setFromObject(root);
+      bounds.getSize(dimensions);
       let drawCalls = 0;
       root.traverse((child) => {
         if (
@@ -3705,6 +4021,7 @@ export function mountGame(
               dimensions.x * dimensions.y * dimensions.z,
             ),
           ) / 2,
+        minY: bounds.min.y,
         drawCalls,
       };
       visualTemplates.set(key, template);
@@ -3716,6 +4033,7 @@ export function mountGame(
       visual,
       visualRadius: template.visualRadius,
       bulkRadius: template.bulkRadius,
+      minY: template.minY,
       drawCalls: template.drawCalls,
       builtTemplate,
     };
@@ -3735,7 +4053,7 @@ export function mountGame(
     color: "#ffffff",
     vertexColors: true,
     transparent: true,
-    opacity: 0.34,
+    opacity: 0.58,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
@@ -3761,6 +4079,60 @@ export function mountGame(
     record: MashRecordV4;
     color: string;
   }[] = [];
+  const visibleMashPieceCount = () =>
+    Math.min(
+      MAX_VISIBLE_MASH_PIECES,
+      attachments.length + mashProxyRecords.length,
+    );
+  const coreShareFor = (pieceCount: number) =>
+    early
+      ? Math.max(0.18, 0.82 - pieceCount * 0.05)
+      : Math.max(0.32, 0.78 - pieceCount * 0.009);
+  const visibleCoreRadiusFor = (radius: number, pieceCount = visibleMashPieceCount()) =>
+    radius * coreShareFor(pieceCount);
+  const attachmentSupportCache = new Map<string, number>();
+  const supportRadiusForCurio = (curio: Curio) => {
+    const cached = attachmentSupportCache.get(curio.id);
+    if (cached !== undefined) return cached;
+    const geometries = collectibleGeometryLibrary!.geometryFor(curio, false);
+    let support = 0.01;
+    // Halos, clouds, wires, and other transparent accents are visual effects,
+    // not matter. They must not enlarge the rolling collision envelope or
+    // force the recognizable solid model to be shrunk.
+    const physicalGeometry = geometries.solid ?? geometries.effect;
+    physicalGeometry?.computeBoundingSphere();
+    const bounds = physicalGeometry?.boundingSphere;
+    if (bounds) support = Math.max(support, bounds.center.length() + bounds.radius);
+    attachmentSupportCache.set(curio.id, support);
+    return support;
+  };
+  const makeMashAttachment = (curio: Curio) => {
+    const group = new THREE.Group();
+    group.name = `mash:authored:${curio.id}`;
+    group.userData.sharedResources = true;
+    const geometries = collectibleGeometryLibrary!.geometryFor(
+      curio,
+      qualityTier === "high",
+    );
+    let drawCalls = 0;
+    if (geometries.solid) {
+      const solid = new THREE.Mesh(geometries.solid, mashProxySolidMaterial);
+      solid.userData.sharedCollectibleGeometry = true;
+      solid.castShadow = profileSettings.shadows;
+      solid.receiveShadow = profileSettings.shadows;
+      group.add(solid);
+      drawCalls += 1;
+    }
+    if (geometries.effect) {
+      const effect = new THREE.Mesh(geometries.effect, mashProxyEffectMaterial);
+      effect.userData.sharedCollectibleGeometry = true;
+      group.add(effect);
+      drawCalls += 1;
+    }
+    group.userData.mashSupportRadius = supportRadiusForCurio(curio);
+    group.userData.mashDrawCalls = Math.max(1, drawCalls);
+    return group;
+  };
   let mashProxyIncludesRich = false;
   const richMashLimit = () =>
     qualityTier === "high" ? 8 : qualityTier === "balanced" ? 6 : 4;
@@ -3847,11 +4219,16 @@ export function mountGame(
     mashProxyEffectMesh.visible = transformedEffectParts.length > 0;
     baseSceneDrawCallsDirty = true;
   };
-  const setMashProxyLod = (compact: boolean) => {
-    if (compact === mashProxyIncludesRich) return;
-    mashProxyIncludesRich = compact;
+  const setMashProxyLod = (_compact: boolean) => {
+    // Collected objects must never blink between their authored form and the
+    // combined proxy as the camera crosses a projected-size threshold. Older
+    // pieces are already batched when the fixed authored budget is exceeded.
+    if (!mashProxyIncludesRich && attachments.every((visual) => visual.visible)) {
+      return;
+    }
+    mashProxyIncludesRich = false;
     attachments.forEach((visual) => {
-      visual.visible = !compact;
+      visual.visible = true;
     });
     refreshMashProxy();
   };
@@ -4007,6 +4384,52 @@ export function mountGame(
       (candidate) => candidate.id === record.curioId,
     );
     if (!curio || sourceEraIndex < 0) return;
+    const sourceRepresentation = worldSpecForEra(sourceEra.name).representation;
+    if (
+      !record.mergedInside &&
+      sourceRepresentation !== "diagrammatic-micro" &&
+      sourceRepresentation !== "speculative"
+    ) {
+      let authoredScale = Math.max(...record.scale.map(Math.abs));
+      const visibleCoreRadius = visibleCoreRadiusFor(
+        game.radius,
+        visibleMashRecords.length,
+      );
+      const scaleFit = attachmentSupportScaleFit(
+        supportRadiusForCurio(curio) * authoredScale,
+        visibleCoreRadius,
+      );
+      if (scaleFit < 1) {
+        record.scale = record.scale.map((value) => value * scaleFit) as [
+          number,
+          number,
+          number,
+        ];
+        authoredScale *= scaleFit;
+      }
+      const support = supportRadiusForCurio(curio) * authoredScale;
+      const targetDistance = targetAttachmentCenterDistance(
+        visibleCoreRadius,
+        support,
+      );
+      const restoredDistance = Math.hypot(...record.position);
+      if (restoredDistance < targetDistance) {
+        const direction = contactLocalSurfaceDirection(
+          {
+            x: record.position[0],
+            y: record.position[1],
+            z: record.position[2],
+          },
+          { x: 0, y: 0, z: 0, w: 1 },
+          collectibleIdentityFor(curio.id, curio.shape).seed + recordIndex,
+        );
+        record.position = [
+          direction.x * targetDistance,
+          direction.y * targetDistance,
+          direction.z * targetDistance,
+        ];
+      }
+    }
     if (!restoredRichRecords.has(record)) {
       addMashProxy(record, curio.color, false);
       return;
@@ -4030,24 +4453,69 @@ export function mountGame(
         number,
       ];
     }
-    const { visual, drawCalls } = makeVisual(curio);
-    visual.userData.mashDrawCalls =
-      drawCalls * (profileSettings.shadows ? 2 : 1);
+    const visual = makeMashAttachment(curio);
     visual.userData.sourceEra = sourceEraIndex;
     visual.position.copy(restoredPosition);
     visual.rotation.set(...record.rotation);
     visual.scale.set(...record.scale);
     visual.userData.mashRecord = record;
     visual.userData.mashColor = curio.color;
-    if (record.mergedInside) makeFieldLike(visual);
     mashGroup.add(visual);
     attachments.push(visual);
   });
   const stickingPieces: {
     visual: THREE.Object3D;
+    startPosition: THREE.Vector3;
+    targetPosition: THREE.Vector3;
     targetScale: THREE.Vector3;
     startedAt: number;
   }[] = [];
+  const relocateMashForCoreGrowth = (
+    previousCoreRadius: number,
+    nextCoreRadius: number,
+  ) => {
+    if (nextCoreRadius <= previousCoreRadius) return;
+    const relocateVector = (vector: THREE.Vector3, seed: number) => {
+      const moved = relocateAttachmentForCoreGrowth(
+        vector,
+        previousCoreRadius,
+        nextCoreRadius,
+        seed,
+      );
+      vector.set(moved.x, moved.y, moved.z);
+    };
+    attachments.forEach((visual, index) => {
+      relocateVector(visual.position, index + 1);
+    });
+    stickingPieces.forEach((piece, index) => {
+      relocateVector(piece.startPosition, index + 101);
+      relocateVector(piece.targetPosition, index + 201);
+    });
+    const relocatedRecords = new Set<MashRecordV4>();
+    const relocateRecord = (record: MashRecordV4 | undefined, seed: number) => {
+      if (!record || record.mergedInside || relocatedRecords.has(record)) return;
+      const moved = relocateAttachmentForCoreGrowth(
+        { x: record.position[0], y: record.position[1], z: record.position[2] },
+        previousCoreRadius,
+        nextCoreRadius,
+        seed,
+      );
+      record.position = [moved.x, moved.y, moved.z];
+      relocatedRecords.add(record);
+    };
+    attachments.forEach((visual, index) => {
+      relocateRecord(
+        visual.userData.mashRecord as MashRecordV4 | undefined,
+        index + 301,
+      );
+    });
+    mashProxyRecords.forEach(({ record }, index) =>
+      relocateRecord(record, index + 401),
+    );
+    mashHistoryRef.current.forEach((record, index) =>
+      relocateRecord(record, index + 501),
+    );
+  };
 
   const removePickup = (
     pickup: Pickup,
@@ -4076,10 +4544,19 @@ export function mountGame(
   const collapseRichMashToBudget = () => {
     let changed = false;
     while (
-      attachments.length > richMashLimit() ||
-      richMashDrawCalls() > richMashDrawCallLimit()
+      attachments.length > 1 &&
+      (attachments.length > richMashLimit() ||
+        richMashDrawCalls() > richMashDrawCallLimit())
     ) {
-      const oldest = attachments.shift();
+      const oldestIndex = attachments.findIndex(
+        (visual) =>
+          !stickingPieces.some((piece) => piece.visual === visual),
+      );
+      // A freshly collected object gets 280 ms to visibly travel from the
+      // contact point onto the roll. Temporarily exceeding the rich budget is
+      // preferable to teleporting that active piece into the merged batch.
+      if (oldestIndex < 0) break;
+      const [oldest] = attachments.splice(oldestIndex, 1);
       if (!oldest) break;
       const record = oldest.userData.mashRecord as MashRecordV4 | undefined;
       if (record) {
@@ -4089,10 +4566,6 @@ export function mountGame(
           false,
         );
       }
-      const stickingIndex = stickingPieces.findIndex(
-        (piece) => piece.visual === oldest,
-      );
-      if (stickingIndex >= 0) stickingPieces.splice(stickingIndex, 1);
       mashGroup.remove(oldest);
       disposeVisual(oldest);
       changed = true;
@@ -4152,6 +4625,8 @@ export function mountGame(
       rebaseRecord(visual.userData.mashRecord as MashRecordV4 | undefined);
     });
     stickingPieces.forEach((piece) => {
+      piece.startPosition.multiplyScalar(scale);
+      piece.targetPosition.multiplyScalar(scale);
       piece.targetScale.multiplyScalar(scale);
     });
     mashProxyRecords.forEach(({ record }) => rebaseRecord(record));
@@ -4175,6 +4650,7 @@ export function mountGame(
     sequence: number,
     bornAt: number,
     phase: PickupSpawnPhase,
+    authoredAnchor: LiteralPropAnchor | null = null,
   ) => {
     const populationPlan = pickupPopulationPlan(
       width,
@@ -4182,17 +4658,25 @@ export function mountGame(
       activeIndex,
       ERAS.length,
     );
-    const sourceEra = pickupSourceEraForSpawn({
-      sequence,
-      activeEra: activeIndex,
-      eraCount: ERAS.length,
-      activeBlockers: pickups.filter(
-        (pickup) =>
-          pickup.sourceEra > activeIndex &&
-          pickup.retireStartedAt === null,
-      ).length,
-      plan: populationPlan,
-    });
+    const anchoredSourceEra = authoredAnchor
+      ? ERAS.findIndex((era) =>
+          era.curios.some((curio) => curio.id === authoredAnchor.curioId),
+        )
+      : -1;
+    const sourceEra = authoredAnchor
+      ? anchoredSourceEra
+      : pickupSourceEraForSpawn({
+          sequence,
+          activeEra: activeIndex,
+          eraCount: ERAS.length,
+          activeBlockers: pickups.filter(
+            (pickup) =>
+              pickup.sourceEra > activeIndex &&
+              pickup.retireStartedAt === null,
+          ).length,
+          plan: populationPlan,
+        });
+    if (sourceEra < 0) return { spawned: false, builtTemplate: false };
     const levelDelta = sourceEra - activeIndex;
     const source = ERAS[sourceEra];
     const collectedCurioIds = collectionRef.current
@@ -4205,19 +4689,23 @@ export function mountGame(
           pickup.curio.spawnMode === "singleton",
       )
       .map((pickup) => pickup.curio.id);
-    const curioSelection = selectCurioForSpawn({
-      curios: source.curios,
-      seed: seed + 67,
-      sequence,
-      ...(levelDelta <= 0
-        ? { pity: spawnPityByEra.get(sourceEra) }
-        : {}),
-      collectedCurioIds,
-      activeCurioIds,
-      repeatablesOnly: levelDelta > 0,
-    });
-    if (!curioSelection) return { spawned: false, builtTemplate: false };
-    const { curio } = curioSelection;
+    const curioSelection = authoredAnchor
+      ? null
+      : selectCurioForSpawn({
+          curios: source.curios,
+          seed: seed + 67,
+          sequence,
+          ...(levelDelta <= 0
+            ? { pity: spawnPityByEra.get(sourceEra) }
+            : {}),
+          collectedCurioIds,
+          activeCurioIds,
+          repeatablesOnly: levelDelta > 0,
+        });
+    const curio = authoredAnchor
+      ? source.curios.find((candidate) => candidate.id === authoredAnchor.curioId)
+      : curioSelection?.curio;
+    if (!curio) return { spawned: false, builtTemplate: false };
     const identity = collectibleIdentityFor(curio.id, curio.shape);
     let big = levelDelta > 0;
     const sizeTicket =
@@ -4231,21 +4719,31 @@ export function mountGame(
       visual,
       visualRadius: unitVisualRadius,
       bulkRadius: unitBulkRadius,
+      minY: unitMinY,
       drawCalls,
       builtTemplate,
     } = makeVisual(curio, sourceEra >= activeIndex);
+    if (authoredAnchor) {
+      const semanticScale = 2 ** (sourceEra - activeIndex);
+      const targetFootprint = THREE.MathUtils.clamp(
+        authoredAnchor.footprintRadius * semanticScale,
+        0.08,
+        14,
+      );
+      size = targetFootprint / Math.max(0.01, unitVisualRadius);
+    }
     visual.userData.sourceEra = sourceEra;
     visual.scale.setScalar(size);
     let visualRadius = unitVisualRadius * size;
     let bulkRadius = unitBulkRadius * size;
-    if (levelDelta <= 0 && visualRadius > game.radius * 0.82) {
+    if (!authoredAnchor && levelDelta <= 0 && visualRadius > game.radius * 0.82) {
       const targetRadius = game.radius * (0.42 + pseudo(seed + 139) * 0.34);
       const fit = targetRadius / visualRadius;
       size *= fit;
       visualRadius *= fit;
       bulkRadius *= fit;
       visual.scale.multiplyScalar(fit);
-    } else if (levelDelta > 0) {
+    } else if (!authoredAnchor && levelDelta > 0) {
       const targetRadius = nextLayerObstacleRadius(
         CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR,
       );
@@ -4265,29 +4763,76 @@ export function mountGame(
         child.receiveShadow = false;
       }
     });
-    const marker = sourceEra >= activeIndex ? makeMarker(curio.symbol) : null;
+    const sourceWorld = worldSpecForEra(source.name);
+    const grounded =
+      activeLiteralStage !== null ||
+      sourceWorld.representation === "literal-object-place" ||
+      authoredAnchor !== null;
+    const marker =
+      sourceEra >= activeIndex &&
+      (sourceWorld.representation === "diagrammatic-micro" ||
+        sourceWorld.representation === "speculative")
+        ? makeMarker(curio.symbol)
+        : null;
     if (marker) visual.add(marker);
     root.add(visual);
     let spawnX = game.x;
     let spawnZ = game.z;
-    let bestClearance = Number.NEGATIVE_INFINITY;
+    let bestClearance = authoredAnchor
+      ? Number.POSITIVE_INFINITY
+      : Number.NEGATIVE_INFINITY;
     let bestOffscreen = false;
     const attempts = big ? 36 : 18;
-    const outerRing = phase === "refill";
+    // Oversized next-layer previews must never materialize in the settled
+    // chase-camera lane. On finite stages the only roomy pocket behind the
+    // player can otherwise become the deterministic "best" candidate, then
+    // the camera eases straight through a house-sized silhouette as the roll
+    // grows. Treat every blocker like buffered scenery, including the initial
+    // population, and reserve the full future camera arm below.
+    const outerRing = phase === "refill" || big;
     const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
+    const settledCameraArm =
+      CORE_RADIUS_MAX *
+      (isCompactView(width) ? 11.8 : 10.6) *
+      Math.min(1.25, game.lens);
     const chunkSize = worldChunkSize(activeWorldKind);
+    if (authoredAnchor && activeLiteralStage) {
+      const anchoredPosition = literalWorldPosition(
+        activeLiteralStage,
+        authoredAnchor.position,
+      );
+      spawnX = anchoredPosition[0];
+      spawnZ = anchoredPosition[2];
+    }
     const sceneryClearanceAt = (x: number, z: number) => {
       if (!environmentGroup.visible) return Number.POSITIVE_INFINITY;
-      const localX = localChunkCoordinate(x, chunkSize);
-      const localZ = localChunkCoordinate(z, chunkSize);
-      return sceneryColliders.reduce(
+      const requiredRadius =
+        visualRadius + (big ? rollingEnvelope : 0) + 0.45;
+      const playableClearance = literalPlayableClearanceAt(
+        x,
+        z,
+        requiredRadius,
+      );
+      if (playableClearance < 0) return playableClearance;
+      const topology = worldSpecForEra(activeEra.name).topology;
+      const localX = worldUsesPeriodicTiles(activeEra.name)
+        ? localChunkCoordinate(x, chunkSize)
+        : topology === "finite"
+          ? x
+          : x - game.x;
+      const localZ = worldUsesPeriodicTiles(activeEra.name)
+        ? localChunkCoordinate(z, chunkSize)
+        : topology === "finite"
+          ? z
+          : z - game.z;
+      const sceneryClearance = sceneryColliders.reduce(
         (minimum, collider) =>
           Math.min(
             minimum,
             circleAabbClearance(
               localX,
               localZ,
-              visualRadius + (big ? rollingEnvelope : 0) + 0.45,
+              requiredRadius,
               collider.x,
               collider.z,
               collider.halfWidth,
@@ -4296,8 +4841,13 @@ export function mountGame(
           ),
         Number.POSITIVE_INFINITY,
       );
+      return Math.min(playableClearance, sceneryClearance);
     };
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (
+      let attempt = 0;
+      !authoredAnchor && attempt < attempts;
+      attempt += 1
+    ) {
       const placement = pickupSpawnPlacement({
         seed,
         sequence,
@@ -4317,8 +4867,31 @@ export function mountGame(
           )
         : placement.radius;
       const candidateAngle = placement.angle;
-      const candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
-      const candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
+      let candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
+      let candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
+      if (literalPlayableBounds) {
+        const finiteMargin =
+          visualRadius + (big ? rollingEnvelope : 0) + 0.55;
+        const minX = literalPlayableBounds.minX + finiteMargin;
+        const maxX = literalPlayableBounds.maxX - finiteMargin;
+        const minZ = literalPlayableBounds.minZ + finiteMargin;
+        const maxZ = literalPlayableBounds.maxZ - finiteMargin;
+        if (minX > maxX || minZ > maxZ) continue;
+        candidateX = THREE.MathUtils.lerp(
+          minX,
+          maxX,
+          pseudo(seed + sequence * 0.37 + attempt * 17.31),
+        );
+        candidateZ = THREE.MathUtils.lerp(
+          minZ,
+          maxZ,
+          pseudo(seed + sequence * 0.73 + attempt * 29.17),
+        );
+        if (!outerRing && activeLiteralStage === null) {
+          candidateX = THREE.MathUtils.lerp(game.x, candidateX, 0.55);
+          candidateZ = THREE.MathUtils.lerp(game.z, candidateZ, 0.55);
+        }
+      }
       const pickupClearance = big
         ? pickups.reduce((minimum, other) => {
             if (!other.big) return minimum;
@@ -4334,18 +4907,52 @@ export function mountGame(
             return Math.min(minimum, separation - required);
           }, Number.POSITIVE_INFINITY)
         : Number.POSITIVE_INFINITY;
-      const localX = localChunkCoordinate(candidateX, chunkSize);
-      const localZ = localChunkCoordinate(candidateZ, chunkSize);
+      const playerSpawnEnvelope =
+        activeLiteralStage !== null && !big
+          ? Math.max(game.radius, effectiveRollRadius)
+          : rollingEnvelope;
+      const playerClearance =
+        Math.hypot(candidateX - game.x, candidateZ - game.z) -
+        (playerSpawnEnvelope + visualRadius + 0.75);
+      const localX = worldUsesPeriodicTiles(activeEra.name)
+        ? localChunkCoordinate(candidateX, chunkSize)
+        : candidateX;
+      const localZ = worldUsesPeriodicTiles(activeEra.name)
+        ? localChunkCoordinate(candidateZ, chunkSize)
+        : candidateZ;
       const corridorClearance =
         big &&
-        PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
-        (Math.abs(localX) < 16 || Math.abs(localZ) < 16)
+        ((worldUsesPeriodicTiles(activeEra.name) &&
+          (Math.abs(localX) < 16 || Math.abs(localZ) < 16)) ||
+          (activeLiteralStage !== null &&
+            Math.abs(candidateX - literalSceneOriginX) <
+              LITERAL_ROUTE_HALF_WIDTH + visualRadius &&
+            candidateZ <=
+              literalSceneOriginZ +
+                activeLiteralStage.nearZ +
+                LITERAL_ROUTE_Z_OFFSET &&
+            candidateZ >=
+              literalSceneOriginZ +
+                activeLiteralStage.farZ +
+                LITERAL_ROUTE_Z_OFFSET))
           ? -1
           : Number.POSITIVE_INFINITY;
+      const cameraLaneProgress = THREE.MathUtils.clamp(
+        (candidateZ - game.z) / Math.max(0.001, settledCameraArm),
+        0,
+        1,
+      );
+      const cameraLaneZ = game.z + settledCameraArm * cameraLaneProgress;
+      const cameraLaneClearance = big
+        ? Math.hypot(candidateX - game.x, candidateZ - cameraLaneZ) -
+          (visualRadius + 0.8)
+        : Number.POSITIVE_INFINITY;
       const clearance = Math.min(
+        playerClearance,
         pickupClearance,
         sceneryClearanceAt(candidateX, candidateZ),
         corridorClearance,
+        cameraLaneClearance,
       );
       const candidateOffscreen =
         outerRing &&
@@ -4369,10 +4976,28 @@ export function mountGame(
       disposeVisual(visual);
       return { spawned: false, builtTemplate };
     }
-    root.position.set(spawnX, Math.max(0.22, size * 0.48), spawnZ);
+    const literalSupportTop =
+      activeLiteralStage
+        ? literalSupportTopForPoint(
+            activeLiteralStage.id,
+            spawnX - literalSceneOriginX,
+            spawnZ - literalSceneOriginZ - LITERAL_ROUTE_Z_OFFSET,
+          )
+        : null;
+    const groundedSurfaceY =
+      literalSupportTop ?? (activeLiteralStage ? literalPlayerSurfaceY : 0.01);
+    const spawnY = grounded
+      ? Math.max(
+          0.015,
+          groundedSurfaceY - unitMinY * size + 0.008,
+        )
+      : Math.max(0.22, size * 0.48);
+    root.position.set(spawnX, spawnY, spawnZ);
     const baseY = root.position.y;
     const wiggle = pseudo(seed + 181) * Math.PI * 2;
-    root.rotation.y = pseudo(seed + 91) * Math.PI * 2;
+    root.rotation.y = authoredAnchor
+      ? authoredAnchor.rotation[1]
+      : pseudo(seed + 91) * Math.PI * 2;
     root.scale.setScalar(0);
     scene.add(root);
     pickups.push({
@@ -4386,6 +5011,7 @@ export function mountGame(
       bulkRadius,
       big,
       baseY,
+      grounded,
       wiggle,
       identity,
       drawCalls: drawCalls + (marker ? 1 : 0),
@@ -4396,9 +5022,11 @@ export function mountGame(
       handoffX: null,
       handoffY: null,
       handoffZ: null,
+      renderedScale: new THREE.Vector3(),
       renderedScaleY: 0,
+      authoredAnchorId: authoredAnchor?.id ?? null,
     });
-    if (levelDelta <= 0) {
+    if (levelDelta <= 0 && curioSelection) {
       spawnPityByEra.set(sourceEra, curioSelection.pity);
     }
     game.id += 1;
@@ -4428,6 +5056,81 @@ export function mountGame(
   let spawnedLastFrame = 0;
   let maxSpawnedPerFrame = 0;
   let pickupRetireClock = 0;
+  const collectedAuthoredAnchorIds = collectedAuthoredAnchorIdsRef.current;
+  let pendingLiteralAnchors: LiteralPropAnchor[] = [];
+  let literalAnchorStageId = "";
+  let literalAnchorReconcileKey = "";
+
+  const reconcileLiteralPropAnchors = () => {
+    const stage = activeLiteralStage;
+    const reconcileKey = `${stage?.id ?? "none"}:${activeIndex}:${collectedAuthoredAnchorIds.size}`;
+    if (literalAnchorReconcileKey === reconcileKey) return;
+    literalAnchorReconcileKey = reconcileKey;
+    const desired = stage
+      ? literalPropsForStage(stage.id).filter((anchor) => {
+          const sourceIndex = ERAS.findIndex((era) =>
+            era.curios.some((curio) => curio.id === anchor.curioId),
+          );
+          // The next layer already has procedural oversized previews. Authored
+          // one-off props appear only once their own scale is active, so they
+          // cannot be collected early and disappear from the intended scene.
+          return sourceIndex >= 0 && sourceIndex <= activeIndex;
+        })
+      : [];
+    const desiredIds = new Set(desired.map((anchor) => anchor.id));
+    pickups = pickups.filter((pickup) => {
+      if (
+        pickup.authoredAnchorId === null ||
+        desiredIds.has(pickup.authoredAnchorId)
+      ) {
+        return true;
+      }
+      removePickup(pickup);
+      return false;
+    });
+    if (literalAnchorStageId !== (stage?.id ?? "")) {
+      pendingLiteralAnchors = [];
+      literalAnchorStageId = stage?.id ?? "";
+    }
+    const activeAnchorIds = new Set(
+      pickups.flatMap((pickup) =>
+        pickup.authoredAnchorId ? [pickup.authoredAnchorId] : [],
+      ),
+    );
+    const queuedAnchorIds = new Set(pendingLiteralAnchors.map((anchor) => anchor.id));
+    desired.forEach((anchor) => {
+      if (
+        !activeAnchorIds.has(anchor.id) &&
+        !queuedAnchorIds.has(anchor.id) &&
+        !collectedAuthoredAnchorIds.has(anchor.id)
+      ) {
+        pendingLiteralAnchors.push(anchor);
+      }
+    });
+  };
+
+  const drainLiteralAnchorQueue = (now: number) => {
+    while (
+      pendingLiteralAnchors.length > 0 &&
+      spawnedLastFrame < MAX_PICKUP_PROMOTIONS_PER_FRAME
+    ) {
+      const anchor = pendingLiteralAnchors.shift();
+      if (!anchor) break;
+      const seed = stableWorldSeed("literal-prop", anchor.id, activeIndex);
+      const result = spawnPickup(
+        seed,
+        seed,
+        now,
+        "initial",
+        anchor,
+      );
+      if (result.spawned) {
+        spawnedLastFrame += 1;
+        totalSpawned += 1;
+      }
+    }
+    maxSpawnedPerFrame = Math.max(maxSpawnedPerFrame, spawnedLastFrame);
+  };
 
   const resetPickupQueue = () => {
     pickupSpawnQueue = createSpawnQueue(
@@ -4460,7 +5163,12 @@ export function mountGame(
     let farthestIndex = -1;
     let farthestDistance = Number.NEGATIVE_INFINITY;
     pickups.forEach((pickup, index) => {
-      if (pickup.retireStartedAt !== null) return;
+      if (
+        pickup.retireStartedAt !== null ||
+        pickup.authoredAnchorId !== null
+      ) {
+        return;
+      }
       const distance = Math.hypot(
         pickup.root.position.x - game.x,
         pickup.root.position.z - game.z,
@@ -4476,8 +5184,12 @@ export function mountGame(
   };
 
   const drainPickupQueue = (now: number) => {
-    spawnedLastFrame = 0;
-    if (pickupSpawnQueue.pending === 0) return;
+    if (
+      pickupSpawnQueue.pending === 0 ||
+      spawnedLastFrame >= MAX_PICKUP_PROMOTIONS_PER_FRAME
+    ) {
+      return;
+    }
     camera.updateMatrixWorld();
     const startedAt = phaseStart();
     const { maxSpawnWorkMs } = worldPerformanceBudget(qualityTier);
@@ -4494,7 +5206,10 @@ export function mountGame(
         return !result.builtTemplate;
       },
       {
-        maxPerFrame: MAX_PICKUP_PROMOTIONS_PER_FRAME,
+        maxPerFrame: Math.max(
+          0,
+          MAX_PICKUP_PROMOTIONS_PER_FRAME - spawnedLastFrame,
+        ),
         budgetMs: maxSpawnWorkMs,
         now: readPerformanceClock,
       },
@@ -4509,6 +5224,8 @@ export function mountGame(
   let transitionWorldScale = 1;
   let scaleTransitionStarted = -1;
   let scaleTransitionDurationMs = 0;
+  let transitionSurfaceFromY = 0;
+  let transitionSurfaceToY = 0;
   let pendingLayerAdvance = false;
   const unlockedAchievementIds = new Set(
     deriveAchievements({
@@ -4522,6 +5239,12 @@ export function mountGame(
 
   const preparePickupHandoff = () => {
     const outgoingEra = game.era;
+    const nextIndex = nextLayerAdvance(outgoingEra, ERAS.length).nextIndex;
+    transitionSurfaceFromY = literalPlayerSurfaceY;
+    const nextLiteralStage = literalStageForEra(ERAS[nextIndex].id);
+    transitionSurfaceToY = nextLiteralStage
+      ? literalStageSurfaceY(nextLiteralStage.id)
+      : 0;
     pickups.forEach((pickup) => {
       if (pickup.sourceEra === outgoingEra) {
         pickup.handoffX = pickup.root.position.x;
@@ -4533,9 +5256,7 @@ export function mountGame(
         pickup.handoffZ = null;
       }
     });
-    prepareTransitionRug(
-      nextLayerAdvance(outgoingEra, ERAS.length).nextIndex,
-    );
+    prepareTransitionRug(nextIndex);
   };
 
   const advanceLayer = (animated: boolean) => {
@@ -4568,6 +5289,10 @@ export function mountGame(
       game.vx = 0;
       game.vz = 0;
       retireVisibleMash();
+      collectedAuthoredAnchorIds.clear();
+      literalAnchorReconcileKey = "";
+      game.literalSceneOriginX = null;
+      game.literalSceneOriginZ = null;
     }
     if (animated) {
       game.vx *= 0.25;
@@ -4583,7 +5308,11 @@ export function mountGame(
     ballFace.scale.multiplyScalar(radiusRebase);
     effectiveRollRadius = CORE_RADIUS_MIN;
     rollRadiusClock = 0.12;
-    const nextFloatHeight = CORE_RADIUS_MIN * 0.94;
+    const nextLiteralStage = literalStageForEra(ERAS[nextIndex].id);
+    literalPlayerSurfaceY = nextLiteralStage
+      ? literalStageSurfaceY(nextLiteralStage.id)
+      : 0;
+    const nextFloatHeight = literalPlayerSurfaceY + CORE_RADIUS_MIN * 0.94;
     const mobileView = isCompactView(width);
     playerRoot.position.set(game.x, nextFloatHeight, game.z);
     camera.position.set(
@@ -4654,7 +5383,16 @@ export function mountGame(
     ) {
       return false;
     }
-    scaleTransitionDurationMs = scaleTransitionDuration(game.mode);
+    const nextIndex = nextLayerAdvance(game.era, ERAS.length).nextIndex;
+    const nextLiteralStage = literalStageForEra(ERAS[nextIndex].id);
+    const nextSurfaceY = nextLiteralStage
+      ? literalStageSurfaceY(nextLiteralStage.id)
+      : 0;
+    const surfaceHandoff = Math.abs(nextSurfaceY - literalPlayerSurfaceY) > 0.1;
+    scaleTransitionDurationMs = Math.max(
+      scaleTransitionDuration(game.mode),
+      surfaceHandoff ? 850 : 0,
+    );
     if (scaleTransitionDurationMs > 0) {
       preparePickupHandoff();
       scaleTransitionStarted = readPerformanceClock();
@@ -4674,7 +5412,33 @@ export function mountGame(
     baseSceneDrawCallsDirty = true;
     game.picked += 1;
     game.lastPickup = now / 1000;
+    if (pickup.authoredAnchorId) {
+      collectedAuthoredAnchorIds.add(pickup.authoredAnchorId);
+    }
     const sourceEra = ERAS[pickup.sourceEra];
+    pickup.root.updateMatrixWorld(true);
+    pickup.visual.updateMatrixWorld(true);
+    const pickupWorldPosition = pickup.visual.getWorldPosition(
+      new THREE.Vector3(),
+    );
+    const pickupWorldQuaternion = pickup.visual.getWorldQuaternion(
+      new THREE.Quaternion(),
+    );
+    const playerWorldPosition = playerRoot.getWorldPosition(new THREE.Vector3());
+    const rollWorldQuaternion = rollGroup.getWorldQuaternion(
+      new THREE.Quaternion(),
+    );
+    const pickupContactDelta = pickupWorldPosition
+      .clone()
+      .sub(playerWorldPosition);
+    // The rich and instanced LOD paths both write this authoritative authored
+    // scale. A half-grown or simplified pickup must not jump size on contact.
+    const pickupRenderedScale =
+      pickup.renderedScale.lengthSq() > 0.000001
+        ? pickup.renderedScale.clone()
+        : new THREE.Vector3().setScalar(
+            pickup.size * pickupLifecycleScale(pickup, now),
+          );
     const firstDiscovery = !collectionRef.current.some(
       (entry) =>
         entry.eraId === sourceEra.id &&
@@ -4710,8 +5474,11 @@ export function mountGame(
       );
     setCollection([...collectionRef.current]);
     const isCurrentScale = pickup.sourceEra === activeIndex;
+    const attachesToMash = isCurrentScale || pickup.authoredAnchorId !== null;
+    const announcesCollection = isCurrentScale || pickup.authoredAnchorId !== null;
     const gameplayBulkFactor = GAMEPLAY_BULK_FACTORS[pickup.curio.shape];
     const previousProgress = game.progress;
+    const previousVisibleCoreRadius = visibleCoreRadiusFor(game.radius);
     game.progress = progressAfterPickup(
       game.progress,
       pickup.sourceEra,
@@ -4725,22 +5492,26 @@ export function mountGame(
     );
     if (isCurrentScale) {
       game.radius = radiusForLayerProgress(game.progress);
+      relocateMashForCoreGrowth(
+        previousVisibleCoreRadius,
+        visibleCoreRadiusFor(game.radius),
+      );
       if (previousProgress < 1 && game.progress >= 1) {
         ping(350 + activeIndex * 18, true);
       }
     }
-    if (isCurrentScale) {
+    if (announcesCollection) {
       setLastFact(
         {
           name: pickup.curio.name,
           fact: pickup.curio.fact,
-          source: pickup.curio.source ?? activeEra.sources[0],
+          source: pickup.curio.source ?? sourceEra.sources[0],
           symbol: pickup.curio.symbol,
           color: pickup.curio.color,
         },
         "pickup",
       );
-      if (previousProgress < 1 && game.progress >= 1) {
+      if (isCurrentScale && previousProgress < 1 && game.progress >= 1) {
         setPickupMilestone(
           `${activeEra.name} is ready · keep hunting here, or grow when you choose`,
         );
@@ -4775,61 +5546,95 @@ export function mountGame(
       pickup.marker.material.dispose();
       pickup.marker = null;
     }
-    pickup.root.remove(pickup.visual);
-    removePickup(pickup, true);
-    if (isCurrentScale) {
-      const direction = new THREE.Vector3(
-        Math.random() - 0.5,
-        Math.random() - 0.24,
-        Math.random() - 0.5,
-      ).normalize();
+    if (attachesToMash) {
       const fieldLike =
-        activeEra.realm === "prephysical" || activeEra.realm === "particle";
-      pickup.visual.position.copy(
-        direction.multiplyScalar(game.radius * (fieldLike ? 0.76 : 0.7)),
+        sourceEra.realm === "prephysical" || sourceEra.realm === "particle";
+      const direction = contactLocalSurfaceDirection(
+        pickupContactDelta,
+        rollWorldQuaternion,
+        pickup.identity.seed,
       );
-      pickup.visual.scale.multiplyScalar(fieldLike ? 1.02 : 0.96);
-      pickup.visual.rotation.set(
-        Math.random() * Math.PI,
-        Math.random() * Math.PI,
-        Math.random() * Math.PI,
+      const attachment = makeMashAttachment(pickup.curio);
+      const mashWorldQuaternion = mashGroup.getWorldQuaternion(
+        new THREE.Quaternion(),
       );
-      if (fieldLike) {
-        makeFieldLike(pickup.visual);
-      } else {
-        pickup.visual.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
+      attachment.quaternion
+        .copy(mashWorldQuaternion.invert())
+        .multiply(pickupWorldQuaternion);
+      const targetScale = pickupRenderedScale.multiplyScalar(
+        fieldLike ? 1.02 : 1,
+      );
+      const attachmentCoreRadius = visibleCoreRadiusFor(
+        game.radius,
+        visibleMashPieceCount() + 1,
+      );
+      const unitSupportRadius = Number(
+        attachment.userData.mashSupportRadius ?? 0.5,
+      );
+      const authoredSupportRadius =
+        unitSupportRadius *
+        Math.max(
+          Math.abs(targetScale.x),
+          Math.abs(targetScale.y),
+          Math.abs(targetScale.z),
+        );
+      targetScale.multiplyScalar(
+        attachmentSupportScaleFit(
+          authoredSupportRadius,
+          attachmentCoreRadius,
+        ),
+      );
+      attachment.scale.copy(targetScale);
+      const supportRadius =
+        unitSupportRadius *
+        Math.max(
+          Math.abs(targetScale.x),
+          Math.abs(targetScale.y),
+          Math.abs(targetScale.z),
+        );
+      const targetDistance = targetAttachmentCenterDistance(
+        attachmentCoreRadius,
+        supportRadius,
+      );
+      const targetPosition = new THREE.Vector3(
+        direction.x,
+        direction.y,
+        direction.z,
+      ).multiplyScalar(targetDistance);
+      mashGroup.updateMatrixWorld(true);
+      const startPosition = mashGroup.worldToLocal(pickupWorldPosition.clone());
+      if (
+        startPosition.distanceTo(targetPosition) >
+        Math.max(game.radius * 1.5, supportRadius * 2)
+      ) {
+        startPosition.copy(targetPosition).multiplyScalar(1.08);
       }
-      mashGroup.add(pickup.visual);
-      attachments.push(pickup.visual);
-      const targetScale = pickup.visual.scale.clone();
-      pickup.visual.scale.multiplyScalar(0.22);
+      attachment.position.copy(startPosition);
+      attachment.scale.copy(targetScale).multiplyScalar(0.9);
+      attachment.userData.sourceEra = pickup.sourceEra;
+      mashGroup.add(attachment);
+      attachments.push(attachment);
       stickingPieces.push({
-        visual: pickup.visual,
+        visual: attachment,
+        startPosition: startPosition.clone(),
+        targetPosition: targetPosition.clone(),
         targetScale,
         startedAt: now,
       });
       const mashRecord: MashRecordV4 = {
         eraId: sourceEra.id,
         curioId: pickup.curio.id,
-        position: pickup.visual.position.toArray() as [number, number, number],
+        position: targetPosition.toArray() as [number, number, number],
         rotation: [
-          pickup.visual.rotation.x,
-          pickup.visual.rotation.y,
-          pickup.visual.rotation.z,
+          attachment.rotation.x,
+          attachment.rotation.y,
+          attachment.rotation.z,
         ],
         scale: targetScale.toArray() as [number, number, number],
         mergedInside: fieldLike,
       };
-      pickup.visual.userData.mashRecord = mashRecord;
-      pickup.visual.userData.mashColor = pickup.curio.color;
-      pickup.visual.userData.mashDrawCalls =
-        pickup.drawCalls +
-        (profileSettings.shadows ? Math.max(0, pickup.drawCalls - 1) : 0);
+      attachment.userData.mashRecord = mashRecord;
+      attachment.userData.mashColor = pickup.curio.color;
       if (historyEnabled) {
         mashHistoryRef.current.push(mashRecord);
         if (mashHistoryRef.current.length > MASH_HISTORY_LIMIT) {
@@ -4837,12 +5642,10 @@ export function mountGame(
         }
       }
       const mashProxyChanged = collapseRichMashToBudget();
-      if (mashProxyIncludesRich) {
-        pickup.visual.visible = false;
-        if (!mashProxyChanged) refreshMashProxy();
-      }
+      if (!mashProxyChanged) refreshMashProxy();
+      removePickup(pickup);
     } else {
-      disposeVisual(pickup.visual);
+      removePickup(pickup);
     }
   };
 
@@ -5013,6 +5816,7 @@ export function mountGame(
             backgroundDepth: {
               reducedMotion,
               environmentRate: environmentTravelRate,
+              environmentScale: environmentGroup.scale.x,
               environmentYaw: environmentGroup.rotation.y,
               environmentPitch: environmentGroup.rotation.x,
               environmentChildren: environmentGroup.children.length,
@@ -5063,6 +5867,8 @@ export function mountGame(
               foundationOverlayVisible: foundationOverlay.visible,
               foundationRugOffsetX: groundTexture?.offset.x ?? 0,
               foundationRugOffsetY: groundTexture?.offset.y ?? 0,
+              literalFoundationOffsetX: literalGroundTexture?.offset.x ?? 0,
+              literalFoundationOffsetY: literalGroundTexture?.offset.y ?? 0,
               transitionRugVisible:
                 transitionRug.visible || transitionShell.visible,
               transitionRugMode,
@@ -5102,6 +5908,66 @@ export function mountGame(
                   (pickup) => pickup.curio.spawnMode === "singleton",
                 )
                 .map((pickup) => pickup.curio.id),
+              authoredAnchorIds: pickups.flatMap((pickup) =>
+                pickup.authoredAnchorId ? [pickup.authoredAnchorId] : [],
+              ),
+              authoredForms: pickups.flatMap((pickup) =>
+                pickup.authoredAnchorId
+                  ? [{
+                      anchorId: pickup.authoredAnchorId,
+                      curioId: pickup.curio.id,
+                      form: pickup.curio.visualForm,
+                      x: pickup.root.position.x,
+                      z: pickup.root.position.z,
+                    }]
+                  : [],
+              ),
+              genericMinBaseY: Math.min(
+                ...pickups
+                  .filter(
+                    (pickup) =>
+                      pickup.authoredAnchorId === null &&
+                      pickup.sourceEra === activeIndex,
+                  )
+                  .map((pickup) => pickup.baseY),
+                Number.POSITIVE_INFINITY,
+              ),
+              genericCount: pickups.filter(
+                (pickup) =>
+                  pickup.authoredAnchorId === null &&
+                  pickup.sourceEra === activeIndex,
+              ).length,
+              genericMaxBaseY: Math.max(
+                ...pickups
+                  .filter(
+                    (pickup) =>
+                      pickup.authoredAnchorId === null &&
+                      pickup.sourceEra === activeIndex,
+                  )
+                  .map((pickup) => pickup.baseY),
+                Number.NEGATIVE_INFINITY,
+              ),
+              outsidePlayable: pickups.filter(
+                (pickup) =>
+                  literalPlayableClearanceAt(
+                    pickup.root.position.x,
+                    pickup.root.position.z,
+                    pickup.visualRadius + 0.45,
+                  ) < 0,
+              ).length,
+              oversizedCameraClearance: pickups
+                .filter((pickup) => pickup.big)
+                .reduce(
+                  (minimum, pickup) =>
+                    Math.min(
+                      minimum,
+                      Math.hypot(
+                        pickup.root.position.x - camera.position.x,
+                        pickup.root.position.z - camera.position.z,
+                      ) - pickup.visualRadius,
+                    ),
+                  Number.POSITIVE_INFINITY,
+                ),
             },
             representations: {
               richPickups: pickups.filter((pickup) => pickup.root.visible).length,
@@ -5128,10 +5994,37 @@ export function mountGame(
               attachmentDistance:
                 attachments[0]?.position.length() ?? 0,
               effectiveRadius: effectiveRollRadius,
+              attachmentIds: [
+                ...attachments.flatMap((visual) => {
+                  const record = visual.userData.mashRecord as
+                    | MashRecordV4
+                    | undefined;
+                  return record ? [record.curioId] : [];
+                }),
+                ...mashProxyRecords.map(({ record }) => record.curioId),
+              ],
+              attachmentDistances: attachments.map((visual) =>
+                visual.position.length(),
+              ),
             },
             world: {
-              kind: activeWorldKind,
-              surface: worldSpecForEra(activeEra.name).surface,
+              ...worldSpecForEra(activeEra.name),
+              literalStage: activeLiteralStage?.id ?? null,
+              literalSceneOrigin:
+                activeLiteralStage &&
+                game.literalSceneOriginX !== null &&
+                game.literalSceneOriginZ !== null
+                  ? {
+                      x: game.literalSceneOriginX,
+                      z: game.literalSceneOriginZ,
+                    }
+                  : null,
+              literalPlayableBounds: literalPlayableBounds
+                ? { ...literalPlayableBounds }
+                : null,
+              literalPlayableRegions: literalPlayableRegions.length,
+              foundationMappedSurfaces:
+                literalFoundationSurfaceMaterials.size,
               ...semanticWorldDiagnostics(),
               groundVisible: ground.visible,
               foundationSurfaceMemory: foundationMemoryVisible,
@@ -5156,7 +6049,22 @@ export function mountGame(
             },
             player: {
               x: game.x,
+              y: playerRoot.position.y,
               z: game.z,
+              surfaceY: literalPlayerSurfaceY,
+              literalPlayableClearance: literalPlayableClearanceAt(
+                game.x,
+                game.z,
+                0,
+              ),
+              cameraX: camera.position.x,
+              cameraY: camera.position.y,
+              cameraZ: camera.position.z,
+              cameraLiteralPlayableClearance: literalPlayableClearanceAt(
+                camera.position.x,
+                camera.position.z,
+                0,
+              ),
               cameraDistance: camera.position.distanceTo(playerRoot.position),
               projectedDiameter: projectedDiameterPixels(
                 game.radius * playerRoot.scale.x * 2,
@@ -5307,51 +6215,83 @@ export function mountGame(
   let performanceFrames = 0;
   let measuredFps = 60;
   let effectiveRollRadius = game.radius;
-  const rollMeshCenter = new THREE.Vector3();
-  const rollMeshScale = new THREE.Vector3();
-  const refreshEffectiveRollRadius = () => {
-    playerRoot.updateMatrixWorld(true);
-    let visibleEnvelope = game.radius;
-    rollGroup.traverse((object) => {
-      if (
-        !(object instanceof THREE.Mesh) ||
-        object.userData.mashProxy
-      ) {
-        return;
-      }
-      if (!object.geometry.boundingSphere) {
-        object.geometry.computeBoundingSphere();
-      }
-      const bounds = object.geometry.boundingSphere;
-      if (!bounds) return;
-      rollMeshCenter.copy(bounds.center).applyMatrix4(object.matrixWorld);
-      object.getWorldScale(rollMeshScale);
-      const meshRadius =
-        bounds.radius *
-        Math.max(
-          Math.abs(rollMeshScale.x),
-          Math.abs(rollMeshScale.y),
-          Math.abs(rollMeshScale.z),
-        );
-      visibleEnvelope = Math.max(
-        visibleEnvelope,
-        Math.hypot(
-          rollMeshCenter.x - playerRoot.position.x,
-          rollMeshCenter.z - playerRoot.position.z,
-        ) + meshRadius,
+  const mashCurioById = new Map(
+    ERAS.flatMap((era) => era.curios.map((curio) => [curio.id, curio] as const)),
+  );
+  const directionalAttachmentCircles: AttachmentCircleXZ[] = [];
+  const directionalSeenRecords = new Set<MashRecordV4>();
+  const directionalAttachmentPosition = new THREE.Vector3();
+  const directionalRollQuaternion = new THREE.Quaternion();
+  const refreshDirectionalAttachmentCircles = () => {
+    rollGroup.getWorldQuaternion(directionalRollQuaternion);
+    directionalSeenRecords.clear();
+    let circleCount = 0;
+    const addRecord = (record: MashRecordV4 | undefined) => {
+      if (!record || directionalSeenRecords.has(record)) return;
+      directionalSeenRecords.add(record);
+      const curio = mashCurioById.get(record.curioId);
+      if (!curio) return;
+      directionalAttachmentPosition
+        .set(...record.position)
+        .applyQuaternion(directionalRollQuaternion);
+      const authoredScale = Math.max(
+        Math.abs(record.scale[0]),
+        Math.abs(record.scale[1]),
+        Math.abs(record.scale[2]),
       );
-    });
-    effectiveRollRadius = Math.max(
-      game.radius,
-      Math.min(game.radius * 1.75, visibleEnvelope * 0.94),
+      const circle = directionalAttachmentCircles[circleCount] ?? {
+        x: 0,
+        z: 0,
+        radius: 0,
+      };
+      circle.x = directionalAttachmentPosition.x;
+      circle.z = directionalAttachmentPosition.z;
+      circle.radius = supportRadiusForCurio(curio) * authoredScale;
+      directionalAttachmentCircles[circleCount] = circle;
+      circleCount += 1;
+    };
+    attachments.forEach((visual) =>
+      addRecord(visual.userData.mashRecord as MashRecordV4 | undefined),
     );
+    mashProxyRecords.forEach(({ record }) => addRecord(record));
+    directionalAttachmentCircles.length = circleCount;
+  };
+  const directionalRollRadius = (directionX: number, directionZ: number) =>
+    Math.min(
+      game.radius * MAX_ROLL_ENVELOPE_FACTOR,
+      directionalAttachmentEnvelopeXZ(
+        game.radius,
+        directionX,
+        directionZ,
+        directionalAttachmentCircles,
+      ),
+    );
+  const refreshEffectiveRollRadius = () => {
+    refreshDirectionalAttachmentCircles();
+    effectiveRollRadius = game.radius;
+    for (let sample = 0; sample < 16; sample += 1) {
+      const angle = (sample / 16) * Math.PI * 2;
+      effectiveRollRadius = Math.max(
+        effectiveRollRadius,
+        directionalRollRadius(Math.cos(angle), Math.sin(angle)),
+      );
+    }
     rollRadiusClock = 0;
   };
   const desiredCamera = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
   const farPickupDummy = new THREE.Object3D();
+  const drawBudgetFrustum = new THREE.Frustum();
+  const drawBudgetProjection = new THREE.Matrix4();
   const countVisibleBaseDrawCalls = () => {
     let drawCalls = 0;
+    scene.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    drawBudgetProjection.multiplyMatrices(
+      camera.projectionMatrix,
+      camera.matrixWorldInverse,
+    );
+    drawBudgetFrustum.setFromProjectionMatrix(drawBudgetProjection);
     scene.traverseVisible((object) => {
       if (
         !(
@@ -5364,6 +6304,12 @@ export function mountGame(
       ) {
         return;
       }
+      const inCameraView =
+        !object.frustumCulled ||
+        (object instanceof THREE.Sprite
+          ? drawBudgetFrustum.intersectsSprite(object)
+          : drawBudgetFrustum.intersectsObject(object));
+      if (!inCameraView) return;
       const materials = Array.isArray(object.material)
         ? object.material
         : [object.material];
@@ -5498,6 +6444,7 @@ export function mountGame(
       game.x += game.vx * dt;
       game.z += game.vz * dt;
       const colliderChunkSize = worldChunkSize(activeWorldKind);
+      const activeWorldTopology = worldSpecForEra(activeEra.name).topology;
       const shiftX = floatingOriginShift(
         game.x,
         colliderChunkSize,
@@ -5515,6 +6462,30 @@ export function mountGame(
           pickup.root.position.x -= shiftX;
           pickup.root.position.z -= shiftZ;
         });
+        if (activeLiteralStage) {
+          literalSceneOriginX -= shiftX;
+          literalSceneOriginZ -= shiftZ;
+          environmentGroup.children.forEach((child) => {
+            child.position.x -= shiftX;
+            child.position.z -= shiftZ;
+          });
+          sceneryColliders.forEach((collider) => {
+            collider.x -= shiftX;
+            collider.z -= shiftZ;
+          });
+          if (literalPlayableBounds) {
+            literalPlayableBounds.minX -= shiftX;
+            literalPlayableBounds.maxX -= shiftX;
+            literalPlayableBounds.minZ -= shiftZ;
+            literalPlayableBounds.maxZ -= shiftZ;
+          }
+          literalPlayableRegions.forEach((region) => {
+            region.minX -= shiftX;
+            region.maxX -= shiftX;
+            region.minZ -= shiftZ;
+            region.maxZ -= shiftZ;
+          });
+        }
         popBursts.forEach((burst) => {
           burst.position.x -= shiftX;
           burst.position.z -= shiftZ;
@@ -5522,19 +6493,40 @@ export function mountGame(
         camera.position.x -= shiftX;
         camera.position.z -= shiftZ;
       }
-      const colliderChunkX =
-        Math.round(game.x / colliderChunkSize) * colliderChunkSize;
-      const colliderChunkZ =
-        Math.round(game.z / colliderChunkSize) * colliderChunkSize;
+      const colliderChunkX = worldUsesPeriodicTiles(activeEra.name)
+        ? Math.round(game.x / colliderChunkSize) * colliderChunkSize
+        : activeWorldTopology === "finite"
+          ? 0
+          : game.x;
+      const colliderChunkZ = worldUsesPeriodicTiles(activeEra.name)
+        ? Math.round(game.z / colliderChunkSize) * colliderChunkSize
+        : activeWorldTopology === "finite"
+          ? 0
+          : game.z;
+      refreshDirectionalAttachmentCircles();
       if (environmentGroup.visible) sceneryColliders.forEach((collider) => {
+        const colliderX = colliderChunkX + collider.x;
+        const colliderZ = colliderChunkZ + collider.z;
+        const contactDirection = nearestAabbContactDirectionXZ(
+          game.x,
+          game.z,
+          colliderX,
+          colliderZ,
+          collider.halfWidth,
+          collider.halfDepth,
+        );
+        const collisionEnvelope = directionalRollRadius(
+          contactDirection.x,
+          contactDirection.z,
+        );
         const collision = resolveCircleAabbCollision(
           game.x,
           game.z,
           game.vx,
           game.vz,
-          effectiveRollRadius,
-          colliderChunkX + collider.x,
-          colliderChunkZ + collider.z,
+          collisionEnvelope,
+          colliderX,
+          colliderZ,
           collider.halfWidth,
           collider.halfDepth,
         );
@@ -5548,7 +6540,7 @@ export function mountGame(
 
       for (const pickup of pickups) {
         if (
-          pickup.sourceEra < activeIndex ||
+          (pickup.sourceEra < activeIndex && pickup.authoredAnchorId === null) ||
           pickup.retireStartedAt !== null
         ) {
           continue;
@@ -5559,16 +6551,17 @@ export function mountGame(
         const dx = pickup.root.position.x - game.x;
         const dz = pickup.root.position.z - game.z;
         const distance = Math.hypot(dx, dz);
+        const collisionEnvelope = directionalRollRadius(dx, dz);
         if (
           labEra === null &&
-          distance < effectiveRollRadius + collisionRadius
+          distance < collisionEnvelope + collisionRadius
         ) {
           if (
             canCollectPickup(
               pickup.sourceEra,
               activeIndex,
               pickup.visualRadius,
-              effectiveRollRadius,
+              collisionEnvelope,
             )
           ) {
             collect(pickup, now);
@@ -5581,7 +6574,7 @@ export function mountGame(
               game.vz,
               pickup.root.position.x,
               pickup.root.position.z,
-              effectiveRollRadius + collisionRadius,
+              collisionEnvelope + collisionRadius,
             );
             game.x = collision.x;
             game.z = collision.z;
@@ -5614,6 +6607,12 @@ export function mountGame(
       );
       const transition = scaleTransitionFrame(progress);
       transitionWorldScale = transition.worldScale;
+      const surfaceProgress = progress * progress * (3 - 2 * progress);
+      literalPlayerSurfaceY = THREE.MathUtils.lerp(
+        transitionSurfaceFromY,
+        transitionSurfaceToY,
+        surfaceProgress,
+      );
       const rugProgress = THREE.MathUtils.clamp(
         (progress - 0.48) / 0.52,
         0,
@@ -5665,7 +6664,12 @@ export function mountGame(
           transitionHandoffBlend,
         );
       });
-      environmentGroup.scale.setScalar(transitionWorldScale);
+      // Persistent literal architecture is the place the scale change happens
+      // inside; shrinking it and rebuilding it at 1× creates a two-step pop.
+      // Pickups and prior-layer fabric still perform the learning handoff.
+      environmentGroup.scale.setScalar(
+        activeLiteralStage ? 1 : transitionWorldScale,
+      );
       nearBackdropGroup.scale.setScalar(transitionWorldScale);
       midBackdropGroup.scale.setScalar(transitionWorldScale);
       farBackdropGroup.scale.setScalar(transitionWorldScale);
@@ -5686,8 +6690,15 @@ export function mountGame(
       pickups = pickups.filter((pickup) => {
         const inActiveBand =
           pickup.sourceEra >= activeIndex - 3 && pickup.sourceEra <= activeIndex + 3;
-        if (!inActiveBand) removePickup(pickup);
-        return inActiveBand;
+        const insideLiteralPlace =
+          pickup.authoredAnchorId !== null ||
+          literalPlayableClearanceAt(
+            pickup.root.position.x,
+            pickup.root.position.z,
+            pickup.visualRadius + 0.45,
+          ) >= 0;
+        if (!inActiveBand || !insideLiteralPlace) removePickup(pickup);
+        return inActiveBand && insideLiteralPlace;
       });
       pickups.forEach((pickup) => {
         if (pickup.marker) pickup.marker.visible = pickup.sourceEra >= activeIndex;
@@ -5715,8 +6726,11 @@ export function mountGame(
     }
 
     spawnClock += frameInterval / 1000;
+    spawnedLastFrame = 0;
     const lowPickupThreshold = Math.floor(activePickupBudget() * 0.84);
     if (scaleTransitionStarted < 0) {
+      reconcileLiteralPropAnchors();
+      drainLiteralAnchorQueue(now);
       if (
         spawnClock > 0.5 ||
         activeScalePickupCount() + pickupSpawnQueue.pending <
@@ -5732,13 +6746,12 @@ export function mountGame(
       ) {
         reconcilePickupQueue();
       }
-    } else {
-      spawnedLastFrame = 0;
     }
     phaseEnd("simulation", simulationStartedAt);
 
     const displayedPlayerRadius = game.radius * playerRoot.scale.x;
     const floatHeight =
+      literalPlayerSurfaceY +
       displayedPlayerRadius * 0.94 +
       (early ? Math.sin(now * 0.0017) * 0.035 : 0);
     playerRoot.position.set(game.x, floatHeight, game.z);
@@ -5762,7 +6775,7 @@ export function mountGame(
       height,
     );
     setCentralSceneryLod(
-      PERIODIC_WORLD_KINDS.has(activeWorldKind) &&
+      worldUsesPeriodicTiles(activeEra.name) &&
         !wantsRichProjectedDetail(
           sceneryProjectedSize,
           centralSceneryCompact === false,
@@ -5771,12 +6784,14 @@ export function mountGame(
     const activeChunkSize = worldChunkSize(activeWorldKind);
     const chunkX = Math.round(game.x / activeChunkSize) * activeChunkSize;
     const chunkZ = Math.round(game.z / activeChunkSize) * activeChunkSize;
-    if (PERIODIC_WORLD_KINDS.has(activeWorldKind)) {
+    const activeTopology = worldSpecForEra(activeEra.name).topology;
+    if (worldUsesPeriodicTiles(activeEra.name)) {
       environmentGroup.position.set(chunkX, 0, chunkZ);
+    } else if (activeTopology === "finite") {
+      environmentGroup.position.set(0, 0, 0);
     } else {
-      // Finite sky/planet/cosmic dioramas stay resident around the player;
-      // their depth bands rotate from absolute travel below so they do not
-      // become camera-locked.
+      // Streamed sky/planet/cosmic dioramas stay resident around the player;
+      // their depth bands rotate from absolute travel below.
       environmentGroup.position.set(game.x, 0, game.z);
     }
     nearBackdropGroup.position.set(game.x, 0, game.z);
@@ -5817,11 +6832,15 @@ export function mountGame(
     );
     const absoluteX = game.x + game.originX;
     const absoluteZ = game.z + game.originZ;
-    environmentGroup.rotation.set(
-      parallaxPitch(absoluteZ, environmentTravelRate),
-      parallaxYaw(absoluteX, environmentTravelRate),
-      0,
-    );
+    if (activeTopology === "finite") {
+      environmentGroup.rotation.set(0, 0, 0);
+    } else {
+      environmentGroup.rotation.set(
+        parallaxPitch(absoluteZ, environmentTravelRate),
+        parallaxYaw(absoluteX, environmentTravelRate),
+        0,
+      );
+    }
     nearBackdropGroup.rotation.set(
       parallaxPitch(absoluteZ, nearBackdropTravelRate),
       parallaxYaw(absoluteX, nearBackdropTravelRate),
@@ -5931,25 +6950,24 @@ export function mountGame(
       ballFaceMaterial.map = happyFaceTexture;
       ballFaceMaterial.needsUpdate = true;
     }
-    const wobble = early ? 0.055 : Math.min(0.035, attachments.length * 0.0007);
-    const coreShare = early
-      ? Math.max(0.18, 0.82 - attachments.length * 0.05)
-      : Math.max(0.32, 0.78 - attachments.length * 0.009);
+    const mashPieceCount = visibleMashPieceCount();
+    const wobble = early ? 0.055 : Math.min(0.035, mashPieceCount * 0.0007);
+    const coreShare = coreShareFor(mashPieceCount);
     coreMaterial.opacity = early
-      ? Math.max(0.08, 0.58 - attachments.length * 0.04)
-      : Math.max(0.1, 0.56 - attachments.length * 0.012);
+      ? Math.max(0.08, 0.58 - mashPieceCount * 0.04)
+      : Math.max(0.1, 0.56 - mashPieceCount * 0.012);
     core.scale.set(
       game.radius * coreShare * (1 + Math.sin(now * 0.0021) * wobble),
       game.radius * coreShare * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
       game.radius * coreShare * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
     );
-    const nextFoamVisibility = early && attachments.length < 11;
+    const nextFoamVisibility = early && mashPieceCount < 11;
     if (foamCluster.visible !== nextFoamVisibility) {
       foamCluster.visible = nextFoamVisibility;
       baseSceneDrawCallsDirty = true;
     }
     foamCluster.scale.setScalar(
-      game.radius * Math.max(0.38, 0.95 - attachments.length * 0.055),
+      game.radius * Math.max(0.38, 0.95 - mashPieceCount * 0.055),
     );
     foamCluster.rotation.y += dt * 0.18;
     foamCluster.rotation.x -= dt * 0.09;
@@ -6034,12 +7052,17 @@ export function mountGame(
     const richCandidates = pickupDetail
       .filter(
         ({ pickup }) =>
-          pickup.sourceEra >= activeIndex && pickup.wantsRichDetail,
+          (pickup.sourceEra >= activeIndex || pickup.authoredAnchorId !== null) &&
+          pickup.wantsRichDetail,
       )
       .sort((first, second) => {
         const nearPriority =
           Number(second.nearField) - Number(first.nearField);
         if (nearPriority !== 0) return nearPriority;
+        const authoredPriority =
+          Number(second.pickup.authoredAnchorId !== null) -
+          Number(first.pickup.authoredAnchorId !== null);
+        if (authoredPriority !== 0) return authoredPriority;
         const currentPriority =
           Number(second.pickup.sourceEra === activeIndex) -
           Number(first.pickup.sourceEra === activeIndex);
@@ -6072,6 +7095,7 @@ export function mountGame(
       projectedSize,
       projectedLod,
     }) => {
+      pickup.renderedScale.set(0, 0, 0);
       pickup.renderedScaleY = 0;
       const useRichVisual = richPickupSet.has(pickup);
       pickup.richAdmitted = useRichVisual;
@@ -6092,28 +7116,33 @@ export function mountGame(
         (pickup.handoffX !== null ? 1 - transitionHandoffBlend : 1);
       const baseSpin = pickup.big ? 0.07 : 0.18;
       pickup.root.position.y = pickup.baseY;
-      if (identity.motion !== "tumble") {
+      if (!pickup.grounded && identity.motion !== "tumble") {
         pickup.root.rotation.x *= Math.pow(0.002, dt);
       }
-      pickup.root.rotation.z *= Math.pow(0.002, dt);
+      if (!pickup.grounded) pickup.root.rotation.z *= Math.pow(0.002, dt);
       const motionScale =
-        identity.motion === "pulse"
+        !pickup.grounded && identity.motion === "pulse"
           ? 1 + Math.sin(motionTime * 3.1) * 0.045
           : 1;
 
       if (!useRichVisual) {
-        if (pickup.sourceEra < activeIndex - 1) {
+        if (
+          pickup.sourceEra < activeIndex - 1 &&
+          pickup.authoredAnchorId === null
+        ) {
           return;
         }
         farPickupDummy.position.set(
           pickup.root.position.x,
-          pickup.baseY + Math.sin(motionTime * 1.7) * motionAmount * 0.45,
+          pickup.grounded
+            ? pickup.baseY
+            : pickup.baseY + Math.sin(motionTime * 1.7) * motionAmount * 0.45,
           pickup.root.position.z,
         );
         farPickupDummy.rotation.set(
           0,
-          motionTime * 0.13,
-          Math.sin(motionTime) * 0.12,
+          pickup.grounded ? pickup.root.rotation.y : motionTime * 0.13,
+          pickup.grounded ? 0 : Math.sin(motionTime) * 0.12,
         );
         let farColor = pickupColorCache.get(pickup.curio.color);
         if (!farColor) {
@@ -6121,7 +7150,7 @@ export function mountGame(
           pickupColorCache.set(pickup.curio.color, farColor);
         }
         const readabilityScale =
-          pickup.sourceEra >= activeIndex && projectedSize > 0
+          !pickup.grounded && pickup.sourceEra >= activeIndex && projectedSize > 0
             ? THREE.MathUtils.clamp(6 / projectedSize, 1, 2.5)
             : 1;
         const silhouetteScale =
@@ -6135,6 +7164,7 @@ export function mountGame(
           silhouetteScale * handoffVerticalScale,
           silhouetteScale,
         );
+        pickup.renderedScale.copy(farPickupDummy.scale);
         pickup.renderedScaleY = farPickupDummy.scale.y;
         farPickupDummy.updateMatrix();
         if (
@@ -6155,7 +7185,14 @@ export function mountGame(
           fallbackScale * handoffVerticalScale,
           fallbackScale,
         );
-        pickup.renderedScaleY = farPickupDummy.scale.y;
+        const fallbackAuthoredScale =
+          pickup.size * motionScale * pickupWorldScale * entranceScale;
+        pickup.renderedScale.set(
+          fallbackAuthoredScale,
+          fallbackAuthoredScale * handoffVerticalScale,
+          fallbackAuthoredScale,
+        );
+        pickup.renderedScaleY = pickup.renderedScale.y;
         farPickupDummy.updateMatrix();
         farPickupMesh.setMatrixAt(farPickupCount, farPickupDummy.matrix);
         farPickupMesh.setColorAt(
@@ -6172,7 +7209,18 @@ export function mountGame(
         richScale * handoffVerticalScale,
         richScale,
       );
+      pickup.renderedScale.set(
+        pickup.size * pickup.root.scale.x,
+        pickup.size * pickup.root.scale.y,
+        pickup.size * pickup.root.scale.z,
+      );
       pickup.renderedScaleY = pickup.root.scale.y * pickup.size;
+
+      if (pickup.grounded) {
+        pickup.root.rotation.x = 0;
+        pickup.root.rotation.z = 0;
+        return;
+      }
 
       switch (identity.motion) {
         case "bob":
@@ -6232,17 +7280,26 @@ export function mountGame(
     }
     phaseEnd("pickup-lod", pickupLodStartedAt);
 
+    let stickingPieceSettled = false;
     for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
       const piece = stickingPieces[index];
       const progress = Math.min(1, (now - piece.startedAt) / 280);
       const ease = 1 - (1 - progress) ** 3;
-      const pop = 0.22 + ease * 0.78 + Math.sin(progress * Math.PI) * 0.15;
+      const pop = 0.9 + ease * 0.1 + Math.sin(progress * Math.PI) * 0.055;
+      piece.visual.position.lerpVectors(
+        piece.startPosition,
+        piece.targetPosition,
+        ease,
+      );
       piece.visual.scale.copy(piece.targetScale).multiplyScalar(pop);
       if (progress >= 1) {
+        piece.visual.position.copy(piece.targetPosition);
         piece.visual.scale.copy(piece.targetScale);
         stickingPieces.splice(index, 1);
+        stickingPieceSettled = true;
       }
     }
+    if (stickingPieceSettled) collapseRichMashToBudget();
 
     let popBurstOpacity = 0;
     for (let index = popBursts.length - 1; index >= 0; index -= 1) {
@@ -6276,12 +7333,19 @@ export function mountGame(
     }
 
     const mobileView = isCompactView(width);
+    // A learning transition briefly overshoots the rendered ball for delight,
+    // but that cosmetic scale must not lengthen the physical chase arm beyond
+    // the finite room it is depicting.
+    const cameraFramingRadius =
+      activeLiteralStage && scaleTransitionStarted >= 0
+        ? Math.min(displayedPlayerRadius, game.radius)
+        : displayedPlayerRadius;
     desiredCamera.set(
       game.x + game.vx * 0.24 * game.lens,
       floatHeight +
-        displayedPlayerRadius * (mobileView ? 6.6 : 6.05) * game.lens,
+        cameraFramingRadius * (mobileView ? 6.6 : 6.05) * game.lens,
       game.z +
-        displayedPlayerRadius * (mobileView ? 11.8 : 10.6) * game.lens,
+        cameraFramingRadius * (mobileView ? 11.8 : 10.6) * game.lens,
     );
     eraTransitionAge = Math.min(3, eraTransitionAge + dt);
     if (eraTransitionAge < 2.6) {
@@ -6303,7 +7367,40 @@ export function mountGame(
       camera.updateProjectionMatrix();
     }
     camera.position.lerp(desiredCamera, 1 - Math.pow(0.002, dt));
-    cameraTarget.set(game.x, floatHeight * 0.82, game.z - 0.7);
+    if (activeLiteralStage && literalPlayableRegions.length > 0) {
+      const playerRegion = literalPlayableRegions.reduce(
+        (best, region) => {
+          const clearance = Math.min(
+            game.x - region.minX,
+            region.maxX - game.x,
+            game.z - region.minZ,
+            region.maxZ - game.z,
+          );
+          return clearance > best.clearance ? { region, clearance } : best;
+        },
+        {
+          region: literalPlayableRegions[0],
+          clearance: Number.NEGATIVE_INFINITY,
+        },
+      ).region;
+      const cameraInset = 0.4;
+      camera.position.x = THREE.MathUtils.clamp(
+        camera.position.x,
+        playerRegion.minX + cameraInset,
+        playerRegion.maxX - cameraInset,
+      );
+      camera.position.z = THREE.MathUtils.clamp(
+        camera.position.z,
+        playerRegion.minZ + cameraInset,
+        playerRegion.maxZ - cameraInset,
+      );
+    }
+    cameraTarget.set(
+      game.x,
+      literalPlayerSurfaceY +
+        (floatHeight - literalPlayerSurfaceY) * 0.82,
+      game.z - 0.7,
+    );
     camera.lookAt(cameraTarget);
 
     hudClock += dt;
@@ -6407,6 +7504,7 @@ export function mountGame(
     chompFaceTexture.dispose();
     joyFaceTexture.dispose();
     groundTexture?.dispose();
+    literalGroundTexture?.dispose();
     coreSurfaceTexture?.dispose();
     dustGeometry.dispose();
     dustMaterial.dispose();

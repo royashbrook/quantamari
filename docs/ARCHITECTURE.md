@@ -18,6 +18,10 @@ server, API, database, authentication layer, or server-side game state.
   `collectible-lod.ts` own rich geometry, generated marker sprites, and
   per-specimen instanced silhouettes. Runtime chooses representation but does
   not define the assets.
+- `src/lib/game/attachment-physics.ts` owns contact-derived attachment
+  placement and directional rolling support. `literal-world-layout.ts` owns
+  the finite microscope-to-yard architecture, protected route, and catalog
+  prop anchors; neither module imports Three.js.
 - `src/lib/data/scale-catalog.json` is the editable content boundary.
   `scale-data.ts` validates stable IDs, science metadata, relative size, and
   visual-form references before publishing the typed catalog.
@@ -85,9 +89,10 @@ happened to spawn first. The remainder use one instanced family per visible
 specimen so their authored silhouettes remain recognizable. All catalog
 geometry is normalized before merging, and tests require every specimen to
 produce its authored merged silhouette instead of silently falling back to a
-generic shape. Screen-stable character badges keep active-layer simplified
-specimens identifiable. The immediate prior layer is a sparse rug of exact
-authored low-detail models; deeper residents collapse into points and substrate
+generic shape. The immediate prior layer is a sparse rug of exact authored
+low-detail models on repeating worlds and a baked pattern mapped directly onto
+authored tables, floors, decks, and ground inside finite literal places;
+deeper residents collapse into points and substrate
 texture rather than duplicate pickup draws. One generic instanced mesh remains
 only as unreachable capacity protection for populations above the authored
 limits. Transmission is disabled in battery mode so physical materials cannot
@@ -102,13 +107,24 @@ Projected rich/simple LOD uses hysteresis. Save data retains 96 mash records and
 the newest 32 remain visually resident. Of those, the newest 4–8 attached
 identities remain multi-part rich toys; older visible records retain their
 authored silhouettes inside one merged-geometry mesh on the rolling mash.
-Cached source geometries that leave the visible window are disposed, so a long
-and diverse collection cannot grow memory without bound. When the whole mash is
-genuinely too small on screen, the newest toys join that same authored batch.
-Battery Optimized uses the identical records with the smallest rich set. Rich
+The shared per-specimen geometry library is bounded by the 234-item catalog and
+is disposed with the scene. Lens changes never replace the entire mash with its
+batch: the newest authored meshes stay visible in every profile. Battery
+Optimized uses the identical records with the smallest rich set. Rich
 attachment admission is limited by both toy count and measured render-leaf
-cost; expensive species therefore collapse to their authored batched
+cost; expensive older species therefore collapse to their authored batched
 silhouette before they can break the profile's draw-call ceiling.
+
+Literal world architecture and movable props are deliberately separate.
+Supports, walls, and thresholds create scenery collision; furniture, vehicles,
+trees, and sheds enter through stable catalog anchors and use the exact same
+visual geometry, physical bounds, collection record, and mash attachment path
+as procedural pickups. Only three anchors may promote in one frame, sharing the
+normal spawning budget. The finite route keeps one saved absolute scene origin
+from microscope through yard; stage focus changes reveal the next connected
+part without recentering on every tier or reload. Pickups are admitted only
+inside the authored support perimeter, and the place does not tile or follow
+the camera.
 
 Long Game and Learning Tour share one player-invoked layer-advance path.
 Progress and radius cap at 100%, leaving the current field collectible until
@@ -117,7 +133,9 @@ physical radius and rebases both together; Learning Tour alone runs the
 explicit scale-skip animation. That animation ends at the exact next-layer
 player radius. Attached transforms and their save records rebase at the same
 handoff. Loose outgoing pickups fold toward the player, settle flat, and are
-then retired while the incoming N−1 rug crossfades underneath them.
+then retired while the incoming N−1 rug crossfades underneath them. Persistent
+literal architecture remains at 1× during that handoff, avoiding a shrink-then-
+rebuild pop inside the same room or microscope scene.
 Planet-scale transitions use the same handoff on a curved shell. Next-era
 blockers shrink independently instead of being mistaken for outgoing fabric.
 Flat rugs are periodic and chunk-anchored; planetary rugs wrap a small authored
@@ -172,9 +190,12 @@ real-device profile showing rebuild work—not shader warm-up—as the bottlenec
 
 ## Physics follow-up
 
-Three.js remains the renderer. The current collision system remains the v2
-baseline because changing frameworks and physics together would make parity
-failures ambiguous.
+Three.js remains the renderer. The current lightweight physics uses analytic
+circle/pickup and circle/AABB tests. Collected visual bounds become directional
+support circles in the rolling body's live orientation, so an object only
+widens collision toward the obstacle it actually faces. Contact direction and
+orientation determine the saved attachment transform; a uniform fit keeps its
+far edge within the supported 1.72× envelope.
 
 Rapier.js is a candidate, not a commitment. Evaluate it with reproducible
 desktop and mobile scenes containing dense pickup fields and grounded scenery.

@@ -195,6 +195,11 @@ test("old mash proxies keep shrinking instead of popping at the fabric handoff",
     mashProxyScale(rebasedScale * (CORE_RADIUS_MIN / CORE_RADIUS_MAX)) <
       mashProxyScale(rebasedScale),
   );
+  assert.equal(
+    mashProxyScale(1.35),
+    1.35,
+    "a couch must keep its authored scale when it enters the mash proxy",
+  );
 });
 
 test("the authored scale increases and infinite play has no scale cap", () => {

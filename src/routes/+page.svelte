@@ -107,6 +107,9 @@
   } | null> = { current: null };
   const mashHistoryRef: MutableRef<MashRecordV4[]> = { current: [] };
   const collectionRef: MutableRef<CollectionEntry[]> = { current: [] };
+  const collectedAuthoredAnchorIdsRef: MutableRef<Set<string>> = {
+    current: new Set(),
+  };
   const advanceLayerRef: MutableRef<(() => boolean) | null> = {
     current: null,
   };
@@ -121,6 +124,8 @@
       z: 0,
       originX: 0,
       originZ: 0,
+      literalSceneOriginX: null,
+      literalSceneOriginZ: null,
       vx: 0,
       vz: 0,
       radius: CORE_RADIUS_MIN,
@@ -723,6 +728,17 @@
       cycles: game.cycles,
       sound: game.sound,
       mash: mashHistoryRef.current,
+      collectedAuthoredAnchors: [
+        ...collectedAuthoredAnchorIdsRef.current,
+      ],
+      literalSceneOrigin:
+        game.literalSceneOriginX !== null &&
+        game.literalSceneOriginZ !== null
+          ? {
+              x: game.literalSceneOriginX,
+              z: game.literalSceneOriginZ,
+            }
+          : null,
       collection: collectionRef.current,
     });
     storeSave(save);
@@ -1310,11 +1326,16 @@
     game.z = saved.z;
     game.originX = 0;
     game.originZ = 0;
+    game.literalSceneOriginX = saved.literalSceneOrigin?.x ?? null;
+    game.literalSceneOriginZ = saved.literalSceneOrigin?.z ?? null;
     game.radius = radiusForLayerProgress(game.progress);
     game.zooms = saved.zooms;
     game.cycles = saved.cycles;
     game.sound = saved.sound;
     mashHistoryRef.current = saved.mash;
+    collectedAuthoredAnchorIdsRef.current = new Set(
+      saved.collectedAuthoredAnchors,
+    );
     collectionRef.current = saved.collection;
     unitemizedPickedRef.current = saved.unitemizedPicked;
 
@@ -1430,6 +1451,7 @@
           joystickRef,
           modalOpenRef,
           mashHistoryRef,
+          collectedAuthoredAnchorIdsRef,
           collectionRef,
           advanceLayerRef,
           labEra: preview,

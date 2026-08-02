@@ -28,6 +28,11 @@ export type CollectionEntry = {
   lastPick: number;
 };
 
+export type SavedLiteralSceneOrigin = {
+  x: number;
+  z: number;
+};
+
 export type SaveDataV4 = {
   version: 4;
   mode: GameMode;
@@ -42,6 +47,10 @@ export type SaveDataV4 = {
   cycles: number;
   sound: boolean;
   mash: MashRecordV4[];
+  /** Stable IDs for one-off authored world props already rolled up this cycle. */
+  collectedAuthoredAnchors: string[];
+  /** Absolute origin of the microscope-to-yard place for stable reloads. */
+  literalSceneOrigin: SavedLiteralSceneOrigin | null;
   collection: CollectionEntry[];
 };
 
@@ -54,7 +63,13 @@ export type CollectionPickup = {
   lastPick?: number;
 };
 
-export type SaveSnapshot = Omit<SaveDataV4, "version">;
+export type SaveSnapshot = Omit<
+  SaveDataV4,
+  "version" | "collectedAuthoredAnchors" | "literalSceneOrigin"
+> & {
+  collectedAuthoredAnchors?: readonly string[];
+  literalSceneOrigin?: SavedLiteralSceneOrigin | null;
+};
 
 export const SAVE_KEYS = Object.freeze({
   v4: "everything-roll-save-v4",
@@ -253,6 +268,12 @@ export function createSaveData(snapshot: SaveSnapshot): SaveDataV4 {
     ...snapshot,
     version: 4,
     mash: snapshot.mash.slice(-96),
+    collectedAuthoredAnchors: [
+      ...new Set(snapshot.collectedAuthoredAnchors ?? []),
+    ].slice(-256),
+    literalSceneOrigin: snapshot.literalSceneOrigin
+      ? { ...snapshot.literalSceneOrigin }
+      : null,
     collection: snapshot.collection.map((entry) => ({ ...entry })),
   };
 }
@@ -364,6 +385,30 @@ function sanitizedMash(
     .slice(-96);
 }
 
+function sanitizedAuthoredAnchors(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.filter(
+        (id): id is string =>
+          typeof id === "string" &&
+          id.length > 0 &&
+          id.length <= 160 &&
+          /^prop\/[a-z0-9][a-z0-9/-]*$/.test(id),
+      ),
+    ),
+  ].slice(-256);
+}
+
+function sanitizedLiteralSceneOrigin(
+  value: unknown,
+): SavedLiteralSceneOrigin | null {
+  if (!isRecord(value)) return null;
+  const x = finiteNumber(value.x);
+  const z = finiteNumber(value.z);
+  return x === null || z === null ? null : { x, z };
+}
+
 function sanitizeV4(
   value: unknown,
   catalog: readonly SaveCatalogEra[],
@@ -397,6 +442,12 @@ function sanitizeV4(
     cycles: nonnegativeInteger(value.cycles),
     sound: typeof value.sound === "boolean" ? value.sound : true,
     mash: sanitizedMash(value.mash, catalog),
+    collectedAuthoredAnchors: sanitizedAuthoredAnchors(
+      value.collectedAuthoredAnchors,
+    ),
+    literalSceneOrigin: sanitizedLiteralSceneOrigin(
+      value.literalSceneOrigin,
+    ),
     collection,
   };
 }
@@ -488,6 +539,8 @@ function legacySaveFields(
     cycles: 0,
     sound: typeof value.sound === "boolean" ? value.sound : true,
     mash,
+    collectedAuthoredAnchors: [],
+    literalSceneOrigin: null,
     collection,
   };
 }

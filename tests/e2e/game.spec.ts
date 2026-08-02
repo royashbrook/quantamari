@@ -60,6 +60,7 @@ type PerformanceSnapshot = {
     backgroundDepth: {
       reducedMotion: boolean;
       environmentRate: number;
+      environmentScale: number;
       environmentYaw: number;
       environmentPitch: number;
       environmentChildren: number;
@@ -102,6 +103,8 @@ type PerformanceSnapshot = {
       foundationOverlayVisible: boolean;
       foundationRugOffsetX: number;
       foundationRugOffsetY: number;
+      literalFoundationOffsetX: number;
+      literalFoundationOffsetY: number;
       transitionRugVisible: boolean;
       transitionRugMode: "none" | "plane" | "shell";
       transitionRugOpacity: number;
@@ -132,7 +135,20 @@ type PerformanceSnapshot = {
       maxPerFrame: number;
       workBudgetMs: number;
       deferredDisposals: number;
+      outsidePlayable: number;
+      oversizedCameraClearance: number;
       singletonIds: string[];
+      authoredAnchorIds: string[];
+      authoredForms: Array<{
+        anchorId: string;
+        curioId: string;
+        form: string;
+        x: number;
+        z: number;
+      }>;
+      genericMinBaseY: number;
+      genericMaxBaseY: number;
+      genericCount: number;
     };
     representations: {
       richPickups: number;
@@ -149,10 +165,25 @@ type PerformanceSnapshot = {
       attachmentScale: number;
       attachmentDistance: number;
       effectiveRadius: number;
+      attachmentIds: string[];
+      attachmentDistances: number[];
     };
     world: {
       kind: string;
       surface: string;
+      representation: string;
+      topology: string;
+      sceneId?: string;
+      literalStage: string | null;
+      literalSceneOrigin: { x: number; z: number } | null;
+      literalPlayableBounds: {
+        minX: number;
+        maxX: number;
+        minZ: number;
+        maxZ: number;
+      } | null;
+      literalPlayableRegions: number;
+      foundationMappedSurfaces: number;
       semanticViewScale: number;
       foundationLayers: number[];
       foundationPresentation: string;
@@ -173,7 +204,14 @@ type PerformanceSnapshot = {
     };
     player: {
       x: number;
+      y: number;
       z: number;
+      surfaceY: number;
+      literalPlayableClearance: number;
+      cameraX: number;
+      cameraY: number;
+      cameraZ: number;
+      cameraLiteralPlayableClearance: number;
       cameraDistance: number;
       projectedDiameter: number;
       horizontalFov: number;
@@ -212,6 +250,43 @@ async function enablePerformanceDiagnostics(
         : {}),
     });
   }, forcedQuality);
+}
+
+async function captureThreeScenes(page: Page) {
+  await page.addInitScript(() => {
+    const scenes: unknown[] = [];
+    const devtools = new EventTarget();
+    devtools.addEventListener("observe", (event) => {
+      const observed = (event as CustomEvent).detail as { isScene?: boolean };
+      if (observed?.isScene) scenes.push(observed);
+    });
+    Object.assign(window, {
+      __THREE_DEVTOOLS__: devtools,
+      __QUARKATAMARI_SCENES__: scenes,
+    });
+  });
+}
+
+async function readSceneObjectWorldPosition(page: Page, objectName: string) {
+  return page.evaluate((name) => {
+    const scenes = (
+      window as typeof window & {
+        __QUARKATAMARI_SCENES__?: Array<{
+          traverse: (visit: (object: Record<string, any>) => void) => void;
+        }>;
+      }
+    ).__QUARKATAMARI_SCENES__ ?? [];
+    let position: { x: number; y: number; z: number } | null = null;
+    for (const scene of scenes) {
+      scene.traverse((object) => {
+        if (String(object.name) !== name || !object.matrixWorld) return;
+        object.updateMatrixWorld?.(true);
+        const elements = object.matrixWorld.elements as number[];
+        position = { x: elements[12], y: elements[13], z: elements[14] };
+      });
+    }
+    return position;
+  }, objectName);
 }
 
 async function seedPerformanceProfile(
@@ -1358,7 +1433,7 @@ test("desktop framing stays bounded and the nearest rug keeps authored identitie
   expect(ultrawide?.runtime.world.substrateGenericInstances).toBe(520);
 });
 
-test("every world presentation puts N-1 on its playable surface", async ({
+test("every world presentation keeps N-1 underfoot or baked into a finite floor", async ({
   page,
 }) => {
   test.setTimeout(70_000);
@@ -1372,14 +1447,16 @@ test("every world presentation puts N-1 on its playable surface", async ({
       maxRadius: 28,
       minY: -1,
       maxY: 1,
+      baked: false,
     },
     {
       era: 13,
       presentation: "surface",
-      overlay: true,
+      overlay: false,
       maxRadius: 96,
       minY: -1,
       maxY: 1,
+      baked: true,
     },
     {
       era: 25,
@@ -1388,6 +1465,7 @@ test("every world presentation puts N-1 on its playable surface", async ({
       maxRadius: 52,
       minY: -22,
       maxY: 1.5,
+      baked: false,
     },
     {
       era: 31,
@@ -1396,6 +1474,7 @@ test("every world presentation puts N-1 on its playable surface", async ({
       maxRadius: 28,
       minY: -1,
       maxY: 1,
+      baked: false,
     },
   ] as const;
 
@@ -1428,16 +1507,21 @@ test("every world presentation puts N-1 on its playable surface", async ({
     expect(snapshot?.runtime.world.foundationPresentation).toBe(
       expected.presentation,
     );
-    expect(depth?.foundationNearestGrounded).toBe(true);
     expect(depth?.foundationNearestRate).toBe(0);
     expect(depth?.foundationRugVisible).toBe(true);
     expect(depth?.foundationOverlayVisible).toBe(expected.overlay);
-    expect(depth?.foundationNearestLocalRadius).toBeLessThanOrEqual(
-      expected.maxRadius,
-    );
-    expect(depth?.foundationNearestMinY).toBeGreaterThan(expected.minY);
-    expect(depth?.foundationNearestMaxY).toBeLessThan(expected.maxY);
-    if (expected.presentation === "shell") {
+    if (expected.baked) {
+      expect(snapshot?.runtime.world.substrateRenderedAuthoredInstances).toBe(0);
+      expect(snapshot?.runtime.world.substrateRenderedGenericInstances).toBe(0);
+    } else {
+      expect(depth?.foundationNearestGrounded).toBe(true);
+      expect(depth?.foundationNearestLocalRadius).toBeLessThanOrEqual(
+        expected.maxRadius,
+      );
+      expect(depth?.foundationNearestMinY).toBeGreaterThan(expected.minY);
+      expect(depth?.foundationNearestMaxY).toBeLessThan(expected.maxY);
+    }
+    if (expected.presentation === "shell" && !expected.baked) {
       expect(
         depth?.foundationNearestUnderfootInstances ?? 0,
       ).toBeGreaterThanOrEqual(8);
@@ -2700,6 +2784,706 @@ test("the optical lens resolves only reached layers and leaves the origin empty"
     });
 });
 
+test("the study room resolves as a finite place with anchored authored props", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await captureThreeScenes(page);
+  await seedLearningEra(page, "everyday-kingdom", 16);
+  await begin(page);
+
+  const expectedAnchorIds = [
+    "prop/room-chair",
+    "prop/room-couch",
+    "prop/room-floor-lamp",
+    "prop/room-guitar",
+    "prop/room-potted-plant",
+    "prop/room-shoe",
+  ];
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        if (snapshot?.runtime.era !== 16) return null;
+        return {
+          stage: snapshot.runtime.world.literalStage,
+          representation: snapshot.runtime.world.representation,
+          topology: snapshot.runtime.world.topology,
+          sceneId: snapshot.runtime.world.sceneId,
+          anchors: [...snapshot.runtime.pickups.authoredAnchorIds].sort(),
+        };
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({
+      stage: "room",
+      representation: "literal-object-place",
+      topology: "finite",
+      sceneId: "microscope-study-room",
+      anchors: expectedAnchorIds,
+    });
+
+  const settled = await readPerformanceDiagnostics(page);
+  const authoredForms = Object.fromEntries(
+    (settled?.runtime.pickups.authoredForms ?? []).map((entry) => [
+      entry.anchorId,
+      entry.form,
+    ]),
+  );
+  expect(authoredForms).toMatchObject({
+    "prop/room-shoe": "shoe",
+    "prop/room-chair": "chair",
+    "prop/room-couch": "couch",
+    "prop/room-floor-lamp": "lamp",
+    "prop/room-guitar": "guitar",
+    "prop/room-potted-plant": "potted-plant",
+  });
+  expect(
+    new Set(
+      (settled?.runtime.pickups.authoredForms ?? []).map(
+        ({ x, z }) => `${x.toFixed(2)}:${z.toFixed(2)}`,
+      ),
+    ).size,
+  ).toBe(expectedAnchorIds.length);
+  expect(settled?.runtime.representations.silhouetteBadgeInstances).toBe(0);
+  expect(settled?.runtime.pickups.outsidePlayable).toBe(0);
+  expect(settled?.runtime.backgroundDepth.foundationOverlayVisible).toBe(false);
+  expect(settled?.runtime.world.groundVisible).toBe(false);
+  expect(settled?.runtime.world.foundationMappedSurfaces).toBeGreaterThan(0);
+  expect(settled?.runtime.world.literalPlayableRegions).toBeGreaterThan(1);
+  expect(settled?.runtime.world.substrateRenderedAuthoredInstances).toBe(0);
+  expect(settled?.runtime.world.substrateRenderedGenericInstances).toBe(0);
+
+  const literalTextureOffset = {
+    x: settled!.runtime.backgroundDepth.literalFoundationOffsetX,
+    y: settled!.runtime.backgroundDepth.literalFoundationOffsetY,
+  };
+  await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          setPlayerPosition: (x: number, z: number) => unknown;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    diagnostics?.setPlayerPosition(2, -6);
+  });
+  await page.waitForTimeout(100);
+  const moved = await readPerformanceDiagnostics(page);
+  expect({
+    x: moved?.runtime.backgroundDepth.literalFoundationOffsetX,
+    y: moved?.runtime.backgroundDepth.literalFoundationOffsetY,
+  }).toEqual(literalTextureOffset);
+
+  const architecture = await page.evaluate(() => {
+    const scenes = (
+      window as typeof window & {
+        __QUARKATAMARI_SCENES__?: Array<{
+          traverse: (visit: (object: Record<string, any>) => void) => void;
+        }>;
+      }
+    ).__QUARKATAMARI_SCENES__ ?? [];
+    const names = new Set<string>();
+    for (const scene of scenes) {
+      scene.traverse((object) => {
+        if (object.isMesh && String(object.name).startsWith("literal:")) {
+          names.add(String(object.name));
+        }
+      });
+    }
+    return [...names].sort();
+  });
+  expect(architecture).toEqual(
+    expect.arrayContaining([
+      "literal:architecture/room-floor",
+      "literal:architecture/room-wall-west",
+      "literal:architecture/room-wall-east",
+      "literal:architecture/forward-wall-west",
+      "literal:architecture/forward-wall-east",
+      "literal:architecture/porch-deck",
+      "literal:architecture/yard-ground",
+    ]),
+  );
+});
+
+test("room growth keeps oversized previews out of the chase camera", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLearningEra(page, "room-scale", 17);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.queued,
+      { timeout: 30_000 },
+    )
+    .toBe(0);
+
+  const collected = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectCurrentPickup: () => string | null;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return Array.from({ length: 8 }, () =>
+      diagnostics?.collectCurrentPickup() ?? null,
+    );
+  });
+  expect(collected.every(Boolean)).toBe(true);
+
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? {
+              picked: runtime.picked,
+              stage: runtime.world.literalStage,
+              cameraSupported:
+                runtime.player.cameraLiteralPlayableClearance >= 0.39,
+              blockersPresent:
+                runtime.backgroundDepth.transitionIncomingPickups > 0 &&
+                Number.isFinite(runtime.pickups.oversizedCameraClearance),
+              blockersClear:
+                runtime.pickups.oversizedCameraClearance >= 0.79,
+            }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({
+      picked: 8,
+      stage: "room",
+      cameraSupported: true,
+      blockersPresent: true,
+      blockersClear: true,
+    });
+});
+
+test("rolling into an authored room prop attaches it and reload restores one identity", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLearningEra(page, "everyday-kingdom", 16);
+  await begin(page);
+
+  const shoeAnchorId = "prop/room-shoe";
+  const shoeCurioId = "everyday-kingdom/shoe";
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.authoredForms
+          .some(({ anchorId }) => anchorId === shoeAnchorId) ?? false,
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+
+  const before = await readPerformanceDiagnostics(page);
+  const shoe = before?.runtime.pickups.authoredForms.find(
+    ({ anchorId }) => anchorId === shoeAnchorId,
+  );
+  expect(shoe).toBeDefined();
+  const approachDistance = Math.max(
+    3.5,
+    (before?.runtime.radius ?? 0) + 2.4,
+  );
+  const positioned = await page.evaluate(
+    ({ x, z }) => {
+      const diagnostics = (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            setPlayerPosition: (
+              nextX: number,
+              nextZ: number,
+            ) => { x: number; z: number };
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__;
+      return diagnostics?.setPlayerPosition(x, z) ?? null;
+    },
+    { x: shoe!.x, z: shoe!.z + approachDistance },
+  );
+  expect(positioned).not.toBeNull();
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+
+  await page.keyboard.down("w");
+  try {
+    await expect
+      .poll(
+        async () => {
+          const snapshot = await readPerformanceDiagnostics(page);
+          return snapshot?.runtime.representations.attachmentIds.includes(
+            shoeCurioId,
+          ) ?? false;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+  } finally {
+    await page.keyboard.up("w");
+  }
+
+  const afterContact = await readPerformanceDiagnostics(page);
+  expect(
+    Math.hypot(
+      (afterContact?.runtime.player.x ?? positioned!.x) - positioned!.x,
+      (afterContact?.runtime.player.z ?? positioned!.z) - positioned!.z,
+    ),
+  ).toBeGreaterThan(0.25);
+  expect(afterContact?.runtime.pickups.authoredAnchorIds).not.toContain(
+    shoeAnchorId,
+  );
+  expect(afterContact?.runtime.representations.attachmentDistances).toEqual(
+    expect.arrayContaining([expect.any(Number)]),
+  );
+  const literalSceneOrigin = afterContact?.runtime.world.literalSceneOrigin;
+  expect(literalSceneOrigin).not.toBeNull();
+
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  const persisted = await page.evaluate((curioId) => {
+    const save = JSON.parse(
+      localStorage.getItem("everything-roll-save-v4") ?? "{}",
+    );
+    return {
+      mashCount: (save.mash ?? []).filter(
+        (record: { curioId?: string }) => record.curioId === curioId,
+      ).length,
+      collectionCount:
+        (save.collection ?? []).find(
+          (entry: { curioId?: string }) => entry.curioId === curioId,
+        )?.count ?? 0,
+      literalSceneOrigin: save.literalSceneOrigin ?? null,
+    };
+  }, shoeCurioId);
+  expect(persisted).toEqual({
+    mashCount: 1,
+    collectionCount: 1,
+    literalSceneOrigin,
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.queued,
+      { timeout: 30_000 },
+    )
+    .toBe(0);
+  const restored = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(restored).toBeDefined();
+  expect(restored!.world.literalSceneOrigin).toEqual(literalSceneOrigin);
+  expect({
+    attachmentCopies: restored!.representations.attachmentIds.filter(
+      (id) => id === shoeCurioId,
+    ).length,
+    anchorRespawned:
+      restored!.pickups.authoredAnchorIds.includes(shoeAnchorId),
+  }).toEqual({ attachmentCopies: 1, anchorRespawned: false });
+});
+
+test("a cross-stage learning shift keeps shared literal architecture fixed", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await captureThreeScenes(page);
+  await seedLearningEra(page, "fiber-pollen", 11);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.queued,
+      { timeout: 30_000 },
+    )
+    .toBe(0);
+  const before = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(before?.world.literalStage).toBe("microscope-slide");
+  expect(before?.world.literalSceneOrigin).not.toBeNull();
+  expect(before?.backgroundDepth.environmentScale).toBe(1);
+  expect(before?.player.surfaceY).toBeCloseTo(5.19, 3);
+  expect(before?.pickups.genericCount).toBeGreaterThan(0);
+  expect(Number.isFinite(before!.pickups.genericMinBaseY)).toBe(true);
+  expect(before?.pickups.genericMinBaseY).toBeGreaterThan(5);
+  expect(before?.world.foundationMappedSurfaces).toBe(1);
+  expect(before?.backgroundDepth.foundationOverlayVisible).toBe(false);
+  expect(before?.world.substrateRenderedAuthoredInstances).toBe(0);
+  expect(before?.world.substrateRenderedGenericInstances).toBe(0);
+  expect(
+    before!.world.literalPlayableBounds!.maxX -
+      before!.world.literalPlayableBounds!.minX,
+  ).toBeCloseTo(11, 3);
+  expect(
+    before!.world.literalPlayableBounds!.maxZ -
+      before!.world.literalPlayableBounds!.minZ,
+  ).toBeCloseTo(8, 3);
+  const sharedSurfaceBefore = await readSceneObjectWorldPosition(
+    page,
+    "literal:architecture/study-work-surface",
+  );
+  expect(sharedSurfaceBefore).not.toBeNull();
+
+  const triggered = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          completeLayer: () => boolean;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.completeLayer() ?? false;
+  });
+  expect(triggered).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.transitionActive,
+    )
+    .toBe(true);
+  await page.waitForTimeout(950);
+  const during = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(during?.worldScale).toBeLessThan(1);
+  expect(during?.backgroundDepth.environmentScale).toBe(1);
+
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? { era: runtime.era, transition: runtime.transitionActive }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({ era: 12, transition: false });
+  const after = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(after?.world.literalStage).toBe("tabletop");
+  expect(after?.world.literalSceneOrigin).toEqual(
+    before?.world.literalSceneOrigin,
+  );
+  expect(after?.backgroundDepth.environmentScale).toBe(1);
+  expect(
+    await readSceneObjectWorldPosition(
+      page,
+      "literal:architecture/study-work-surface",
+    ),
+  ).toEqual(sharedSurfaceBefore);
+});
+
+test("the tabletop surface drops the player into a reachable fixed room", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "balanced");
+  await captureThreeScenes(page);
+  await seedLearningEra(page, "tabletop-trek", 15);
+  await begin(page);
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.queued,
+      { timeout: 30_000 },
+    )
+    .toBe(0);
+
+  await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          setPlayerPosition: (x: number, z: number) => unknown;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    diagnostics?.setPlayerPosition(0, 20);
+  });
+  const before = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(before.world.literalStage).toBe("tabletop");
+  expect(before.player.surfaceY).toBeCloseTo(5.1, 3);
+  expect(before.pickups.genericMinBaseY).toBeGreaterThan(4.9);
+  expect(before.player.literalPlayableClearance).toBeGreaterThanOrEqual(0);
+  const roomFloorBefore = await readSceneObjectWorldPosition(
+    page,
+    "literal:architecture/room-floor",
+  );
+  expect(roomFloorBefore).not.toBeNull();
+
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __QUARKATAMARI_PERFORMANCE__?: {
+              completeLayer: () => boolean;
+            };
+          }
+        ).__QUARKATAMARI_PERFORMANCE__?.completeLayer() ?? false,
+    ),
+  ).toBe(true);
+  await page.waitForTimeout(900);
+  const during = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(during.transitionActive).toBe(true);
+  expect(during.player.surfaceY).toBeGreaterThan(0.02);
+  expect(during.player.surfaceY).toBeLessThan(5.1);
+  expect(during.player.cameraLiteralPlayableClearance).toBeGreaterThanOrEqual(
+    0.39,
+  );
+  expect(
+    await readSceneObjectWorldPosition(
+      page,
+      "literal:architecture/room-floor",
+    ),
+  ).toEqual(roomFloorBefore);
+
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? { era: runtime.era, transition: runtime.transitionActive }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({ era: 16, transition: false });
+  const after = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(after.world.literalStage).toBe("room");
+  expect(after.player.surfaceY).toBeCloseTo(0.02, 3);
+  expect(after.player.literalPlayableClearance).toBeGreaterThanOrEqual(0);
+  expect(after.player.cameraLiteralPlayableClearance).toBeGreaterThanOrEqual(
+    0.39,
+  );
+  expect(after.player.z).toBeLessThanOrEqual(
+    after.world.literalPlayableBounds!.maxZ - 0.7,
+  );
+  expect(
+    await readSceneObjectWorldPosition(
+      page,
+      "literal:architecture/room-floor",
+    ),
+  ).toEqual(roomFloorBefore);
+});
+
+test("the porch threshold cannot strand the player off the yard", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLearningEra(page, "vehicle-yard", 18);
+  await begin(page);
+  await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          setPlayerPosition: (x: number, z: number) => unknown;
+          completeLayer: () => boolean;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    diagnostics?.setPlayerPosition(0, 40);
+  });
+  const before = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(before.world.literalStage).toBe("porch");
+  expect(before.player.literalPlayableClearance).toBeGreaterThanOrEqual(0);
+
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __QUARKATAMARI_PERFORMANCE__?: {
+              completeLayer: () => boolean;
+            };
+          }
+        ).__QUARKATAMARI_PERFORMANCE__?.completeLayer() ?? false,
+    ),
+  ).toBe(true);
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? { era: runtime.era, transition: runtime.transitionActive }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({ era: 19, transition: false });
+  const after = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(after.world.literalStage).toBe("yard");
+  expect(after.player.literalPlayableClearance).toBeGreaterThanOrEqual(0);
+  expect(after.player.z).toBeLessThanOrEqual(
+    after.world.literalPlayableBounds!.maxZ - 0.7,
+  );
+});
+
+test("collected room props stay authored through battery LOD frames", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "battery");
+  await captureThreeScenes(page);
+  await seedLearningEra(page, "everyday-kingdom", 16);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups
+          .authoredAnchorIds.length ?? 0,
+      { timeout: 30_000 },
+    )
+    .toBe(6);
+
+  const collectedNames = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectCurrentPickup: () => string | null;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return Array.from({ length: 6 }, () =>
+      diagnostics?.collectCurrentPickup() ?? null,
+    );
+  });
+  expect(collectedNames).toEqual([
+    "shoe",
+    "chair",
+    "couch",
+    "floor lamp",
+    "guitar",
+    "potted plant",
+  ]);
+
+  const expectedAttachmentIds = [
+    "everyday-kingdom/shoe",
+    "everyday-kingdom/chair",
+    "everyday-kingdom/couch",
+    "everyday-kingdom/floor-lamp",
+    "everyday-kingdom/guitar",
+    "everyday-kingdom/potted-plant",
+  ].sort();
+  await expect
+    .poll(
+      async () => {
+        const representations = (await readPerformanceDiagnostics(page))
+          ?.runtime.representations;
+        return representations
+          ? {
+              attachments: representations.attachments,
+              visible: representations.visibleAttachments,
+              proxies: representations.proxyPieces,
+              allProxy: representations.attachmentProxyActive,
+              ids: [...representations.attachmentIds].sort(),
+              settled: representations.attachmentDistances.every(
+                (distance) => distance > 0,
+              ),
+            }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({
+      attachments: 4,
+      visible: 4,
+      proxies: 2,
+      allProxy: false,
+      ids: expectedAttachmentIds,
+      settled: true,
+    });
+
+  const lens = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          setLens: (value: number) => number;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    return diagnostics?.setLens(32) ?? 0;
+  });
+  expect(lens).toBe(32);
+  await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+
+  for (let sample = 0; sample < 12; sample += 1) {
+    await page.waitForTimeout(450);
+    const snapshot = await readPerformanceDiagnostics(page);
+    const representations = snapshot?.runtime.representations;
+    expect(snapshot?.runtime.quality).toBe("battery");
+    expect(representations?.attachmentProxyActive).toBe(false);
+    expect(representations?.visibleAttachments).toBe(
+      representations?.attachments,
+    );
+    expect(representations?.visibleAttachments).toBeGreaterThan(0);
+    expect([...(representations?.attachmentIds ?? [])].sort()).toEqual(
+      expectedAttachmentIds,
+    );
+  }
+
+  const visibleAuthoredMash = await page.evaluate(() => {
+    const scenes = (
+      window as typeof window & {
+        __QUARKATAMARI_SCENES__?: Array<{
+          traverse: (visit: (object: Record<string, any>) => void) => void;
+        }>;
+      }
+    ).__QUARKATAMARI_SCENES__ ?? [];
+    const authored: Array<{
+      name: string;
+      meshChildren: number;
+      worldScale: number;
+    }> = [];
+    for (const scene of scenes) {
+      scene.traverse((object) => {
+        if (!String(object.name).startsWith("mash:authored:")) return;
+        let visible = object.visible !== false;
+        for (let parent = object.parent; parent && visible; parent = parent.parent) {
+          visible = parent.visible !== false;
+        }
+        if (!visible) return;
+        let meshChildren = 0;
+        object.traverse((child: Record<string, any>) => {
+          if (child.isMesh) meshChildren += 1;
+        });
+        authored.push({
+          name: String(object.name),
+          meshChildren,
+          worldScale: Math.max(
+            Number(object.scale?.x ?? 0),
+            Number(object.scale?.y ?? 0),
+            Number(object.scale?.z ?? 0),
+          ),
+        });
+      });
+    }
+    return authored.sort((a, b) => a.name.localeCompare(b.name));
+  });
+  expect(visibleAuthoredMash).toHaveLength(4);
+  expect(visibleAuthoredMash.every(({ meshChildren }) => meshChildren > 0)).toBe(
+    true,
+  );
+  expect(visibleAuthoredMash.every(({ worldScale }) => worldScale > 0.01)).toBe(
+    true,
+  );
+});
+
 test("Giant Worlds uses an atmospheric orbit instead of a solid surface", async ({
   page,
 }) => {
@@ -2759,7 +3543,7 @@ test("a learning scale shift rebuilds once and repopulates through the work queu
   const initialAttachmentScale =
     before?.runtime.representations.attachmentScale ?? 0;
   expect(initialAttachmentScale).toBeGreaterThan(0);
-  expect(before?.runtime.world).toEqual({
+  expect(before?.runtime.world).toMatchObject({
     kind: "void",
     surface: "none",
     semanticViewScale: 0,
