@@ -18,6 +18,8 @@ export type MashRecordV4 = {
   rotation: [number, number, number];
   scale: [number, number, number];
   mergedInside: boolean;
+  /** Present once this record uses the aggregate-body attachment layout. */
+  aggregateLayout?: 1;
 };
 
 export type CollectionEntry = {
@@ -340,6 +342,7 @@ function sanitizeMashRecord(
     rotation,
     scale,
     mergedInside: value.mergedInside === true,
+    ...(value.aggregateLayout === 1 ? { aggregateLayout: 1 as const } : {}),
   };
 }
 

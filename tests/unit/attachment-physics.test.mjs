@@ -2,18 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CORE_CONTACT_OWNER,
   MAX_ATTACHMENT_OUTSIDE_SHARE,
   MIN_ATTACHMENT_OUTSIDE_SHARE,
+  NO_CONTACT_OWNER,
   contactLocalSurfaceDirection,
+  deepGlomAttachmentCenterDistance,
   directionalAttachmentEnvelope3D,
   directionalAttachmentEnvelopeXZ,
   directionalOrientedBoxEnvelope3D,
   nearestAabbContactDirectionXZ,
   orientedContactBoxesIntersect,
+  orientedBoxAttachmentSupports,
   relocateAttachmentForCoreGrowth,
   rollingAngleForDistance,
   sphereIntersectsOrientedBox,
   stickyBodyIntersectsOrientedBox,
+  stickyBodyOrientedBoxContact,
   targetAttachmentCenterDistance,
 } from "../../src/lib/game/attachment-physics.ts";
 
@@ -23,6 +28,13 @@ const closeTo = (actual, expected, epsilon = 1e-10) =>
     Math.abs(actual - expected) <= epsilon,
     `expected ${actual} to be within ${epsilon} of ${expected}`,
   );
+const contactResult = () => ({
+  ownerIndex: 999,
+  normalX: 999,
+  normalY: 999,
+  normalZ: 999,
+  penetration: 999,
+});
 
 test("contact side becomes the attachment's local surface direction", () => {
   assert.deepEqual(
@@ -81,6 +93,78 @@ test("target placement clamps unsafe requested exposure to the 55–65% band", (
 
   closeTo((low + outward - core) / span, MIN_ATTACHMENT_OUTSIDE_SHARE);
   closeTo((high + outward - core) / span, MAX_ATTACHMENT_OUTSIDE_SHARE);
+});
+
+test("scaled off-center OBB support is asymmetric about the pickup origin", () => {
+  const box = {
+    center: { x: 0.25, y: 0, z: 0 },
+    halfExtents: { x: 1, y: 0.5, z: 0.25 },
+    quaternion: IDENTITY,
+  };
+  const supports = orientedBoxAttachmentSupports(
+    box,
+    { x: 10, y: 0, z: 0 },
+    { x: 2, y: 1, z: 1 },
+  );
+
+  closeTo(supports.inwardSupport, 1.5);
+  closeTo(supports.outwardSupport, 2.5);
+});
+
+test("OBB support follows authored rotation in the attachment's local frame", () => {
+  const halfAngle = Math.PI / 4;
+  const supports = orientedBoxAttachmentSupports(
+    {
+      center: { x: 0.25, y: 0, z: 0 },
+      halfExtents: { x: 1, y: 0.5, z: 0.25 },
+      quaternion: {
+        x: 0,
+        y: Math.sin(halfAngle),
+        z: 0,
+        w: Math.cos(halfAngle),
+      },
+    },
+    { x: 0, y: 0, z: -1 },
+    { x: 2, y: 1, z: 1 },
+  );
+
+  closeTo(supports.inwardSupport, 1.5);
+  closeTo(supports.outwardSupport, 2.5);
+});
+
+test("deep glom moves a just-contacting OBB inward but never pulls one outward", () => {
+  const supports = { inwardSupport: 1.5, outwardSupport: 2.5 };
+  const justContactingDistance = 4 + supports.inwardSupport;
+  const desiredDistance = targetAttachmentCenterDistance(
+    4,
+    supports.inwardSupport,
+    supports.outwardSupport,
+  );
+
+  closeTo(
+    deepGlomAttachmentCenterDistance(4, justContactingDistance, supports),
+    desiredDistance,
+  );
+  assert.ok(desiredDistance < justContactingDistance);
+  assert.equal(
+    deepGlomAttachmentCenterDistance(4, 3.2, supports),
+    3.2,
+    "an already-deeper attachment must not move back toward the surface",
+  );
+});
+
+test("degenerate attachment directions have no directional support", () => {
+  assert.deepEqual(
+    orientedBoxAttachmentSupports(
+      {
+        center: { x: 1, y: 2, z: 3 },
+        halfExtents: { x: 4, y: 5, z: 6 },
+        quaternion: IDENTITY,
+      },
+      { x: 0, y: 0, z: 0 },
+    ),
+    { inwardSupport: 0, outwardSupport: 0 },
+  );
 });
 
 test("core growth pushes attachments outward without changing their angle", () => {
@@ -171,6 +255,295 @@ test("sphere-to-oriented-box contact rejects horizontal and vertical air gaps", 
     false,
     "a visible horizontal gap cannot be treated as attraction",
   );
+});
+
+test("core manifold reports owner, outward normal, and world-space penetration", () => {
+  const result = contactResult();
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      1,
+      [],
+      {
+        center: { x: 1.75, y: 0, z: 0 },
+        halfExtents: { x: 0.8, y: 0.4, z: 0.4 },
+        quaternion: IDENTITY,
+      },
+      result,
+    ),
+    true,
+  );
+  assert.equal(result.ownerIndex, CORE_CONTACT_OWNER);
+  closeTo(result.normalX, 1);
+  closeTo(result.normalY, 0);
+  closeTo(result.normalZ, 0);
+  closeTo(result.penetration, 0.05);
+});
+
+test("sphere manifold follows a rotated OBB face and resolves inside centers", () => {
+  const halfAngle = Math.PI / 4;
+  const quaternion = {
+    x: 0,
+    y: Math.sin(halfAngle),
+    z: 0,
+    w: Math.cos(halfAngle),
+  };
+  const result = contactResult();
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      1,
+      [],
+      {
+        center: { x: 0, y: 0, z: -1.4 },
+        halfExtents: { x: 0.5, y: 0.4, z: 0.3 },
+        quaternion,
+      },
+      result,
+    ),
+    true,
+  );
+  closeTo(result.normalX, 0);
+  closeTo(result.normalY, 0);
+  closeTo(result.normalZ, -1);
+  closeTo(result.penetration, 0.1);
+
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0.25, y: 0, z: 0 },
+      0.5,
+      [],
+      {
+        center: { x: 0, y: 0, z: 0 },
+        halfExtents: { x: 1, y: 1, z: 1 },
+        quaternion: IDENTITY,
+      },
+      result,
+    ),
+    true,
+  );
+  closeTo(result.normalX, -1);
+  closeTo(result.normalY, 0);
+  closeTo(result.normalZ, 0);
+  closeTo(result.penetration, 1.25);
+});
+
+test("rotated attachment OBB owns the contact with its face normal", () => {
+  const halfAngle = Math.PI / 4;
+  const quaternion = {
+    x: 0,
+    y: Math.sin(halfAngle),
+    z: 0,
+    w: Math.cos(halfAngle),
+  };
+  const result = contactResult();
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      0.05,
+      [{
+        center: { x: 0, y: 0, z: 0 },
+        halfExtents: { x: 0.5, y: 0.5, z: 0.25 },
+        quaternion,
+      }],
+      {
+        center: { x: 0, y: 0, z: -0.85 },
+        halfExtents: { x: 0.4, y: 0.4, z: 0.2 },
+        quaternion,
+      },
+      result,
+    ),
+    true,
+  );
+  assert.equal(result.ownerIndex, 0);
+  closeTo(result.normalX, 0);
+  closeTo(result.normalY, 0);
+  closeTo(result.normalZ, -1);
+  closeTo(result.penetration, 0.05);
+});
+
+test("OBB manifold rejects a cross-axis-only separation", () => {
+  const result = contactResult();
+  const first = {
+    center: { x: 0, y: 0, z: 0 },
+    halfExtents: { x: 1, y: 0.5, z: 0.3 },
+    quaternion: IDENTITY,
+  };
+  const separated = {
+    center: { x: -2, y: -1.1, z: 0.1 },
+    halfExtents: first.halfExtents,
+    quaternion: {
+      x: 0.12940952255126037,
+      y: 0.12940952255126037,
+      z: 0.01703708685546585,
+      w: 0.9829629131445341,
+    },
+  };
+
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      0,
+      [first],
+      separated,
+      result,
+    ),
+    false,
+  );
+});
+
+test("near-parallel cross-axis penetration is normalized to world units", () => {
+  const result = contactResult();
+  const halfExtents = { x: 1, y: 0.5, z: 0.3 };
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      0,
+      [{ center: { x: 0, y: 0, z: 0 }, halfExtents, quaternion: IDENTITY }],
+      {
+        center: { x: -1.98, y: -0.98, z: -0.3 },
+        halfExtents,
+        quaternion: {
+          x: 0.008726203218641756,
+          y: 0.008726203218641756,
+          z: 0.00007615242180438042,
+          w: 0.9999238475781956,
+        },
+      },
+      result,
+    ),
+    true,
+  );
+  assert.equal(result.ownerIndex, 0);
+  closeTo(result.normalX, 0);
+  closeTo(result.normalY, -0.9998476951563913);
+  closeTo(result.normalZ, -0.017452406437283515);
+  closeTo(result.penetration, 0.0200731063249322);
+});
+
+test("compound manifold chooses the deepest owner with stable ties", () => {
+  const result = contactResult();
+  const candidate = {
+    center: { x: 1.6, y: 0, z: 0 },
+    halfExtents: { x: 0.7, y: 0.7, z: 0.7 },
+    quaternion: IDENTITY,
+  };
+  const first = {
+    center: { x: 0, y: 0, z: 0 },
+    halfExtents: { x: 1, y: 1, z: 1 },
+    quaternion: IDENTITY,
+  };
+  const deeper = {
+    ...first,
+    center: { x: 0.2, y: 0, z: 0 },
+  };
+
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      0,
+      [first, deeper],
+      candidate,
+      result,
+    ),
+    true,
+  );
+  assert.equal(result.ownerIndex, 1);
+  closeTo(result.penetration, 0.3);
+
+  stickyBodyOrientedBoxContact(
+    { x: 0, y: 0, z: 0 },
+    0,
+    [first, first],
+    candidate,
+    result,
+  );
+  assert.equal(result.ownerIndex, 0, "equal attachments keep the lower index");
+});
+
+test("core wins a penetration tie and exact touching still produces a contact", () => {
+  const result = contactResult();
+  const candidate = {
+    center: { x: 1.5, y: 0, z: 0 },
+    halfExtents: { x: 0.6, y: 0.6, z: 0.6 },
+    quaternion: IDENTITY,
+  };
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      1,
+      [{
+        center: { x: 0, y: 0, z: 0 },
+        halfExtents: { x: 1, y: 1, z: 1 },
+        quaternion: IDENTITY,
+      }],
+      candidate,
+      result,
+    ),
+    true,
+  );
+  assert.equal(result.ownerIndex, CORE_CONTACT_OWNER);
+  closeTo(result.penetration, 0.1);
+
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      1,
+      [],
+      {
+        center: { x: 2, y: 0, z: 0 },
+        halfExtents: { x: 1, y: 0.5, z: 0.5 },
+        quaternion: IDENTITY,
+      },
+      result,
+    ),
+    true,
+  );
+  assert.equal(result.ownerIndex, CORE_CONTACT_OWNER);
+  closeTo(result.penetration, 0);
+});
+
+test("manifold miss clears stale output and inward motion deepens contact", () => {
+  const result = contactResult();
+  const candidate = {
+    center: { x: 1.75, y: 0, z: 0 },
+    halfExtents: { x: 0.8, y: 0.4, z: 0.4 },
+    quaternion: IDENTITY,
+  };
+  stickyBodyOrientedBoxContact(
+    { x: 0, y: 0, z: 0 },
+    1,
+    [],
+    candidate,
+    result,
+  );
+  const initialPenetration = result.penetration;
+  stickyBodyOrientedBoxContact(
+    { x: 0, y: 0, z: 0 },
+    1,
+    [],
+    { ...candidate, center: { x: 1.55, y: 0, z: 0 } },
+    result,
+  );
+  closeTo(result.penetration - initialPenetration, 0.2);
+
+  assert.equal(
+    stickyBodyOrientedBoxContact(
+      { x: 0, y: 0, z: 0 },
+      0.1,
+      [],
+      { ...candidate, center: { x: 10, y: 0, z: 0 } },
+      result,
+    ),
+    false,
+  );
+  assert.deepEqual(result, {
+    ownerIndex: NO_CONTACT_OWNER,
+    normalX: 0,
+    normalY: 0,
+    normalZ: 0,
+    penetration: 0,
+  });
 });
 
 test("sticky contact uses the touching attachment, never one on the far side", () => {

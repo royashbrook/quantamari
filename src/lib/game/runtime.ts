@@ -22,6 +22,7 @@ import {
   nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
+  physicalSeedRadiusFor,
   progressAfterPickup,
   radiusForLayerProgress,
   scaleTransitionDuration,
@@ -76,15 +77,19 @@ import {
 } from "./background-depth";
 import {
   contactLocalSurfaceDirection,
+  DEFAULT_ATTACHMENT_OUTSIDE_SHARE,
+  deepGlomAttachmentCenterDistance,
+  NO_CONTACT_OWNER,
   directionalAttachmentEnvelopeXZ,
   directionalOrientedBoxEnvelope3D,
   nearestAabbContactDirectionXZ,
-  relocateAttachmentForCoreGrowth,
+  orientedBoxAttachmentSupports,
   rollingAngleForDistance,
+  stickyBodyOrientedBoxContact,
   stickyBodyIntersectsOrientedBox,
-  targetAttachmentCenterDistance,
   type AttachmentSphere,
   type OrientedContactBox,
+  type StickyContactManifold,
 } from "./attachment-physics";
 import {
   type CollectibleGeometryLibrary,
@@ -133,6 +138,10 @@ type Pickup = {
   bulkRadius: number;
   contactCenter: THREE.Vector3;
   contactHalfExtents: THREE.Vector3;
+  /** Stable gameplay role; unlike `big`, this is never rewritten by LOD. */
+  semanticBlocker: boolean;
+  /** Compound-body radius this optional blocker was safely planned against. */
+  plannedNavigationRadius: number;
   big: boolean;
   baseY: number;
   grounded: boolean;
@@ -143,6 +152,8 @@ type Pickup = {
   retireStartedAt: number | null;
   wantsRichDetail: boolean;
   richAdmitted: boolean;
+  /** Near-contact visuals use the exact transform consumed by collision. */
+  physicalPoseLocked: boolean;
   handoffX: number | null;
   handoffY: number | null;
   handoffZ: number | null;
@@ -263,6 +274,10 @@ const PICKUP_RETIRE_MS = 600;
 const PICKUP_COLLISION_SCALE = 0.55;
 const PICKUP_RETIRE_DISTANCE = 54;
 const PICKUP_RICH_NEAR_DISTANCE = 18;
+// The enter margin is more than two maximum-speed 50 ms frames, so a pickup
+// sheds billboard readability motion before it can cross the collision ring.
+const PICKUP_PHYSICAL_POSE_ENTER_MARGIN = 1.1;
+const PICKUP_PHYSICAL_POSE_EXIT_MARGIN = 1.65;
 const MAX_POP_BURSTS = 12;
 
 const pickupEntranceScale = (bornAt: number, now: number) => {
@@ -410,6 +425,9 @@ export function mountGame(
       completeLayer: () => boolean;
       previewEra: (index: number) => number;
       setPlayerPosition: (x: number, z: number) => { x: number; z: number };
+      approachFarFloatingPickup: () => {
+        curioId: string;
+      } | null;
       setLens: (value: number) => number;
       emitPickupBursts: (count: number) => number;
       collectCurrentPickup: () => string | null;
@@ -4065,6 +4083,7 @@ export function mountGame(
   const makeMarker = collectibleMarkers.make;
 
   let pickups: Pickup[] = [];
+  const debugForcedFarPickups = new Set<Pickup>();
   const historyEnabled = labEra === null;
   const attachments: THREE.Object3D[] = [];
   const mashProxySolidMaterial = new THREE.MeshToonMaterial({
@@ -4106,11 +4125,11 @@ export function mountGame(
       MAX_VISIBLE_MASH_PIECES,
       attachments.length + mashProxyRecords.length,
     );
-  // The opaque ball is the physical sticky core. Its radius must not collapse
-  // as attachments accumulate or contact and roll speed would change behind
-  // the player's back. Visual richness belongs in the mash, not in a hidden
-  // shrinking collider.
-  const visibleCoreRadiusFor = (radius: number, _pieceCount = 0) => radius;
+  // Progression radius answers "what can I collect?"; this nearly invisible
+  // seed only bootstraps contact until the first authored object becomes the
+  // body. Aggregate growth comes from attached solids, never an inflating ball.
+  const visibleCoreRadiusFor = (radius: number, _pieceCount = 0) =>
+    physicalSeedRadiusFor(radius);
   type PhysicalBounds = {
     center: THREE.Vector3;
     sphereCenter: THREE.Vector3;
@@ -4219,8 +4238,11 @@ export function mountGame(
       activeSpeciesIds.add(curio.id);
       mashProxyDummy.position.set(...record.position);
       mashProxyDummy.rotation.set(...record.rotation);
-      const authoredScale = Math.max(...record.scale.map(Math.abs));
-      mashProxyDummy.scale.setScalar(mashProxyScale(authoredScale));
+      mashProxyDummy.scale.set(
+        mashProxyScale(record.scale[0]),
+        mashProxyScale(record.scale[1]),
+        mashProxyScale(record.scale[2]),
+      );
       mashProxyDummy.updateMatrix();
       const geometries = collectibleGeometryLibrary!.geometryFor(curio, false);
       if (geometries.solid) {
@@ -4416,7 +4438,88 @@ export function mountGame(
   const restoredRichRecords = new Set(
     residentRichRecords.slice(-richMashLimit()),
   );
+  // Released v3.7 saves arranged attachments around the former large core.
+  // Normalize every visible unmarked record once before rich/proxy selection;
+  // these same record objects are persisted on the next normal save.
+  const restoredLayoutBoxes: OrientedContactBox[] = [];
   visibleMashRecords.forEach((record, recordIndex) => {
+    const sourceEra = ERAS.find((era) => era.id === record.eraId);
+    const curio = sourceEra?.curios.find(
+      (candidate) => candidate.id === record.curioId,
+    );
+    if (!curio) return;
+    const bounds = physicalBoundsForCurio(curio);
+    const position = new THREE.Vector3(...record.position);
+    const scale = new THREE.Vector3(...record.scale);
+    const quaternion = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(...record.rotation),
+    );
+    if (record.aggregateLayout !== 1) {
+      const legacyInside =
+        record.mergedInside && position.length() < game.radius * 0.58;
+      if (legacyInside) {
+        scale.multiplyScalar(2.05);
+        record.scale = scale.toArray() as [number, number, number];
+      }
+      const direction = position.lengthSq() > 0.000001
+        ? position.clone().normalize()
+        : new THREE.Vector3(
+            pseudo(recordIndex + 1) - 0.5,
+            pseudo(recordIndex + 7) - 0.28,
+            pseudo(recordIndex + 13) - 0.5,
+          ).normalize();
+      if (restoredLayoutBoxes.length === 0) {
+        position
+          .copy(bounds.center)
+          .multiply(scale)
+          .applyQuaternion(quaternion)
+          .negate();
+      } else {
+        const existingSupport = directionalOrientedBoxEnvelope3D(
+          visibleCoreRadiusFor(game.radius),
+          direction.x,
+          direction.y,
+          direction.z,
+          restoredLayoutBoxes,
+        );
+        const supports = orientedBoxAttachmentSupports(
+          {
+            center: bounds.center,
+            halfExtents: bounds.halfExtents,
+            quaternion,
+          },
+          direction,
+          scale,
+        );
+        position.copy(direction).multiplyScalar(
+          deepGlomAttachmentCenterDistance(
+            existingSupport,
+            position.length(),
+            supports,
+          ),
+        );
+      }
+      record.position = position.toArray() as [number, number, number];
+      record.mergedInside = false;
+      record.aggregateLayout = 1;
+    }
+    restoredLayoutBoxes.push({
+      center: bounds.center
+        .clone()
+        .multiply(scale)
+        .applyQuaternion(quaternion)
+        .add(position),
+      halfExtents: bounds.halfExtents.clone().multiply(
+        new THREE.Vector3(
+          Math.abs(scale.x),
+          Math.abs(scale.y),
+          Math.abs(scale.z),
+        ),
+      ),
+      quaternion,
+    });
+  });
+  visibleMashRecords.forEach((record) => {
     const sourceEraIndex = ERAS.findIndex((era) => era.id === record.eraId);
     const sourceEra = ERAS[sourceEraIndex];
     const curio = sourceEra?.curios.find(
@@ -4428,24 +4531,6 @@ export function mountGame(
       return;
     }
     const restoredPosition = new THREE.Vector3(...record.position);
-    const legacyInside =
-      record.mergedInside && restoredPosition.length() < game.radius * 0.58;
-    if (legacyInside) {
-      if (restoredPosition.lengthSq() < 0.001) {
-        restoredPosition.set(
-          pseudo(recordIndex + 1) - 0.5,
-          pseudo(recordIndex + 7) - 0.28,
-          pseudo(recordIndex + 13) - 0.5,
-        );
-      }
-      restoredPosition.normalize().multiplyScalar(game.radius * 0.74);
-      record.position = restoredPosition.toArray() as [number, number, number];
-      record.scale = record.scale.map((value) => value * 2.05) as [
-        number,
-        number,
-        number,
-      ];
-    }
     const visual = makeMashAttachment(curio);
     visual.userData.sourceEra = sourceEraIndex;
     visual.position.copy(restoredPosition);
@@ -4456,54 +4541,12 @@ export function mountGame(
     mashGroup.add(visual);
     attachments.push(visual);
   });
-  const relocateMashForCoreGrowth = (
-    previousCoreRadius: number,
-    nextCoreRadius: number,
-  ) => {
-    if (nextCoreRadius <= previousCoreRadius) return;
-    const relocateVector = (vector: THREE.Vector3, seed: number) => {
-      const moved = relocateAttachmentForCoreGrowth(
-        vector,
-        previousCoreRadius,
-        nextCoreRadius,
-        seed,
-      );
-      vector.set(moved.x, moved.y, moved.z);
-    };
-    attachments.forEach((visual, index) => {
-      relocateVector(visual.position, index + 1);
-    });
-    const relocatedRecords = new Set<MashRecordV4>();
-    const relocateRecord = (record: MashRecordV4 | undefined, seed: number) => {
-      if (!record || relocatedRecords.has(record)) return;
-      const moved = relocateAttachmentForCoreGrowth(
-        { x: record.position[0], y: record.position[1], z: record.position[2] },
-        previousCoreRadius,
-        nextCoreRadius,
-        seed,
-      );
-      record.position = [moved.x, moved.y, moved.z];
-      relocatedRecords.add(record);
-    };
-    attachments.forEach((visual, index) => {
-      relocateRecord(
-        visual.userData.mashRecord as MashRecordV4 | undefined,
-        index + 301,
-      );
-    });
-    mashProxyRecords.forEach(({ record }, index) =>
-      relocateRecord(record, index + 401),
-    );
-    mashHistoryRef.current.forEach((record, index) =>
-      relocateRecord(record, index + 501),
-    );
-  };
-
   const removePickup = (
     pickup: Pickup,
     preserveVisual = false,
     deferDisposal = false,
   ) => {
+    debugForcedFarPickups.delete(pickup);
     scene.remove(pickup.root);
     if (!preserveVisual) {
       if (deferDisposal) deferredVisualDisposals.push(pickup.visual);
@@ -4672,7 +4715,8 @@ export function mountGame(
       : curioSelection?.curio;
     if (!curio) return { spawned: false, builtTemplate: false };
     const identity = collectibleIdentityFor(curio.id, curio.shape);
-    let big = levelDelta > 0;
+    const semanticBlocker = levelDelta > 0;
+    let big = semanticBlocker;
     const sizeTicket =
       curio.spawnMode === "singleton" ? 0.5 : pseudo(seed + 53);
     let size = Math.max(
@@ -4748,15 +4792,21 @@ export function mountGame(
       ? Number.POSITIVE_INFINITY
       : Number.NEGATIVE_INFINITY;
     let bestOffscreen = false;
-    const attempts = big ? 36 : 18;
+    const attempts = semanticBlocker ? 36 : 18;
     // Oversized next-layer previews must never materialize in the settled
     // chase-camera lane. On finite stages the only roomy pocket behind the
     // player can otherwise become the deterministic "best" candidate, then
     // the camera eases straight through a house-sized silhouette as the roll
     // grows. Treat every blocker like buffered scenery, including the initial
     // population, and reserve the full future camera arm below.
-    const outerRing = phase === "refill" || big;
-    const rollingEnvelope = CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR;
+    const outerRing = phase === "refill" || semanticBlocker;
+    // A lumpy mash can extend far beyond the core and rotates as it rolls. Use
+    // the orientation-invariant bound of the actual compound body for world
+    // planning; the old fixed baseline only described an unattached ball.
+    const blockerNavigationRadius = Math.max(
+      CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR,
+      compoundNavigationRadius,
+    );
     const settledCameraArm =
       CORE_RADIUS_MAX *
       (isCompactView(width) ? 11.8 : 10.6) *
@@ -4773,7 +4823,7 @@ export function mountGame(
     const sceneryClearanceAt = (x: number, z: number) => {
       if (!environmentGroup.visible) return Number.POSITIVE_INFINITY;
       const requiredRadius =
-        visualRadius + (big ? rollingEnvelope : 0) + 0.45;
+        visualRadius + (semanticBlocker ? blockerNavigationRadius : 0) + 0.45;
       const playableClearance = literalPlayableClearanceAt(
         x,
         z,
@@ -4791,22 +4841,28 @@ export function mountGame(
         : topology === "finite"
           ? z
           : z - game.z;
-      const sceneryClearance = sceneryColliders.reduce(
-        (minimum, collider) =>
-          Math.min(
-            minimum,
-            circleAabbClearance(
-              localX,
-              localZ,
-              requiredRadius,
-              collider.x,
-              collider.z,
-              collider.halfWidth,
-              collider.halfDepth,
-            ),
-          ),
-        Number.POSITIVE_INFINITY,
-      );
+      let sceneryClearance = Number.POSITIVE_INFINITY;
+      const periodic = worldUsesPeriodicTiles(activeEra.name);
+      for (const collider of sceneryColliders) {
+        const tileStart = periodic ? -1 : 0;
+        const tileEnd = periodic ? 1 : 0;
+        for (let tileX = tileStart; tileX <= tileEnd; tileX += 1) {
+          for (let tileZ = tileStart; tileZ <= tileEnd; tileZ += 1) {
+            sceneryClearance = Math.min(
+              sceneryClearance,
+              circleAabbClearance(
+                localX,
+                localZ,
+                requiredRadius,
+                collider.x + tileX * chunkSize,
+                collider.z + tileZ * chunkSize,
+                collider.halfWidth,
+                collider.halfDepth,
+              ),
+            );
+          }
+        }
+      }
       return Math.min(playableClearance, sceneryClearance);
     };
     for (
@@ -4819,25 +4875,40 @@ export function mountGame(
         sequence,
         attempt,
         phase,
-        oversized: big,
+        oversized: semanticBlocker,
         playerX: game.x,
         playerZ: game.z,
         velocityX: game.vx,
         velocityZ: game.vz,
         plan: populationPlan,
       });
-      const candidateRadius = big
+      let candidateRadius = semanticBlocker
         ? Math.max(
             placement.radius,
             game.radius + visualRadius + 3.2,
           )
         : placement.radius;
       const candidateAngle = placement.angle;
-      let candidateX = game.x + Math.cos(candidateAngle) * candidateRadius;
-      let candidateZ = game.z + Math.sin(candidateAngle) * candidateRadius;
+      const candidateDirectionX = Math.cos(candidateAngle);
+      const candidateDirectionZ = Math.sin(candidateAngle);
+      if (!semanticBlocker && literalPlayableBounds === null) {
+        const directionalSupport = directionalOrientedBoxEnvelope3D(
+          coreContactRadius(),
+          candidateDirectionX,
+          0,
+          candidateDirectionZ,
+          attachmentContactBoxes,
+        );
+        candidateRadius = Math.max(
+          candidateRadius,
+          directionalSupport + visualRadius + 0.9,
+        );
+      }
+      let candidateX = game.x + candidateDirectionX * candidateRadius;
+      let candidateZ = game.z + candidateDirectionZ * candidateRadius;
       if (literalPlayableBounds) {
         const finiteMargin =
-          visualRadius + (big ? rollingEnvelope : 0) + 0.55;
+          visualRadius + (semanticBlocker ? blockerNavigationRadius : 0) + 0.55;
         const minX = literalPlayableBounds.minX + finiteMargin;
         const maxX = literalPlayableBounds.maxX - finiteMargin;
         const minZ = literalPlayableBounds.minZ + finiteMargin;
@@ -4858,9 +4929,11 @@ export function mountGame(
           candidateZ = THREE.MathUtils.lerp(game.z, candidateZ, 0.55);
         }
       }
-      const pickupClearance = big
+      const pickupClearance = semanticBlocker
         ? pickups.reduce((minimum, other) => {
-            if (!other.big) return minimum;
+            if (!other.semanticBlocker || other.retireStartedAt !== null) {
+              return minimum;
+            }
             const separation = Math.hypot(
               other.root.position.x - candidateX,
               other.root.position.z - candidateZ,
@@ -4868,15 +4941,20 @@ export function mountGame(
             const required = obstacleCenterGap(
               visualRadius,
               other.visualRadius,
-              rollingEnvelope,
+              blockerNavigationRadius,
             );
             return Math.min(minimum, separation - required);
           }, Number.POSITIVE_INFINITY)
         : Number.POSITIVE_INFINITY;
-      const playerSpawnEnvelope =
-        activeLiteralStage !== null && !big
-          ? Math.max(game.radius, effectiveRollRadius)
-          : rollingEnvelope;
+      const playerSpawnEnvelope = semanticBlocker
+        ? blockerNavigationRadius
+        : directionalOrientedBoxEnvelope3D(
+            coreContactRadius(),
+            candidateX - game.x,
+            0,
+            candidateZ - game.z,
+            attachmentContactBoxes,
+          );
       const playerClearance =
         Math.hypot(candidateX - game.x, candidateZ - game.z) -
         (playerSpawnEnvelope + visualRadius + 0.75);
@@ -4887,12 +4965,20 @@ export function mountGame(
         ? localChunkCoordinate(candidateZ, chunkSize)
         : candidateZ;
       const corridorClearance =
-        big &&
+        semanticBlocker &&
         ((worldUsesPeriodicTiles(activeEra.name) &&
-          (Math.abs(localX) < 16 || Math.abs(localZ) < 16)) ||
+          (visualRadius + blockerNavigationRadius + 0.45 >= chunkSize / 2 ||
+            Math.abs(localX) <
+              Math.max(16, visualRadius + blockerNavigationRadius + 0.45) ||
+            Math.abs(localZ) <
+              Math.max(16, visualRadius + blockerNavigationRadius + 0.45))) ||
           (activeLiteralStage !== null &&
             Math.abs(candidateX - literalSceneOriginX) <
-              LITERAL_ROUTE_HALF_WIDTH + visualRadius &&
+              Math.max(
+                LITERAL_ROUTE_HALF_WIDTH,
+                blockerNavigationRadius + 0.45,
+              ) +
+                visualRadius &&
             candidateZ <=
               literalSceneOriginZ +
                 activeLiteralStage.nearZ +
@@ -4909,7 +4995,7 @@ export function mountGame(
         1,
       );
       const cameraLaneZ = game.z + settledCameraArm * cameraLaneProgress;
-      const cameraLaneClearance = big
+      const cameraLaneClearance = semanticBlocker
         ? Math.hypot(candidateX - game.x, candidateZ - cameraLaneZ) -
           (visualRadius + 0.8)
         : Number.POSITIVE_INFINITY;
@@ -4977,6 +5063,8 @@ export function mountGame(
       bulkRadius,
       contactCenter: contactBounds.center.clone(),
       contactHalfExtents: contactBounds.halfExtents.clone(),
+      semanticBlocker,
+      plannedNavigationRadius: semanticBlocker ? blockerNavigationRadius : 0,
       big,
       baseY,
       grounded,
@@ -4987,6 +5075,7 @@ export function mountGame(
       retireStartedAt: null,
       wantsRichDetail: false,
       richAdmitted: false,
+      physicalPoseLocked: false,
       handoffX: null,
       handoffY: null,
       handoffZ: null,
@@ -5141,7 +5230,19 @@ export function mountGame(
         pickup.root.position.x - game.x,
         pickup.root.position.z - game.z,
       );
-      const distant = distance >= PICKUP_RETIRE_DISTANCE;
+      const directionalSupport = directionalOrientedBoxEnvelope3D(
+        coreContactRadius(),
+        pickup.root.position.x - game.x,
+        0,
+        pickup.root.position.z - game.z,
+        attachmentContactBoxes,
+      );
+      // A refill deliberately placed beyond a long branch must not be retired
+      // before the player can turn that branch toward it. Keep the residency
+      // threshold directional rather than inflating the whole world by the
+      // compound body's worst-case radius.
+      const distant =
+        distance >= Math.max(PICKUP_RETIRE_DISTANCE, directionalSupport + 8);
       if (!distant && (!overBudget || pickup.sourceEra < activeIndex)) return;
       if (distance > farthestDistance) {
         farthestIndex = index;
@@ -5292,7 +5393,7 @@ export function mountGame(
       currentPlayerSurfaceY +
       (nextHasSurface
         ? visibleCoreRadiusFor(CORE_RADIUS_MIN)
-        : CORE_RADIUS_MIN * 0.94);
+        : visibleCoreRadiusFor(CORE_RADIUS_MIN) * 0.94);
     const mobileView = isCompactView(width);
     playerRoot.position.set(game.x, nextFloatHeight, game.z);
     cameraTrackedPlayerHeight = nextFloatHeight;
@@ -5392,7 +5493,11 @@ export function mountGame(
   const playerLayerAdvance = () => requestLayerAdvance(false);
   advanceLayerRef.current = playerLayerAdvance;
 
-  const collect = (pickup: Pickup, now: number) => {
+  const collect = (
+    pickup: Pickup,
+    now: number,
+    contact: StickyContactManifold | null = null,
+  ) => {
     baseSceneDrawCallsDirty = true;
     game.picked += 1;
     game.lastPickup = now / 1000;
@@ -5415,14 +5520,11 @@ export function mountGame(
     const pickupContactDelta = pickupWorldPosition
       .clone()
       .sub(playerWorldPosition);
-    // The rich and instanced LOD paths both write this authoritative authored
-    // scale. A half-grown or simplified pickup must not jump size on contact.
-    const pickupRenderedScale =
-      pickup.renderedScale.lengthSq() > 0.000001
-        ? pickup.renderedScale.clone()
-        : new THREE.Vector3().setScalar(
-            pickup.size * pickupLifecycleScale(pickup, now),
-          );
+    // Match the collider that actually touched. Far-LOD readability inflation
+    // is cosmetic and must not change a collected object's physical footprint.
+    const pickupRenderedScale = new THREE.Vector3().setScalar(
+      pickup.size * pickupLifecycleScale(pickup, now),
+    );
     const firstDiscovery = !collectionRef.current.some(
       (entry) =>
         entry.eraId === sourceEra.id &&
@@ -5462,7 +5564,6 @@ export function mountGame(
     const announcesCollection = isCurrentScale || pickup.authoredAnchorId !== null;
     const gameplayBulkFactor = GAMEPLAY_BULK_FACTORS[pickup.curio.shape];
     const previousProgress = game.progress;
-    const previousVisibleCoreRadius = visibleCoreRadiusFor(game.radius);
     game.progress = progressAfterPickup(
       game.progress,
       pickup.sourceEra,
@@ -5476,10 +5577,6 @@ export function mountGame(
     );
     if (isCurrentScale) {
       game.radius = radiusForLayerProgress(game.progress);
-      relocateMashForCoreGrowth(
-        previousVisibleCoreRadius,
-        visibleCoreRadiusFor(game.radius),
-      );
       if (previousProgress < 1 && game.progress >= 1) {
         ping(350 + activeIndex * 18, true);
       }
@@ -5548,41 +5645,97 @@ export function mountGame(
       const targetScale = pickupRenderedScale.multiplyScalar(
         fieldLike ? 1.02 : 1,
       );
-      const attachmentCoreRadius = visibleCoreRadiusFor(
-        game.radius,
-        visibleMashPieceCount() + 1,
-      );
-      const unitSupportRadius = Number(
-        attachment.userData.mashSupportRadius ?? 0.5,
-      );
+      const firstAttachment = visibleMashPieceCount() === 0;
+      const attachmentCoreRadius = visibleCoreRadiusFor(game.radius);
       attachment.scale.copy(targetScale);
-      const supportRadius =
-        unitSupportRadius *
-        Math.max(
-          Math.abs(targetScale.x),
-          Math.abs(targetScale.y),
-          Math.abs(targetScale.z),
-        );
       mashGroup.updateMatrixWorld(true);
       const startPosition = mashGroup.worldToLocal(pickupWorldPosition.clone());
       const startDistance = startPosition.length();
-      const targetDistance =
-        startDistance > 0.0001
-          ? startDistance
-          : targetAttachmentCenterDistance(attachmentCoreRadius, supportRadius);
-      const targetPosition =
-        startDistance > 0.0001
+      const bounds = physicalBoundsForCurio(pickup.curio);
+      let targetPosition: THREE.Vector3;
+      if (firstAttachment) {
+        // The first pickup is the body: align its physical center with the
+        // rolling origin instead of decorating even the tiny seed's surface.
+        targetPosition = bounds.center
+          .clone()
+          .multiply(targetScale)
+          .applyQuaternion(attachment.quaternion)
+          .negate();
+      } else if (contact) {
+        const outwardWorld = new THREE.Vector3(
+          contact.normalX,
+          contact.normalY,
+          contact.normalZ,
+        ).normalize();
+        const supports = orientedBoxAttachmentSupports(
+          {
+            center: bounds.center,
+            halfExtents: bounds.halfExtents,
+            quaternion: pickupWorldQuaternion,
+          },
+          outwardWorld,
+          targetScale,
+        );
+        const desiredOverlap =
+          (supports.inwardSupport + supports.outwardSupport) *
+          (1 - DEFAULT_ATTACHMENT_OUTSIDE_SHARE);
+        const inwardShift = Math.max(
+          0,
+          desiredOverlap - Math.max(0, contact.penetration),
+        );
+        // The manifold normal points from the exact core/attachment owner to
+        // this pickup. Deepen along that real surface normal, preserving side
+        // and branch contacts instead of guessing from the aggregate origin.
+        targetPosition = mashGroup.worldToLocal(
+          pickupWorldPosition
+            .clone()
+            .addScaledVector(outwardWorld, -inwardShift),
+        );
+      } else {
+        refreshDirectionalAttachments();
+        const outwardWorld = pickupContactDelta.lengthSq() > 0.000001
+          ? pickupContactDelta.clone().normalize()
+          : new THREE.Vector3(direction.x, direction.y, direction.z)
+              .applyQuaternion(rollWorldQuaternion)
+              .normalize();
+        const existingSupport = directionalOrientedBoxEnvelope3D(
+          attachmentCoreRadius,
+          outwardWorld.x,
+          outwardWorld.y,
+          outwardWorld.z,
+          attachmentContactBoxes,
+        );
+        const supports = orientedBoxAttachmentSupports(
+          {
+            center: bounds.center,
+            halfExtents: bounds.halfExtents,
+            quaternion: pickupWorldQuaternion,
+          },
+          outwardWorld,
+          targetScale,
+        );
+        const targetDistance = deepGlomAttachmentCenterDistance(
+          existingSupport,
+          startDistance,
+          supports,
+        );
+        targetPosition = startDistance > 0.0001
           ? startPosition.clone().multiplyScalar(targetDistance / startDistance)
-          : new THREE.Vector3(
-              direction.x,
-              direction.y,
-              direction.z,
-            ).multiplyScalar(targetDistance);
+          : new THREE.Vector3(direction.x, direction.y, direction.z).multiplyScalar(
+              targetDistance,
+            );
+      }
       attachment.position.copy(targetPosition);
       attachment.scale.copy(targetScale);
       attachment.userData.sourceEra = pickup.sourceEra;
       mashGroup.add(attachment);
       attachments.push(attachment);
+      if (firstAttachment) {
+        core.visible = false;
+        ballFace.visible = false;
+        foamCluster.visible = false;
+        baseSceneDrawCallsDirty = true;
+      }
       const mashRecord: MashRecordV4 = {
         eraId: sourceEra.id,
         curioId: pickup.curio.id,
@@ -5594,6 +5747,7 @@ export function mountGame(
         ],
         scale: targetScale.toArray() as [number, number, number],
         mergedInside: false,
+        aggregateLayout: 1,
       };
       attachment.userData.mashRecord = mashRecord;
       attachment.userData.mashColor = pickup.curio.color;
@@ -5606,6 +5760,11 @@ export function mountGame(
       // A rich attachment does not change the existing proxy membership.
       // Rebuild only when crossing a rich/proxy budget boundary.
       collapseRichMashToBudget();
+      // A second pickup may be processed in this same frame; it must contact
+      // and glom against the object that was just added, not stale proxies.
+      refreshDirectionalAttachments();
+      syncPlayerTransform(0, now);
+      rollRadiusClock = 0.12;
       removePickup(pickup);
     } else {
       removePickup(pickup);
@@ -5866,6 +6025,94 @@ export function mountGame(
               workBudgetMs:
                 worldPerformanceBudget(qualityTier).maxSpawnWorkMs,
               deferredDisposals: deferredVisualDisposals.length,
+              semanticBlockers: pickups.filter(
+                (pickup) =>
+                  pickup.semanticBlocker && pickup.retireStartedAt === null,
+              ).length,
+              semanticBlockerPlannedNavigationRadius: pickups
+                .filter(
+                  (pickup) =>
+                    pickup.semanticBlocker && pickup.retireStartedAt === null,
+                )
+                .reduce(
+                  (minimum, pickup) =>
+                    Math.min(minimum, pickup.plannedNavigationRadius),
+                  Number.POSITIVE_INFINITY,
+                ),
+              lodLargePickups: pickups.filter(
+                (pickup) => pickup.big && pickup.retireStartedAt === null,
+              ).length,
+              physicalPoseLocked: pickups.filter(
+                (pickup) => pickup.physicalPoseLocked,
+              ).length,
+              physicalPoseFar: pickups.filter(
+                (pickup) =>
+                  pickup.physicalPoseLocked && !pickup.richAdmitted,
+              ).length,
+              physicalPoseMismatches: pickups.filter((pickup) => {
+                if (!pickup.physicalPoseLocked) return false;
+                const renderedFromRoot = pickup.size * pickup.root.scale.x;
+                return (
+                  Math.abs(pickup.root.position.y - pickup.baseY) > 0.0001 ||
+                  Math.abs(pickup.root.rotation.x) > 0.0001 ||
+                  Math.abs(pickup.root.rotation.z) > 0.0001 ||
+                  Math.abs(pickup.root.scale.x - pickup.root.scale.y) > 0.0001 ||
+                  Math.abs(pickup.root.scale.x - pickup.root.scale.z) > 0.0001 ||
+                  Math.abs(pickup.renderedScale.x - renderedFromRoot) > 0.0001 ||
+                  Math.abs(pickup.renderedScale.y - renderedFromRoot) > 0.0001 ||
+                  Math.abs(pickup.renderedScale.z - renderedFromRoot) > 0.0001
+                );
+              }).length,
+              semanticBlockerPairClearance: pickups.reduce(
+                (minimum, pickup, index) => {
+                  if (
+                    !pickup.semanticBlocker ||
+                    pickup.retireStartedAt !== null
+                  ) {
+                    return minimum;
+                  }
+                  for (let otherIndex = index + 1; otherIndex < pickups.length; otherIndex += 1) {
+                    const other = pickups[otherIndex];
+                    if (
+                      !other.semanticBlocker ||
+                      other.retireStartedAt !== null
+                    ) {
+                      continue;
+                    }
+                    minimum = Math.min(
+                      minimum,
+                      Math.hypot(
+                        pickup.root.position.x - other.root.position.x,
+                        pickup.root.position.z - other.root.position.z,
+                      ) -
+                        obstacleCenterGap(
+                          pickup.visualRadius,
+                          other.visualRadius,
+                          compoundNavigationRadius,
+                        ),
+                    );
+                  }
+                  return minimum;
+                },
+                Number.POSITIVE_INFINITY,
+              ),
+              semanticBlockerPlayableClearance: pickups
+                .filter(
+                  (pickup) =>
+                    pickup.semanticBlocker && pickup.retireStartedAt === null,
+                )
+                .reduce(
+                  (minimum, pickup) =>
+                    Math.min(
+                      minimum,
+                      literalPlayableClearanceAt(
+                        pickup.root.position.x,
+                        pickup.root.position.z,
+                        pickup.visualRadius + compoundNavigationRadius + 0.45,
+                      ),
+                    ),
+                  Number.POSITIVE_INFINITY,
+                ),
               singletonIds: pickups
                 .filter(
                   (pickup) => pickup.curio.spawnMode === "singleton",
@@ -5919,7 +6166,10 @@ export function mountGame(
                   ) < 0,
               ).length,
               oversizedCameraClearance: pickups
-                .filter((pickup) => pickup.big)
+                .filter(
+                  (pickup) =>
+                    pickup.semanticBlocker && pickup.retireStartedAt === null,
+                )
                 .reduce(
                   (minimum, pickup) =>
                     Math.min(
@@ -5957,7 +6207,10 @@ export function mountGame(
               attachmentDistance:
                 attachments[0]?.position.length() ?? 0,
               effectiveRadius: effectiveRollRadius,
+              compoundNavigationRadius,
               contactCoreRadius: coreContactRadius(),
+              seedVisible: core.visible,
+              seedOnly: visibleMashPieceCount() === 0,
               contactProxyCount: attachmentContactBoxes.length,
               attachmentIds: [
                 ...attachments.flatMap((visual) => {
@@ -5971,6 +6224,19 @@ export function mountGame(
               attachmentDistances: attachments.map((visual) =>
                 visual.position.length(),
               ),
+              attachmentPhysicalCenterDistances: attachments.map((visual) => {
+                const record = visual.userData.mashRecord as
+                  | MashRecordV4
+                  | undefined;
+                const curio = record ? mashCurioById.get(record.curioId) : null;
+                if (!curio) return visual.position.length();
+                return physicalBoundsForCurio(curio)
+                  .center.clone()
+                  .multiply(visual.scale)
+                  .applyQuaternion(visual.quaternion)
+                  .add(visual.position)
+                  .length();
+              }),
             },
             world: {
               ...worldSpecForEra(activeEra.name),
@@ -6108,6 +6374,48 @@ export function mountGame(
           game.vz = 0;
           return { x: game.x, z: game.z };
         },
+        approachFarFloatingPickup: () => {
+          const now = performance.now();
+          let target: Pickup | null = null;
+          for (const pickup of pickups) {
+            if (
+              pickup.sourceEra !== activeIndex ||
+              pickup.grounded ||
+              pickup.richAdmitted ||
+              pickup.retireStartedAt !== null ||
+              pickupLifecycleScale(pickup, now) < 0.99
+            ) {
+              continue;
+            }
+            if (
+              target === null || pickup.visualRadius < target.visualRadius
+            ) {
+              target = pickup;
+            }
+          }
+          if (!target) return null;
+          // Keep this one pickup on the low-budget path so the headless
+          // diagnostic can verify its physical handoff deterministically.
+          debugForcedFarPickups.add(target);
+          const entranceScale = pickupLifecycleScale(target, now);
+          const broadRadius = Math.max(
+            target.visualRadius * entranceScale,
+            (target.contactCenter.length() + target.contactHalfExtents.length()) *
+              target.size *
+              entranceScale,
+          );
+          const approachDistance =
+            directionalRollRadius(1, 0) +
+            broadRadius +
+            PICKUP_PHYSICAL_POSE_ENTER_MARGIN * 0.5;
+          game.x = target.root.position.x - approachDistance;
+          game.z = target.root.position.z;
+          game.vx = 0;
+          game.vz = 0;
+          return {
+            curioId: target.curio.id,
+          };
+        },
         setLens: (value: number) => {
           game.lens = Math.max(
             1 / 256,
@@ -6188,6 +6496,7 @@ export function mountGame(
   let performanceFrames = 0;
   let measuredFps = 60;
   let effectiveRollRadius = visibleCoreRadiusFor(game.radius);
+  let compoundNavigationRadius = visibleCoreRadiusFor(game.radius);
   const mashCurioById = new Map(
     ERAS.flatMap((era) => era.curios.map((curio) => [curio.id, curio] as const)),
   );
@@ -6211,6 +6520,7 @@ export function mountGame(
     // during every bounded physics substep.
     directionalRollQuaternion.copy(rollGroup.quaternion);
     directionalSeenRecords.clear();
+    compoundNavigationRadius = visibleCoreRadiusFor(game.radius);
     let proxyCount = 0;
     const addRecord = (
       record: MashRecordV4 | undefined,
@@ -6276,6 +6586,14 @@ export function mountGame(
         .copy(directionalRollQuaternion)
         .multiply(directionalAttachmentQuaternion);
       box.quaternion.copy(directionalWorldQuaternion);
+      // This enclosing radius is invariant under the body's roll quaternion.
+      // If it fits through a planned gap, every orientation of the exact OBB
+      // compound fits too. Reuse the existing attachment walk and allocate no
+      // temporary vectors in the hot path.
+      compoundNavigationRadius = Math.max(
+        compoundNavigationRadius,
+        box.center.length() + box.halfExtents.length(),
+      );
       attachmentContactBoxes[proxyCount] = box;
       proxyCount += 1;
     };
@@ -6288,6 +6606,27 @@ export function mountGame(
     mashProxyRecords.forEach(({ record }) => addRecord(record));
     directionalAttachmentSpheres.length = proxyCount;
     attachmentContactBoxes.length = proxyCount;
+  };
+  const retireUnderplannedSemanticBlockers = (now: number) => {
+    const requiredNavigationRadius = Math.max(
+      CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR,
+      compoundNavigationRadius,
+    );
+    let retired = 0;
+    pickups.forEach((pickup) => {
+      if (
+        !pickup.semanticBlocker ||
+        pickup.retireStartedAt !== null ||
+        pickup.plannedNavigationRadius + 0.0001 >= requiredNavigationRadius
+      ) {
+        return;
+      }
+      // Optional previews are cheaper to replace than to let a newly grown
+      // branch invalidate their pair/boundary/route guarantee.
+      pickup.retireStartedAt = now;
+      retired += 1;
+    });
+    return retired;
   };
   const coreContactRadius = () => visibleCoreRadiusFor(game.radius);
   const directionalRollRadius = (directionX: number, directionZ: number) =>
@@ -6321,7 +6660,8 @@ export function mountGame(
   currentPlayerSurfaceY = activeLiteralStage
     ? literalPlayerSupportForStage(activeLiteralStage)
     : literalPlayerSurfaceY;
-  let cameraTrackedPlayerHeight = currentPlayerSurfaceY + game.radius * 0.94;
+  let cameraTrackedPlayerHeight =
+    currentPlayerSurfaceY + coreContactRadius() * 0.94;
   const syncPlayerTransform = (dt: number, now: number) => {
     const displayedScale = playerRoot.scale.x;
     const hasSurface = worldSpecForEra(activeEra.name).surface !== "none";
@@ -6329,14 +6669,11 @@ export function mountGame(
       activeLiteralStage && scaleTransitionStarted < 0
         ? literalPlayerSupportForStage(activeLiteralStage)
         : literalPlayerSurfaceY;
-    currentGroundSupportRadius = hasSurface
-      ? downwardRollSupport()
-      : coreContactRadius();
-    const targetHeight = hasSurface
-      ? currentPlayerSurfaceY + currentGroundSupportRadius * displayedScale
-      : currentPlayerSurfaceY +
-        game.radius * displayedScale * 0.94 +
-        (early ? Math.sin(now * 0.0017) * 0.035 : 0);
+    currentGroundSupportRadius = downwardRollSupport();
+    const targetHeight =
+      currentPlayerSurfaceY +
+      currentGroundSupportRadius * displayedScale +
+      (!hasSurface && early ? Math.sin(now * 0.0017) * 0.035 : 0);
     // This is the rigid body's actual contact center. Smoothing it creates a
     // hovering collider that can pass over floor-level pickups; only the
     // camera is allowed to ease after a lump rolls away.
@@ -6351,6 +6688,13 @@ export function mountGame(
   const pickupContactCenter = new THREE.Vector3();
   const pickupContactHalfExtents = new THREE.Vector3();
   const pickupContactQuaternion = new THREE.Quaternion();
+  const pickupContactManifold: StickyContactManifold = {
+    ownerIndex: NO_CONTACT_OWNER,
+    normalX: 0,
+    normalY: 0,
+    normalZ: 0,
+    penetration: 0,
+  };
   const rollAxis = new THREE.Vector3();
   const rollStepQuaternion = new THREE.Quaternion();
   const integrateRollingDisplacement = (
@@ -6691,7 +7035,10 @@ export function mountGame(
       game.vx *= drag;
       game.vz *= drag;
       const speed = Math.hypot(game.vx, game.vz);
-      const maxSpeed = 9.75;
+      // The seed is smaller than a maximum-frame displacement. Keep bootstrap
+      // movement continuous enough to touch the first pickup; the aggregate
+      // regains normal speed as soon as an authored solid joins it.
+      const maxSpeed = visibleMashPieceCount() === 0 ? 3.2 : 9.75;
       if (speed > maxSpeed) {
         game.vx = (game.vx / speed) * maxSpeed;
         game.vz = (game.vz / speed) * maxSpeed;
@@ -6858,11 +7205,12 @@ export function mountGame(
             .copy(pickup.contactHalfExtents)
             .multiplyScalar(contactScale);
           playerContactCenter.set(game.x, playerRoot.position.y, game.z);
-          const physicalContact = stickyBodyIntersectsOrientedBox(
+          const physicalContact = stickyBodyOrientedBoxContact(
             playerContactCenter,
             coreContactRadius(),
             attachmentContactBoxes,
             pickupContactBox,
+            pickupContactManifold,
           );
           if (!physicalContact) continue;
           if (
@@ -6873,13 +7221,13 @@ export function mountGame(
               game.radius,
             )
           ) {
-            collect(pickup, now);
+            collect(pickup, now, pickupContactManifold);
             pickup.root.position.x = Number.POSITIVE_INFINITY;
           } else {
             if (resolveStickyBodyAgainstBox(
               pickupContactBox,
-              game.x - pickupContactCenter.x,
-              game.z - pickupContactCenter.z,
+              -pickupContactManifold.normalX,
+              -pickupContactManifold.normalZ,
               collisionEnvelope + contactBroadRadius,
               dt,
               now,
@@ -7036,6 +7384,11 @@ export function mountGame(
       applyGroundScaleTexture(continuousViewScale);
     }
 
+    // Refresh before draining spawn work so restored saves and a just-grown
+    // mash plan against the real compound body, not one frame of core-only
+    // clearance. This replaces the identical refresh formerly done below.
+    refreshDirectionalAttachments();
+    retireUnderplannedSemanticBlockers(now);
     spawnClock += frameInterval / 1000;
     spawnedLastFrame = 0;
     const lowPickupThreshold = Math.floor(activePickupBudget() * 0.84);
@@ -7059,7 +7412,6 @@ export function mountGame(
       }
     }
     const displayedPlayerRadius = game.radius * playerRoot.scale.x;
-    refreshDirectionalAttachments();
     const floatHeight = syncPlayerTransform(dt, now);
     phaseEnd("simulation", simulationStartedAt);
     if (rollRadiusClock >= 0.12) refreshEffectiveRollRadius();
@@ -7249,24 +7601,38 @@ export function mountGame(
         game.originZ,
     );
     dustField.position.set(game.x, 0, game.z);
-    const faceScale = game.radius * 0.94;
-    ballFace.position.set(0, game.radius * 0.1, game.radius * 0.86);
+    const mashPieceCount = visibleMashPieceCount();
+    const seedOnly = mashPieceCount === 0;
+    const visibleSeedRadius = visibleCoreRadiusFor(game.radius);
+    const faceScale = visibleSeedRadius * 0.94;
+    ballFace.position.set(
+      0,
+      visibleSeedRadius * 0.1,
+      visibleSeedRadius * 0.86,
+    );
     ballFace.scale.set(faceScale, faceScale, 1);
+    if (ballFace.visible !== seedOnly) {
+      ballFace.visible = seedOnly;
+      baseSceneDrawCallsDirty = true;
+    }
     if (faceReactionUntil && now >= faceReactionUntil) {
       faceReactionUntil = 0;
       ballFaceMaterial.map = happyFaceTexture;
       ballFaceMaterial.needsUpdate = true;
     }
-    const mashPieceCount = visibleMashPieceCount();
     coreMaterial.opacity = early ? 0.58 : 0.56;
-    core.scale.setScalar(game.radius);
-    const nextFoamVisibility = early && mashPieceCount < 11;
+    core.scale.setScalar(visibleSeedRadius);
+    if (core.visible !== seedOnly) {
+      core.visible = seedOnly;
+      baseSceneDrawCallsDirty = true;
+    }
+    const nextFoamVisibility = early && seedOnly;
     if (foamCluster.visible !== nextFoamVisibility) {
       foamCluster.visible = nextFoamVisibility;
       baseSceneDrawCallsDirty = true;
     }
     foamCluster.scale.setScalar(
-      game.radius * Math.max(0.38, 0.95 - mashPieceCount * 0.055),
+      visibleSeedRadius * 0.95,
     );
     foamCluster.rotation.y += dt * 0.18;
     foamCluster.rotation.x -= dt * 0.09;
@@ -7314,10 +7680,28 @@ export function mountGame(
       const handoffVerticalScale = outgoingHandoff
         ? 1 - transitionHandoffBlend * 0.9
         : 1;
-      const distance = Math.hypot(
-        pickup.root.position.x - game.x,
-        pickup.root.position.z - game.z,
+      const dx = pickup.root.position.x - game.x;
+      const dz = pickup.root.position.z - game.z;
+      const distance = Math.hypot(dx, dz);
+      const physicalBroadRadius = Math.max(
+        pickup.visualRadius * entranceScale,
+        (pickup.contactCenter.length() + pickup.contactHalfExtents.length()) *
+          pickup.size *
+          entranceScale,
       );
+      const physicalPoseMargin = pickup.physicalPoseLocked
+        ? PICKUP_PHYSICAL_POSE_EXIT_MARGIN
+        : PICKUP_PHYSICAL_POSE_ENTER_MARGIN;
+      pickup.physicalPoseLocked =
+        labEra === null &&
+        scaleTransitionStarted < 0 &&
+        pickup.retireStartedAt === null &&
+        entranceScale >= PICKUP_COLLISION_SCALE &&
+        (pickup.sourceEra >= activeIndex || pickup.authoredAnchorId !== null) &&
+        distance <=
+          directionalRollRadius(dx, dz) +
+            physicalBroadRadius +
+            physicalPoseMargin;
       pickup.big = pickup.visualRadius > effectiveRollRadius * 1.08;
       const projectedSize = projectedDiameterPixels(
         pickup.visualRadius * 2 * pickupWorldScale,
@@ -7351,6 +7735,7 @@ export function mountGame(
     const richCandidates = pickupDetail
       .filter(
         ({ pickup }) =>
+          !debugForcedFarPickups.has(pickup) &&
           (pickup.sourceEra >= activeIndex || pickup.authoredAnchorId !== null) &&
           pickup.wantsRichDetail,
       )
@@ -7406,6 +7791,7 @@ export function mountGame(
           projectedSize >= 9;
       }
       const identity = pickup.identity;
+      const usePhysicalPose = pickup.physicalPoseLocked;
       const motionTime =
         now * 0.001 * identity.motionRate + pickup.wiggle + index * 0.017;
       const motionAmount =
@@ -7415,14 +7801,22 @@ export function mountGame(
         (pickup.handoffX !== null ? 1 - transitionHandoffBlend : 1);
       const baseSpin = pickup.big ? 0.07 : 0.18;
       pickup.root.position.y = pickup.baseY;
-      if (!pickup.grounded && identity.motion !== "tumble") {
+      if (usePhysicalPose) {
+        pickup.root.rotation.x = 0;
+        pickup.root.rotation.z = 0;
+        pickup.root.scale.setScalar(entranceScale);
+      } else if (!pickup.grounded && identity.motion !== "tumble") {
         pickup.root.rotation.x *= Math.pow(0.002, dt);
       }
-      if (!pickup.grounded) pickup.root.rotation.z *= Math.pow(0.002, dt);
+      if (!usePhysicalPose && !pickup.grounded) {
+        pickup.root.rotation.z *= Math.pow(0.002, dt);
+      }
       const motionScale =
-        !pickup.grounded && identity.motion === "pulse"
+        !usePhysicalPose && !pickup.grounded && identity.motion === "pulse"
           ? 1 + Math.sin(motionTime * 3.1) * 0.045
           : 1;
+      const renderWorldScale = usePhysicalPose ? 1 : pickupWorldScale;
+      const renderVerticalScale = usePhysicalPose ? 1 : handoffVerticalScale;
 
       if (!useRichVisual) {
         if (
@@ -7431,36 +7825,44 @@ export function mountGame(
         ) {
           return;
         }
-        farPickupDummy.position.set(
-          pickup.root.position.x,
-          pickup.grounded
-            ? pickup.baseY
-            : pickup.baseY + Math.sin(motionTime * 1.7) * motionAmount * 0.45,
-          pickup.root.position.z,
-        );
-        farPickupDummy.rotation.set(
-          0,
-          pickup.grounded ? pickup.root.rotation.y : motionTime * 0.13,
-          pickup.grounded ? 0 : Math.sin(motionTime) * 0.12,
-        );
+        if (usePhysicalPose) {
+          farPickupDummy.position.copy(pickup.root.position);
+          farPickupDummy.quaternion.copy(pickup.root.quaternion);
+        } else {
+          farPickupDummy.position.set(
+            pickup.root.position.x,
+            pickup.grounded
+              ? pickup.baseY
+              : pickup.baseY + Math.sin(motionTime * 1.7) * motionAmount * 0.45,
+            pickup.root.position.z,
+          );
+          farPickupDummy.rotation.set(
+            0,
+            pickup.grounded ? pickup.root.rotation.y : motionTime * 0.13,
+            pickup.grounded ? 0 : Math.sin(motionTime) * 0.12,
+          );
+        }
         let farColor = pickupColorCache.get(pickup.curio.color);
         if (!farColor) {
           farColor = new THREE.Color(pickup.curio.color);
           pickupColorCache.set(pickup.curio.color, farColor);
         }
         const readabilityScale =
-          !pickup.grounded && pickup.sourceEra >= activeIndex && projectedSize > 0
+          !usePhysicalPose &&
+          !pickup.grounded &&
+          pickup.sourceEra >= activeIndex &&
+          projectedSize > 0
             ? THREE.MathUtils.clamp(6 / projectedSize, 1, 2.5)
             : 1;
         const silhouetteScale =
           pickup.size *
           motionScale *
-          pickupWorldScale *
+          renderWorldScale *
           entranceScale *
           readabilityScale;
         farPickupDummy.scale.set(
           silhouetteScale,
-          silhouetteScale * handoffVerticalScale,
+          silhouetteScale * renderVerticalScale,
           silhouetteScale,
         );
         pickup.renderedScale.copy(farPickupDummy.scale);
@@ -7477,18 +7879,18 @@ export function mountGame(
         const fallbackScale =
           pickup.visualRadius *
           motionScale *
-          pickupWorldScale *
+          renderWorldScale *
           entranceScale;
         farPickupDummy.scale.set(
           fallbackScale,
-          fallbackScale * handoffVerticalScale,
+          fallbackScale * renderVerticalScale,
           fallbackScale,
         );
         const fallbackAuthoredScale =
-          pickup.size * motionScale * pickupWorldScale * entranceScale;
+          pickup.size * motionScale * renderWorldScale * entranceScale;
         pickup.renderedScale.set(
           fallbackAuthoredScale,
-          fallbackAuthoredScale * handoffVerticalScale,
+          fallbackAuthoredScale * renderVerticalScale,
           fallbackAuthoredScale,
         );
         pickup.renderedScaleY = pickup.renderedScale.y;
@@ -7502,10 +7904,10 @@ export function mountGame(
         return;
       }
 
-      const richScale = motionScale * pickupWorldScale * entranceScale;
+      const richScale = motionScale * renderWorldScale * entranceScale;
       pickup.root.scale.set(
         richScale,
-        richScale * handoffVerticalScale,
+        richScale * renderVerticalScale,
         richScale,
       );
       pickup.renderedScale.set(
@@ -7514,6 +7916,8 @@ export function mountGame(
         pickup.size * pickup.root.scale.z,
       );
       pickup.renderedScaleY = pickup.root.scale.y * pickup.size;
+
+      if (usePhysicalPose) return;
 
       if (pickup.grounded) {
         pickup.root.rotation.x = 0;

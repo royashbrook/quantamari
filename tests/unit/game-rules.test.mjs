@@ -10,6 +10,7 @@ import {
 import {
   CORE_RADIUS_MAX,
   CORE_RADIUS_MIN,
+  PHYSICAL_SEED_RADIUS,
   canCollectPickup,
   canStartPointerSteering,
   circleAabbClearance,
@@ -20,6 +21,7 @@ import {
   nextLayerAdvance,
   nextLayerObstacleRadius,
   obstacleCenterGap,
+  physicalSeedRadiusFor,
   progressAfterPickup,
   radiusForLayerProgress,
   resolveCircleAabbCollision,
@@ -131,6 +133,17 @@ test("collection drives one bounded logarithmic layer transition", () => {
   assert.equal(progressAfterPickup(0.2, 4, 4, chunky), 0.2 + chunky);
   assert.equal(progressAfterPickup(0.2, 3, 4, chunky), 0.2);
   assert.equal(progressAfterPickup(0.2, 5, 4, chunky), 0.2);
+});
+
+test("the physical bootstrap seed stays tiny and independent of progression radius", () => {
+  assert.equal(PHYSICAL_SEED_RADIUS, 0.11);
+  assert.ok(PHYSICAL_SEED_RADIUS < CORE_RADIUS_MIN * 0.1);
+  assert.equal(physicalSeedRadiusFor(CORE_RADIUS_MIN), PHYSICAL_SEED_RADIUS);
+  assert.equal(physicalSeedRadiusFor(CORE_RADIUS_MAX), PHYSICAL_SEED_RADIUS);
+  assert.equal(
+    physicalSeedRadiusFor(Number.POSITIVE_INFINITY),
+    PHYSICAL_SEED_RADIUS,
+  );
 });
 
 test("next-layer obstacles are unmistakable and leave a full rolling corridor", () => {

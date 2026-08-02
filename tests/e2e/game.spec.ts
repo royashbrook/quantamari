@@ -135,6 +135,14 @@ type PerformanceSnapshot = {
       maxPerFrame: number;
       workBudgetMs: number;
       deferredDisposals: number;
+      semanticBlockers: number;
+      semanticBlockerPlannedNavigationRadius: number;
+      lodLargePickups: number;
+      physicalPoseLocked: number;
+      physicalPoseFar: number;
+      physicalPoseMismatches: number;
+      semanticBlockerPairClearance: number;
+      semanticBlockerPlayableClearance: number;
       outsidePlayable: number;
       oversizedCameraClearance: number;
       singletonIds: string[];
@@ -165,10 +173,14 @@ type PerformanceSnapshot = {
       attachmentScale: number;
       attachmentDistance: number;
       effectiveRadius: number;
+      compoundNavigationRadius: number;
       contactCoreRadius: number;
+      seedVisible: boolean;
+      seedOnly: boolean;
       contactProxyCount: number;
       attachmentIds: string[];
       attachmentDistances: number[];
+      attachmentPhysicalCenterDistances: number[];
     };
     world: {
       kind: string;
@@ -423,6 +435,72 @@ async function seedLearningEra(page: Page, eraId: string, zooms: number) {
       }),
     );
   }, { savedEraId: eraId, savedZooms: zooms });
+}
+
+async function seedLumpyGranuleBody(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: "granule-ground",
+        progress: 0,
+        picked: 1,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 10,
+        zooms: 12,
+        cycles: 0,
+        sound: false,
+        mash: [
+          {
+            eraId: "granule-ground",
+            curioId: "granule-ground/rice-grain",
+            position: [8, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            mergedInside: false,
+            aggregateLayout: 1,
+          },
+        ],
+        collection: [],
+      }),
+    );
+  });
+}
+
+async function seedLongPeriodicBody(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "everything-roll-save-v4",
+      JSON.stringify({
+        version: 4,
+        mode: "learning",
+        eraId: "built-environment",
+        progress: 0,
+        picked: 1,
+        unitemizedPicked: 0,
+        x: 0,
+        z: 0,
+        zooms: 20,
+        cycles: 0,
+        sound: false,
+        mash: [
+          {
+            eraId: "built-environment",
+            curioId: "built-environment/bungalow",
+            position: [48, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            mergedInside: false,
+            aggregateLayout: 1,
+          },
+        ],
+        collection: [],
+      }),
+    );
+  });
 }
 
 async function seedReadyJourney(page: Page) {
@@ -888,6 +966,50 @@ test("performance profile changes only by explicit persisted choice", async ({
   await expect(
     page.getByRole("switch", { name: /Battery Optimized/ }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+test("battery far pickups adopt their collision pose before contact", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await enablePerformanceDiagnostics(page, "battery");
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.queued ?? 1,
+      { timeout: 30_000 },
+    )
+    .toBe(0);
+
+  await expect
+    .poll(async () => {
+      const approached = await page.evaluate(() => {
+        const diagnostics = (
+          window as typeof window & {
+            __QUARKATAMARI_PERFORMANCE__?: {
+              approachFarFloatingPickup: () => { curioId: string } | null;
+            };
+          }
+        ).__QUARKATAMARI_PERFORMANCE__;
+        return diagnostics?.approachFarFloatingPickup() ?? null;
+      });
+      return approached !== null;
+    })
+    .toBe(true);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups
+          .physicalPoseFar ?? 0,
+    )
+    .toBeGreaterThan(0);
+  const physicalPose = await readPerformanceDiagnostics(page);
+  expect(physicalPose?.runtime.pickups.physicalPoseLocked).toBeGreaterThan(0);
+  expect(physicalPose?.runtime.pickups.physicalPoseMismatches).toBe(0);
 });
 
 test("game menu freezes the world and Escape resumes it", async ({ page }) => {
@@ -2969,7 +3091,77 @@ test("room growth keeps oversized previews out of the chase camera", async ({
       cameraSupported: true,
       blockersPresent: true,
       blockersClear: true,
-    });
+  });
+});
+
+test("granule blocker planning refuses to trap a lumpy compound body", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLumpyGranuleBody(page);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? {
+              queued: runtime.pickups.queued,
+              populationReady:
+                runtime.pickups.active >= runtime.pickups.target,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({ queued: 0, populationReady: true });
+
+  const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(runtime?.world.literalStage).toBe("tabletop");
+  expect(runtime?.representations.compoundNavigationRadius).toBeGreaterThan(8);
+  // The attachment makes every pickup small relative to the rendered mash.
+  // This finite plate cannot fit that body plus a next-era preview and a full
+  // passage, so the optional blocker must be omitted instead of trapping it.
+  expect(runtime?.pickups.lodLargePickups).toBe(0);
+  expect(runtime?.pickups.semanticBlockers).toBe(0);
+  expect(runtime?.pickups.semanticBlockerPairClearance).toBe(Infinity);
+  expect(runtime?.pickups.semanticBlockerPlayableClearance).toBe(Infinity);
+});
+
+test("periodic worlds omit unsafe blockers without starving directional refills", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedLongPeriodicBody(page);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? {
+              queued: runtime.pickups.queued,
+              populationReady:
+                runtime.pickups.active >= runtime.pickups.target,
+            }
+          : null;
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual({ queued: 0, populationReady: true });
+
+  const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(runtime?.world.topology).toBe("tiled");
+  expect(runtime?.representations.compoundNavigationRadius).toBeGreaterThan(48);
+  expect(runtime?.pickups.semanticBlockers).toBe(0);
+  expect(runtime?.pickups.semanticBlockerPlannedNavigationRadius).toBe(Infinity);
+  expect(runtime?.pickups.current).toBeGreaterThanOrEqual(
+    runtime?.pickups.target ?? Infinity,
+  );
 });
 
 test("rolling into an authored room prop attaches it and reload restores one identity", async ({
@@ -3162,7 +3354,58 @@ test("rolling into an authored room prop attaches it and reload restores one ide
   }).toEqual({ attachmentCopies: 1, anchorRespawned: false });
 });
 
-test("field attachments keep their grown transforms through save and reload", async ({
+test("released v3.7 shell saves migrate once into a centered aggregate", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await seedAttachedFoam(page);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.representations
+          .attachments,
+      { timeout: 20_000 },
+    )
+    .toBe(1);
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.representations
+          .seedVisible,
+      { timeout: 20_000 },
+    )
+    .toBe(false);
+  const migrated = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(migrated.representations.seedVisible).toBe(false);
+  expect(
+    migrated.representations.attachmentPhysicalCenterDistances[0],
+  ).toBeLessThan(0.0001);
+  expect(migrated.representations.attachmentDistances[0]).toBeLessThan(1);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  const persisted = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("everything-roll-save-v4") ?? "{}"),
+  );
+  expect(persisted.mash[0].aggregateLayout).toBe(1);
+  expect(persisted.mash[0].mergedInside).toBe(false);
+  expect(persisted.mash[0].position).not.toEqual([3, 0.2, 0.1]);
+
+  await page.reload();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+  const restored = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(restored.representations.attachmentDistances[0]).toBeCloseTo(
+    migrated.representations.attachmentDistances[0],
+    5,
+  );
+});
+
+test("field attachments stay deeply glommed through growth, save, and reload", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -3175,6 +3418,11 @@ test("field attachments keep their grown transforms through save and reload", as
       { timeout: 30_000 },
     )
     .toBe(0);
+  const seedRuntime = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(seedRuntime.representations.attachments).toBe(0);
+  expect(seedRuntime.representations.contactCoreRadius).toBeCloseTo(0.11, 5);
+  expect(seedRuntime.representations.seedOnly).toBe(true);
+  expect(seedRuntime.representations.seedVisible).toBe(true);
 
   const collectCurrent = () =>
     page.evaluate(() =>
@@ -3192,9 +3440,14 @@ test("field attachments keep their grown transforms through save and reload", as
           .attachments,
     )
     .toBe(1);
-  const firstDistance =
-    (await readPerformanceDiagnostics(page))?.runtime.representations
-      .attachmentDistances[0] ?? 0;
+  const firstRuntime = (await readPerformanceDiagnostics(page))!.runtime;
+  const firstDistance = firstRuntime.representations.attachmentDistances[0] ?? 0;
+  expect(firstRuntime.representations.contactCoreRadius).toBeCloseTo(0.11, 5);
+  expect(firstRuntime.representations.seedOnly).toBe(false);
+  expect(firstRuntime.representations.seedVisible).toBe(false);
+  expect(
+    firstRuntime.representations.attachmentPhysicalCenterDistances[0],
+  ).toBeLessThan(0.0001);
 
   expect(await collectCurrent()).not.toBeNull();
   await expect
@@ -3205,8 +3458,9 @@ test("field attachments keep their grown transforms through save and reload", as
     )
     .toBe(2);
   const grown = (await readPerformanceDiagnostics(page))!.runtime;
-  expect(grown.representations.attachmentDistances[0]).toBeGreaterThan(
+  expect(grown.representations.attachmentDistances[0]).toBeCloseTo(
     firstDistance,
+    5,
   );
 
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
@@ -3216,6 +3470,11 @@ test("field attachments keep their grown transforms through save and reload", as
   expect(
     persisted.mash.every(
       (record: { mergedInside?: boolean }) => record.mergedInside === false,
+    ),
+  ).toBe(true);
+  expect(
+    persisted.mash.every(
+      (record: { aggregateLayout?: number }) => record.aggregateLayout === 1,
     ),
   ).toBe(true);
 

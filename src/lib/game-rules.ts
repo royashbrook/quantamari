@@ -15,6 +15,12 @@ export type SoundWave = "sine" | "square" | "sawtooth" | "triangle";
 
 export const CORE_RADIUS_MIN = 1.12;
 export const CORE_RADIUS_MAX = 2.28;
+/**
+ * Tiny physical/rendered core that bootstraps an otherwise empty aggregate.
+ * `game.radius` remains the semantic progression radius used for collection
+ * eligibility, spawn scale, and camera framing; it must not inflate this seed.
+ */
+export const PHYSICAL_SEED_RADIUS = 0.11;
 export const BASELINE_ROLL_ENVELOPE_FACTOR = 1.72;
 export const NEXT_LAYER_OBSTACLE_FACTOR = 1.9;
 export const LEARNING_SCALE_TRANSITION_MS = 1_800;
@@ -141,6 +147,11 @@ export function radiusForLayerProgress(progress: number) {
     CORE_RADIUS_MIN ** 3 +
       (CORE_RADIUS_MAX ** 3 - CORE_RADIUS_MIN ** 3) * t,
   );
+}
+
+/** Fixed by design: aggregate growth comes from attached objects, not this seed. */
+export function physicalSeedRadiusFor(_progressionRadius: number) {
+  return PHYSICAL_SEED_RADIUS;
 }
 
 export function collectionProgressGain(
