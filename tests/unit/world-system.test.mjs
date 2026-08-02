@@ -27,11 +27,14 @@ import {
   worldSpecForEra,
 } from "../../src/lib/world-system.ts";
 
-test("every authored era maps to a grounded world kind and legacy visual stage", () => {
+test("every authored era maps to an explicit world contract", () => {
   assert.equal(Object.keys(WORLD_SPECS).length, ERAS.length);
+  assert.deepEqual(Object.keys(WORLD_SPECS), ERAS.map((era) => era.name));
   for (const era of ERAS) {
     const world = worldSpecForEra(era.name);
     assert.ok(world.kind);
+    assert.ok(world.representation);
+    assert.ok(world.topology);
     assert.equal(
       legacyVisualStageAnchor(world.legacyStage),
       LEGACY_VISUAL_STAGE_ANCHORS[world.legacyStage],
@@ -42,22 +45,129 @@ test("every authored era maps to a grounded world kind and legacy visual stage",
     kind: "dust-surface",
     surface: "floor",
     legacyStage: "room",
+    representation: "literal-object-place",
+    topology: "finite",
+    sceneId: "microscope-study-room",
   });
   assert.deepEqual(worldSpecForEra("Theory Playground"), {
     kind: "void",
     surface: "none",
     legacyStage: "quantum",
+    representation: "speculative",
+    topology: "void",
   });
   assert.equal(worldSpecForEra("Everyday Kingdom").kind, "interior");
   assert.equal(worldSpecForEra("Built Environment").kind, "city");
   assert.equal(worldSpecForEra("Landscape Scale").surface, "terrain");
   assert.equal(worldSpecForEra("Planetary Pantry").surface, "sphere");
+  assert.equal(worldSpecForEra("Moon Scale").topology, "streamed");
+  assert.equal(worldSpecForEra("Planetary Pantry").topology, "streamed");
   assert.deepEqual(worldSpecForEra("Giant Worlds"), {
     kind: "giant-atmosphere",
     surface: "atmosphere",
     legacyStage: "planet",
+    representation: "astronomical",
+    topology: "streamed",
   });
   assert.throws(() => worldSpecForEra("Missing Scale"), RangeError);
+});
+
+test("representation policy stays exhaustive across the scale atlas", () => {
+  const expected = {
+    speculative: [
+      "Theory Playground",
+      "Particle Probe Frontier",
+      "Metaversal Beyond",
+    ],
+    "diagrammatic-micro": [
+      "Quarks & Gluons",
+      "Hadron Forge",
+      "Nuclear Heart",
+      "Atomic Cloud",
+      "Molecular Assembly",
+      "Macromolecule Reef",
+    ],
+    "recognizable-organism": [
+      "Virus Garden",
+      "Cellular Sea",
+      "Microbe Meadow",
+      "Fiber & Pollen",
+    ],
+    "literal-object-place": [
+      "Dust Country",
+      "Granule Ground",
+      "Pocket World",
+      "Tabletop Trek",
+      "Everyday Kingdom",
+      "Room Scale",
+      "Vehicle Yard",
+      "House & Yard",
+      "Built Environment",
+      "City Streets",
+      "Landscape Scale",
+      "Regional Map",
+    ],
+    astronomical: [
+      "Moon Scale",
+      "Planetary Pantry",
+      "Giant Worlds",
+      "Stellar Buffet",
+      "System Sweep",
+      "Stellar Neighborhood",
+      "Galaxy Garden",
+      "Galaxy Cluster Web",
+      "Observable Universe",
+    ],
+  };
+
+  const classified = new Set();
+  for (const [representation, eraNames] of Object.entries(expected)) {
+    for (const eraName of eraNames) {
+      assert.equal(worldSpecForEra(eraName).representation, representation);
+      assert.equal(classified.has(eraName), false, `${eraName} classified twice`);
+      classified.add(eraName);
+    }
+  }
+  assert.deepEqual(classified, new Set(ERAS.map((era) => era.name)));
+});
+
+test("topology and scene identity preserve the microscope-to-room journey", () => {
+  const microscopeStudyRoom = [
+    "Virus Garden",
+    "Cellular Sea",
+    "Microbe Meadow",
+    "Fiber & Pollen",
+    "Dust Country",
+    "Granule Ground",
+    "Pocket World",
+    "Tabletop Trek",
+    "Everyday Kingdom",
+    "Room Scale",
+  ];
+  const sceneMembers = Object.entries(WORLD_SPECS)
+    .filter(([, world]) => world.sceneId === "microscope-study-room")
+    .map(([eraName]) => eraName);
+  assert.deepEqual(sceneMembers, microscopeStudyRoom);
+  assert.ok(
+    microscopeStudyRoom.every(
+      (eraName) => worldSpecForEra(eraName).topology === "finite",
+    ),
+  );
+
+  const topologies = new Set(Object.values(WORLD_SPECS).map((world) => world.topology));
+  assert.deepEqual(topologies, new Set(["void", "streamed", "finite", "tiled"]));
+
+  for (const [eraName, world] of Object.entries(WORLD_SPECS)) {
+    if (world.topology === "void") {
+      assert.equal(world.surface, "none", `${eraName} void has a substrate`);
+    }
+    if (world.representation === "literal-object-place") {
+      assert.notEqual(world.surface, "none", `${eraName} literal place has no surface`);
+    }
+    if (world.sceneId) {
+      assert.equal(world.topology, "finite", `${eraName} scene is not finite`);
+    }
+  }
 });
 
 test("world, chunk, and nested anchor seeds are deterministic and domain-separated", () => {

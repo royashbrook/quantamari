@@ -25,6 +25,11 @@ steps available later. All gameplay and persistence stay in the browser.
 
 - Visible size determines whether a pickup fits. If it looks smaller than the
   mash, it can be rolled up.
+- A collected object sticks on the side where contact happened, keeps its
+  authored color, proportions, and silhouette, and rotates with the rolling
+  body. Furniture, trees, buildings, and worlds are uniformly fitted only when
+  needed to stay inside the supported physical envelope; they are never
+  absorbed into an anonymous ball.
 - Shape-specific gameplay bulk tunes growth; it is not presented as physical
   mass or energy.
 - Collection fills one logarithmic layer. Long Game is the default 40× journey;
@@ -42,9 +47,11 @@ steps available later. All gameplay and persistence stay in the browser.
 - Theory Playground begins in unsupported empty space: its playful foam,
   strings, notes, and other ideas are pickups rather than a claimed floor.
   Ambient density and the first prior-layer rug appear only after scaling up.
-- Dust and grains live on a floor, tabletop objects live on furniture, rooms
-  open into yards, city blocks connect through streets, and cities remain
-  visible as small texture inside regional terrain.
+- Recognizable organisms resolve on a microscope slide. Dust and grains live
+  on its surrounding work surface, tabletop objects live on furniture, and
+  shared catalog models become collectible room props. The room opens forward
+  through a real doorway to a porch and yard; city blocks connect through
+  streets, and cities remain visible as small texture inside regional terrain.
 - Current-layer pickups are interactive. The next layer is at least 1.9 times
   the maximum rolling envelope, and its obstacles are spawned only when a full
   player-width corridor remains; failed placements are declined.
@@ -68,10 +75,10 @@ steps available later. All gameplay and persistence stay in the browser.
   from frame-rate samples. Standard is the default; Battery Optimized is an
   explicit persistent choice that lowers frame rate and GPU detail without
   removing semantic population or whole environment layers. Only three
-  semantic layers remain resident; the immediate prior layer is instanced,
-  distant pickups retain authored silhouettes in per-specimen instanced
-  families, nearby simplified specimens retain screen-stable character badges,
-  rich models have a hard budget, and Three.js stays lazy-loaded. See
+  semantic layers remain resident; the immediate prior layer is either
+  instanced or baked into a finite place's underfoot surface, distant pickups
+  retain authored silhouettes in per-specimen instanced families, rich models
+  have a hard budget, and Three.js stays lazy-loaded. See
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - The native game menu pauses simulation without changing journey state. Reset
   requires confirmation and removes only Quantamari's browser save keys.
@@ -204,6 +211,10 @@ Important code:
 - `src/lib/game/collectible-visuals.ts` — authored rich collectible geometry
 - `src/lib/game/collectible-lod.ts` — recognizable instanced LOD silhouettes
 - `src/lib/game/collectible-markers.ts` — generated character marker sprites
+- `src/lib/game/attachment-physics.ts` — contact placement and directional
+  mash envelope
+- `src/lib/game/literal-world-layout.ts` — finite microscope, tabletop, room,
+  porch, and yard layout
 - `src/lib/game/runtime-performance.ts` — opt-in named phase measurements
 - `src/lib/game/spawn-queue.ts` — deterministic, time-budgeted world population
 - `src/lib/game/spawn-policy.ts` — rarity weighting, singleton eligibility, and
@@ -330,6 +341,17 @@ already on screen activates silently; only a genuinely different build shows
 the persistent update action, failed activation returns to a retryable state,
 and a completed document update leaves one concise version toast. This work is
 tracked under [issue #60](https://github.com/royashbrook/quantamari/issues/60).
+v3.6 makes collection visibly physical. Pickups attach on their contact side,
+retain authored silhouettes through every LOD profile, contribute only their
+directional support to collision, and stay within the supported rolling
+envelope. Recognizable organisms now resolve on a microscope slide; dust,
+tabletop objects, furniture, a forward room exit, porch, and yard form one
+finite literal route whose movable props use the same catalog models seen on
+the mash. Its absolute scene origin and collected one-off props survive reloads,
+and finite population stays inside its authored support perimeter. Finite
+floors carry prior-scale memory in their own materials instead of a global rug
+plane or old objects standing upright through the place. This work is tracked under
+[issue #62](https://github.com/royashbrook/quantamari/issues/62).
 Legacy save keys, cache names, and browser test hooks deliberately retain their
 historical `quarkatamari` identifiers so existing installed copies can update
 and repair themselves without abandoning local progress.

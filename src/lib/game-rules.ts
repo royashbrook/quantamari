@@ -344,5 +344,8 @@ export function scaleTransitionDuration(mode: GameMode) {
 }
 
 export function mashProxyScale(authoredScale: number) {
-  return Math.max(0.001, Math.min(0.42, Math.abs(authoredScale)));
+  // A mash LOD is a cheaper rendering of the same collected object, not a
+  // smaller replacement. Clamping here made couches, trees, and houses pop
+  // down to generic crumbs as soon as they entered the batched proxy.
+  return Math.max(0.001, Math.abs(authoredScale));
 }

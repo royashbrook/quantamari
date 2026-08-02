@@ -15,8 +15,12 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   pauses drop missed frames instead of replaying them.
 - At most three semantic scale layers are resident: current, recognizable prior,
   and fabric prior.
-- Prior-layer objects and city buildings use `InstancedMesh`.
-- Far pickups hide their multi-part models and share one colored instanced mesh.
+- Prior-layer objects and city buildings use `InstancedMesh` where their 3D
+  form remains legible. Finite literal rooms and yards bake the prior layer
+  into the authored floor instead of drawing a second upright object field.
+- Far pickups hide their multi-part models and join per-specimen instanced
+  authored silhouettes; the generic fallback is used only if an authored pool
+  is exhausted.
 - Rich pickup models have a fixed profile cap. Standard caps device pixel ratio
   at 1.5 on wide views and 1.25 on compact views. Battery Optimized caps it at
   1 and disables antialiasing and transmission. Both compact Standard and
@@ -30,13 +34,17 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
   Guide; the newest 32 remain visually resident on the rolling ball. Of those,
   the newest 4–8 are multi-part rich toys. Older visible pieces retain their
   real authored silhouettes inside one bounded merged-geometry batch, rather
-  than becoming generic balls or adding one draw call per species. When the
-  whole mash projects below rich-detail size, the newest toys join that same
-  authored batch without changing saved identity. Battery keeps the same rule
-  with the tightest rich-toy cap; it does not change the semantic contents of
-  the mash. Rich toys are capped by their actual render-leaf cost as well as
-  their count, so one unusually elaborate specimen cannot consume the whole
-  mobile draw budget.
+  than becoming generic balls or adding one draw call per species. The newest
+  toys stay as visible authored meshes in every profile; lens and projected
+  size changes never replace the entire mash with the batch. Battery keeps the
+  same semantic contents with the tightest rich-toy cap. Rich toys are capped
+  by their actual render-leaf cost as well as their count, so one unusually
+  elaborate specimen cannot consume the whole mobile draw budget.
+- Pickup contact determines attachment direction in the rolling body's local
+  frame. A uniform support fit preserves the model's axis ratios while keeping
+  its far edge within the same 1.72× directional envelope used by collision.
+  Collision queries only attachments facing the obstacle, so a couch on the
+  rear of the mash cannot make a clear doorway impassable in front.
 - Projected pixel size—not a fixed distance—selects rich versus simplified
   pickup detail. Separate rich-detail enter and exit thresholds keep pickups and
   attached toys from flickering at an LOD edge. The logarithmic free lens also
@@ -49,13 +57,16 @@ and GPU detail as the main scaling risks, while the physics loop remains small.
 - Decorative near, mid, and far backdrop bands derive small angular parallax
   from that same accumulated origin phase. Only the band roots move each
   frame; instance matrices and materials remain unchanged. The immediate prior
-  layer never uses backdrop parallax. On flat worlds its flattened authored
-  models use a periodic, chunk-anchored root; on planetary worlds 32–64 dynamic
-  instance transforms wrap outside the visible active patch, fade at that seam,
-  and align to the local surface normal. Their buffers update only after travel.
-  Motif texture phase comes from the same absolute travel, so the models and
-  fabric both read as the rug underfoot. Only compressed N−2-and-older history
-  may recede.
+  layer never uses backdrop parallax. On repeating flat worlds its flattened
+  authored models use a periodic, chunk-anchored root. Finite literal places
+  map that memory onto their finite authored support materials with no global
+  overlay plane, preventing both old upright objects and an infinite-looking
+  desk or room. On planetary worlds 32–64
+  dynamic instance transforms wrap outside the visible active patch, fade at
+  that seam, and align to the local surface normal. Their buffers update only
+  after travel. Motif texture phase comes from the same absolute travel, so the
+  models and fabric both read as the rug underfoot. Only compressed
+  N−2-and-older history may recede.
 - Native menu, Field Guide, and Scale Lab dialogs pause the renderer while open.
   The Field Guide remains CSS-only and uses `content-visibility`.
 - Rarity and singleton selection is a bounded deterministic pass over one

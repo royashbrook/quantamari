@@ -37,53 +37,304 @@ export type WorldSurface =
   | "sphere"
   | "atmosphere";
 
+/**
+ * The visual promise made by a scale tier. This is deliberately independent
+ * from LOD: lowering detail may simplify a silhouette, but it must not turn a
+ * literal chair or a recognizable cell back into an abstract particle glyph.
+ */
+export type WorldRepresentation =
+  | "diagrammatic-micro"
+  | "recognizable-organism"
+  | "literal-object-place"
+  | "astronomical"
+  | "speculative";
+
+/**
+ * How a world occupies space. `finite` worlds have authored boundaries,
+ * `tiled` worlds repeat a bounded layout, and `streamed` worlds continuously
+ * generate new space around the player. `void` means there is no substrate.
+ */
+export type WorldTopology = "void" | "finite" | "tiled" | "streamed";
+
+/** A continuous authored setting that spans more than one scale tier. */
+export type WorldSceneId = "microscope-study-room";
+
 export type WorldSpec = {
   kind: WorldKind;
   surface: WorldSurface;
   legacyStage: LegacyVisualStage;
+  representation: WorldRepresentation;
+  topology: WorldTopology;
+  sceneId?: WorldSceneId;
 };
 
 const spec = (
   kind: WorldKind,
   surface: WorldSurface,
   legacyStage: LegacyVisualStage,
-): WorldSpec => ({ kind, surface, legacyStage });
+  representation: WorldRepresentation,
+  topology: WorldTopology,
+  sceneId?: WorldSceneId,
+): WorldSpec => ({
+  kind,
+  surface,
+  legacyStage,
+  representation,
+  topology,
+  ...(sceneId ? { sceneId } : {}),
+});
+
+const MICROSCOPE_STUDY_ROOM: WorldSceneId = "microscope-study-room";
 
 export const WORLD_SPECS: Readonly<Record<string, WorldSpec>> = {
-  "Theory Playground": spec("void", "none", "quantum"),
-  "Particle Probe Frontier": spec("void", "none", "quantum"),
-  "Quarks & Gluons": spec("particle-field", "field", "quantum"),
-  "Hadron Forge": spec("particle-field", "field", "quantum"),
-  "Nuclear Heart": spec("particle-field", "field", "quantum"),
-  "Atomic Cloud": spec("microscopic-sea", "field", "micro"),
-  "Molecular Assembly": spec("microscopic-sea", "field", "micro"),
-  "Macromolecule Reef": spec("microscopic-sea", "field", "micro"),
-  "Virus Garden": spec("microscopic-sea", "field", "micro"),
-  "Cellular Sea": spec("microscopic-sea", "field", "micro"),
-  "Microbe Meadow": spec("microscopic-sea", "field", "micro"),
-  "Fiber & Pollen": spec("fiber-bed", "fiber", "micro"),
-  "Dust Country": spec("dust-surface", "floor", "room"),
-  "Granule Ground": spec("dust-surface", "floor", "room"),
-  "Pocket World": spec("tabletop", "tabletop", "room"),
-  "Tabletop Trek": spec("tabletop", "tabletop", "room"),
-  "Everyday Kingdom": spec("interior", "interior-floor", "room"),
-  "Room Scale": spec("interior", "interior-floor", "room"),
-  "Vehicle Yard": spec("yard", "road", "neighborhood"),
-  "House & Yard": spec("yard", "road", "neighborhood"),
-  "Built Environment": spec("city", "road", "neighborhood"),
-  "City Streets": spec("city", "road", "neighborhood"),
-  "Landscape Scale": spec("landscape", "terrain", "planet"),
-  "Regional Map": spec("landscape", "terrain", "planet"),
-  "Moon Scale": spec("planet-surface", "sphere", "planet"),
-  "Planetary Pantry": spec("planet-surface", "sphere", "planet"),
-  "Giant Worlds": spec("giant-atmosphere", "atmosphere", "planet"),
-  "Stellar Buffet": spec("stellar-field", "none", "cosmic"),
-  "System Sweep": spec("orbital-system", "none", "cosmic"),
-  "Stellar Neighborhood": spec("stellar-field", "none", "cosmic"),
-  "Galaxy Garden": spec("galaxy-field", "none", "cosmic"),
-  "Galaxy Cluster Web": spec("cosmic-web", "none", "cosmic"),
-  "Observable Universe": spec("cosmic-web", "none", "cosmic"),
-  "Metaversal Beyond": spec("speculative-beyond", "none", "cosmic"),
+  "Theory Playground": spec(
+    "void",
+    "none",
+    "quantum",
+    "speculative",
+    "void",
+  ),
+  "Particle Probe Frontier": spec(
+    "void",
+    "none",
+    "quantum",
+    "speculative",
+    "void",
+  ),
+  "Quarks & Gluons": spec(
+    "particle-field",
+    "field",
+    "quantum",
+    "diagrammatic-micro",
+    "streamed",
+  ),
+  "Hadron Forge": spec(
+    "particle-field",
+    "field",
+    "quantum",
+    "diagrammatic-micro",
+    "streamed",
+  ),
+  "Nuclear Heart": spec(
+    "particle-field",
+    "field",
+    "quantum",
+    "diagrammatic-micro",
+    "streamed",
+  ),
+  "Atomic Cloud": spec(
+    "microscopic-sea",
+    "field",
+    "micro",
+    "diagrammatic-micro",
+    "streamed",
+  ),
+  "Molecular Assembly": spec(
+    "microscopic-sea",
+    "field",
+    "micro",
+    "diagrammatic-micro",
+    "streamed",
+  ),
+  "Macromolecule Reef": spec(
+    "microscopic-sea",
+    "field",
+    "micro",
+    "diagrammatic-micro",
+    "streamed",
+  ),
+  "Virus Garden": spec(
+    "microscopic-sea",
+    "field",
+    "micro",
+    "recognizable-organism",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Cellular Sea": spec(
+    "microscopic-sea",
+    "field",
+    "micro",
+    "recognizable-organism",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Microbe Meadow": spec(
+    "microscopic-sea",
+    "field",
+    "micro",
+    "recognizable-organism",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Fiber & Pollen": spec(
+    "fiber-bed",
+    "fiber",
+    "micro",
+    "recognizable-organism",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Dust Country": spec(
+    "dust-surface",
+    "floor",
+    "room",
+    "literal-object-place",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Granule Ground": spec(
+    "dust-surface",
+    "floor",
+    "room",
+    "literal-object-place",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Pocket World": spec(
+    "tabletop",
+    "tabletop",
+    "room",
+    "literal-object-place",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Tabletop Trek": spec(
+    "tabletop",
+    "tabletop",
+    "room",
+    "literal-object-place",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Everyday Kingdom": spec(
+    "interior",
+    "interior-floor",
+    "room",
+    "literal-object-place",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Room Scale": spec(
+    "interior",
+    "interior-floor",
+    "room",
+    "literal-object-place",
+    "finite",
+    MICROSCOPE_STUDY_ROOM,
+  ),
+  "Vehicle Yard": spec(
+    "yard",
+    "road",
+    "neighborhood",
+    "literal-object-place",
+    "finite",
+  ),
+  "House & Yard": spec(
+    "yard",
+    "road",
+    "neighborhood",
+    "literal-object-place",
+    "finite",
+  ),
+  "Built Environment": spec(
+    "city",
+    "road",
+    "neighborhood",
+    "literal-object-place",
+    "tiled",
+  ),
+  "City Streets": spec(
+    "city",
+    "road",
+    "neighborhood",
+    "literal-object-place",
+    "tiled",
+  ),
+  "Landscape Scale": spec(
+    "landscape",
+    "terrain",
+    "planet",
+    "literal-object-place",
+    "streamed",
+  ),
+  "Regional Map": spec(
+    "landscape",
+    "terrain",
+    "planet",
+    "literal-object-place",
+    "streamed",
+  ),
+  "Moon Scale": spec(
+    "planet-surface",
+    "sphere",
+    "planet",
+    "astronomical",
+    "streamed",
+  ),
+  "Planetary Pantry": spec(
+    "planet-surface",
+    "sphere",
+    "planet",
+    "astronomical",
+    "streamed",
+  ),
+  "Giant Worlds": spec(
+    "giant-atmosphere",
+    "atmosphere",
+    "planet",
+    "astronomical",
+    "streamed",
+  ),
+  "Stellar Buffet": spec(
+    "stellar-field",
+    "none",
+    "cosmic",
+    "astronomical",
+    "streamed",
+  ),
+  "System Sweep": spec(
+    "orbital-system",
+    "none",
+    "cosmic",
+    "astronomical",
+    "streamed",
+  ),
+  "Stellar Neighborhood": spec(
+    "stellar-field",
+    "none",
+    "cosmic",
+    "astronomical",
+    "streamed",
+  ),
+  "Galaxy Garden": spec(
+    "galaxy-field",
+    "none",
+    "cosmic",
+    "astronomical",
+    "streamed",
+  ),
+  "Galaxy Cluster Web": spec(
+    "cosmic-web",
+    "none",
+    "cosmic",
+    "astronomical",
+    "streamed",
+  ),
+  "Observable Universe": spec(
+    "cosmic-web",
+    "none",
+    "cosmic",
+    "astronomical",
+    "streamed",
+  ),
+  "Metaversal Beyond": spec(
+    "speculative-beyond",
+    "none",
+    "cosmic",
+    "speculative",
+    "streamed",
+  ),
 };
 
 export const LEGACY_VISUAL_STAGE_ANCHORS: Readonly<
