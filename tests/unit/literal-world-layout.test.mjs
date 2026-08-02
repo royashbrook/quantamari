@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CORE_RADIUS_MAX, MAX_ROLL_ENVELOPE_FACTOR } from "../../src/lib/game-rules.ts";
+import { BASELINE_ROLL_ENVELOPE_FACTOR, CORE_RADIUS_MAX } from "../../src/lib/game-rules.ts";
 import {
   LITERAL_ARCHITECTURE,
   LITERAL_DOORWAY_CLEAR_WIDTH,
   LITERAL_PROTECTED_ROUTE,
   LITERAL_PROP_ANCHORS,
+  LITERAL_ROUTE_HALF_WIDTH,
   LITERAL_ROUTE_Z_OFFSET,
   LITERAL_STAGES,
   LITERAL_STAGE_IDS,
@@ -82,7 +83,7 @@ test("the protected route stays clear while moving forward along negative Z", ()
     assert.equal(segment.centerX, 0);
     assert.ok(
       segment.halfWidth * 2 >=
-        2 * CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR,
+        2 * CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR,
     );
 
     for (const primitive of LITERAL_ARCHITECTURE) {
@@ -132,8 +133,8 @@ test("the protected route stays clear while moving forward along negative Z", ()
   }
 });
 
-test("the forward wall opening fits the maximum supported rolling envelope", () => {
-  const requiredWidth = 2 * CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
+test("the forward wall opening fits the baseline core-growth envelope", () => {
+  const requiredWidth = 2 * CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR;
   const opening = LITERAL_ARCHITECTURE.find(
     (primitive) => primitive.id === "architecture/forward-exit-opening",
   );
@@ -199,6 +200,82 @@ test("one route transform preserves every stage boundary and shared fixture", ()
     ).size,
     1,
   );
+});
+
+test("the microscope plate is a roomy, supported first playfield", () => {
+  const byId = new Map(
+    LITERAL_ARCHITECTURE.map((primitive) => [primitive.id, primitive]),
+  );
+  const slide = byId.get("architecture/glass-specimen-slide");
+  const desk = byId.get("architecture/study-work-surface");
+  const cameraApron = byId.get("architecture/study-camera-apron");
+  const microscope = LITERAL_STAGES.find(
+    (stage) => stage.id === "microscope-slide",
+  );
+  const tabletop = LITERAL_STAGES.find((stage) => stage.id === "tabletop");
+  const transition = LITERAL_STAGE_TRANSITIONS.find(
+    (candidate) => candidate.from === "microscope-slide",
+  );
+  const bounds = (primitive) => ({
+    minX: primitive.position[0] - primitive.dimensions[0] / 2,
+    maxX: primitive.position[0] + primitive.dimensions[0] / 2,
+    minZ: primitive.position[2] - primitive.dimensions[2] / 2,
+    maxZ: primitive.position[2] + primitive.dimensions[2] / 2,
+  });
+  const slideBounds = bounds(slide);
+  const deskBounds = bounds(desk);
+
+  assert.equal(slide.dimensions[0] * slide.dimensions[2], 896);
+  assert.ok(slideBounds.maxZ > microscope.nearZ);
+  assert.ok(slideBounds.minZ < microscope.farZ);
+  assert.equal(microscope.farZ, tabletop.nearZ);
+  assert.equal(transition.atZ, tabletop.nearZ);
+  assert.ok(slideBounds.minX >= deskBounds.minX);
+  assert.ok(slideBounds.maxX <= deskBounds.maxX);
+  assert.ok(slideBounds.minZ >= deskBounds.minZ);
+  assert.ok(slideBounds.maxZ <= deskBounds.maxZ);
+  const apronBounds = bounds(cameraApron);
+  assert.equal(cameraApron.collision, "none");
+  assert.equal(apronBounds.minZ, deskBounds.maxZ);
+  assert.ok(apronBounds.maxZ - deskBounds.maxZ >= 20);
+  assert.equal(cameraApron.position[1], desk.position[1]);
+
+  for (const fixtureId of [
+    "architecture/microscope-stand",
+    "architecture/microscope-objective",
+  ]) {
+    const fixture = bounds(byId.get(fixtureId));
+    assert.equal(
+      overlaps(
+        fixture.minX,
+        fixture.maxX,
+        slideBounds.minX,
+        slideBounds.maxX,
+      ) &&
+        overlaps(
+          fixture.minZ,
+          fixture.maxZ,
+          slideBounds.minZ,
+          slideBounds.maxZ,
+        ),
+      false,
+      `${fixtureId} steals playable glass area`,
+    );
+  }
+
+  for (const prop of LITERAL_PROP_ANCHORS.filter((candidate) =>
+    candidate.visibleIn.includes("microscope-slide"),
+  )) {
+    assert.ok(prop.position[0] - prop.footprintRadius >= slideBounds.minX);
+    assert.ok(prop.position[0] + prop.footprintRadius <= slideBounds.maxX);
+    assert.ok(prop.position[2] - prop.footprintRadius >= slideBounds.minZ);
+    assert.ok(prop.position[2] + prop.footprintRadius <= slideBounds.maxZ);
+    assert.ok(
+      Math.abs(prop.position[0]) - prop.footprintRadius >=
+        LITERAL_ROUTE_HALF_WIDTH,
+      `${prop.id} crowds the clear path across the plate`,
+    );
+  }
 });
 
 test("stage selectors expose context separately from collection eligibility", () => {
@@ -376,8 +453,8 @@ test("every authored prop is grounded on the highest literal support beneath it"
   }
 
   assert.ok(
-    literalSupportTopForPoint("microscope-slide", -4, 28.8) >
-      literalSupportTopForPoint("microscope-slide", 0, 18),
+    literalSupportTopForPoint("microscope-slide", -10, 31) >
+      literalSupportTopForPoint("microscope-slide", 0, 8),
     "slide specimens should sit on the glass rather than intersect the desk",
   );
 });

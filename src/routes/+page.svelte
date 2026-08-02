@@ -99,6 +99,7 @@
     z: number;
     originX: number;
     originZ: number;
+    rollQuaternion: [number, number, number, number];
     vx: number;
     vz: number;
     lens: number;
@@ -126,6 +127,7 @@
       originZ: 0,
       literalSceneOriginX: null,
       literalSceneOriginZ: null,
+      rollQuaternion: [0, 0, 0, 1],
       vx: 0,
       vz: 0,
       radius: CORE_RADIUS_MIN,
@@ -657,6 +659,7 @@
       z: game.z,
       originX: game.originX,
       originZ: game.originZ,
+      rollQuaternion: [...game.rollQuaternion],
       vx: game.vx,
       vz: game.vz,
       lens: game.lens,
@@ -724,6 +727,9 @@
       z: labSnapshot
         ? labSnapshot.z + labSnapshot.originZ
         : game.z + game.originZ,
+      rollQuaternion: labSnapshot
+        ? [...labSnapshot.rollQuaternion]
+        : [...game.rollQuaternion],
       zooms: game.zooms,
       cycles: game.cycles,
       sound: game.sound,
@@ -1328,6 +1334,7 @@
     game.originZ = 0;
     game.literalSceneOriginX = saved.literalSceneOrigin?.x ?? null;
     game.literalSceneOriginZ = saved.literalSceneOrigin?.z ?? null;
+    game.rollQuaternion = [...saved.rollQuaternion];
     game.radius = radiusForLayerProgress(game.progress);
     game.zooms = saved.zooms;
     game.cycles = saved.cycles;

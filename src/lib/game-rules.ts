@@ -15,7 +15,7 @@ export type SoundWave = "sine" | "square" | "sawtooth" | "triangle";
 
 export const CORE_RADIUS_MIN = 1.12;
 export const CORE_RADIUS_MAX = 2.28;
-export const MAX_ROLL_ENVELOPE_FACTOR = 1.72;
+export const BASELINE_ROLL_ENVELOPE_FACTOR = 1.72;
 export const NEXT_LAYER_OBSTACLE_FACTOR = 1.9;
 export const LEARNING_SCALE_TRANSITION_MS = 1_800;
 

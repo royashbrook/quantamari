@@ -11,7 +11,7 @@ import {
 import {
   CORE_RADIUS_MIN,
   CORE_RADIUS_MAX,
-  MAX_ROLL_ENVELOPE_FACTOR,
+  BASELINE_ROLL_ENVELOPE_FACTOR,
   type CollectibleIdentity,
   type QualityTier,
   canCollectPickup,
@@ -24,8 +24,6 @@ import {
   obstacleCenterGap,
   progressAfterPickup,
   radiusForLayerProgress,
-  resolveCircleAabbCollision,
-  resolveCircularCollision,
   scaleTransitionDuration,
   scaleTransitionFrame,
 } from "../game-rules";
@@ -77,13 +75,16 @@ import {
   wrappedTextureOffset,
 } from "./background-depth";
 import {
-  attachmentSupportScaleFit,
   contactLocalSurfaceDirection,
   directionalAttachmentEnvelopeXZ,
+  directionalOrientedBoxEnvelope3D,
   nearestAabbContactDirectionXZ,
   relocateAttachmentForCoreGrowth,
+  rollingAngleForDistance,
+  stickyBodyIntersectsOrientedBox,
   targetAttachmentCenterDistance,
-  type AttachmentCircleXZ,
+  type AttachmentSphere,
+  type OrientedContactBox,
 } from "./attachment-physics";
 import {
   type CollectibleGeometryLibrary,
@@ -130,6 +131,8 @@ type Pickup = {
   size: number;
   visualRadius: number;
   bulkRadius: number;
+  contactCenter: THREE.Vector3;
+  contactHalfExtents: THREE.Vector3;
   big: boolean;
   baseY: number;
   grounded: boolean;
@@ -289,6 +292,7 @@ export type GameState = {
   originZ: number;
   literalSceneOriginX: number | null;
   literalSceneOriginZ: number | null;
+  rollQuaternion: [number, number, number, number];
   vx: number;
   vz: number;
   radius: number;
@@ -1699,6 +1703,7 @@ export function mountGame(
   const playerRoot = new THREE.Group();
   const rollGroup = new THREE.Group();
   const mashGroup = new THREE.Group();
+  rollGroup.quaternion.set(...game.rollQuaternion).normalize();
   playerRoot.add(rollGroup);
   rollGroup.add(mashGroup);
   scene.add(playerRoot);
@@ -1951,6 +1956,20 @@ export function mountGame(
   let literalSceneOriginX = 0;
   let literalSceneOriginZ = 0;
   let literalPlayerSurfaceY = 0;
+  let currentPlayerSurfaceY = 0;
+  const literalSupportTopAtWorldPoint = (
+    stage: LiteralStage,
+    worldX: number,
+    worldZ: number,
+  ) =>
+    literalSupportTopForPoint(
+      stage.id,
+      worldX - literalSceneOriginX,
+      worldZ - literalSceneOriginZ - LITERAL_ROUTE_Z_OFFSET,
+    );
+  const literalPlayerSupportForStage = (stage: LiteralStage) =>
+    literalSupportTopAtWorldPoint(stage, game.x, game.z) ??
+    literalStageSurfaceY(stage.id);
   const literalWorldPosition = (
     _stage: LiteralStage,
     position: readonly [number, number, number],
@@ -2054,7 +2073,10 @@ export function mountGame(
           literalFoundationSurfaceMaterials.add(slideMaterial);
         }
         material = slideMaterial;
-      } else if (primitive.collision === "support") {
+      } else if (
+        primitive.collision === "support" ||
+        primitive.semanticIdentity.includes("camera-apron")
+      ) {
         const supportMaterial = new THREE.MeshStandardMaterial({
           color,
           roughness: 0.88,
@@ -4084,27 +4106,44 @@ export function mountGame(
       MAX_VISIBLE_MASH_PIECES,
       attachments.length + mashProxyRecords.length,
     );
-  const coreShareFor = (pieceCount: number) =>
-    early
-      ? Math.max(0.18, 0.82 - pieceCount * 0.05)
-      : Math.max(0.32, 0.78 - pieceCount * 0.009);
-  const visibleCoreRadiusFor = (radius: number, pieceCount = visibleMashPieceCount()) =>
-    radius * coreShareFor(pieceCount);
-  const attachmentSupportCache = new Map<string, number>();
-  const supportRadiusForCurio = (curio: Curio) => {
-    const cached = attachmentSupportCache.get(curio.id);
-    if (cached !== undefined) return cached;
+  // The opaque ball is the physical sticky core. Its radius must not collapse
+  // as attachments accumulate or contact and roll speed would change behind
+  // the player's back. Visual richness belongs in the mash, not in a hidden
+  // shrinking collider.
+  const visibleCoreRadiusFor = (radius: number, _pieceCount = 0) => radius;
+  type PhysicalBounds = {
+    center: THREE.Vector3;
+    sphereCenter: THREE.Vector3;
+    halfExtents: THREE.Vector3;
+    radius: number;
+  };
+  const physicalBoundsCache = new Map<string, PhysicalBounds>();
+  const physicalBoundsForCurio = (curio: Curio) => {
+    const cached = physicalBoundsCache.get(curio.id);
+    if (cached) return cached;
     const geometries = collectibleGeometryLibrary!.geometryFor(curio, false);
-    let support = 0.01;
-    // Halos, clouds, wires, and other transparent accents are visual effects,
-    // not matter. They must not enlarge the rolling collision envelope or
-    // force the recognizable solid model to be shrunk.
+    // Transparent halos and wire effects are not sticky matter when the model
+    // also has a solid authored layer. Effect-only theoretical curios retain
+    // a fallback body so the opening playground remains collectible.
     const physicalGeometry = geometries.solid ?? geometries.effect;
+    physicalGeometry?.computeBoundingBox();
     physicalGeometry?.computeBoundingSphere();
-    const bounds = physicalGeometry?.boundingSphere;
-    if (bounds) support = Math.max(support, bounds.center.length() + bounds.radius);
-    attachmentSupportCache.set(curio.id, support);
-    return support;
+    const box = physicalGeometry?.boundingBox;
+    const sphere = physicalGeometry?.boundingSphere;
+    const bounds = {
+      center: box?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3(),
+      sphereCenter: sphere?.center.clone() ?? new THREE.Vector3(),
+      halfExtents:
+        box?.getSize(new THREE.Vector3()).multiplyScalar(0.5) ??
+        new THREE.Vector3(0.01, 0.01, 0.01),
+      radius: Math.max(0.01, sphere?.radius ?? 0.01),
+    };
+    physicalBoundsCache.set(curio.id, bounds);
+    return bounds;
+  };
+  const supportRadiusForCurio = (curio: Curio) => {
+    const bounds = physicalBoundsForCurio(curio);
+    return bounds.center.length() + bounds.radius;
   };
   const makeMashAttachment = (curio: Curio) => {
     const group = new THREE.Group();
@@ -4384,52 +4423,6 @@ export function mountGame(
       (candidate) => candidate.id === record.curioId,
     );
     if (!curio || sourceEraIndex < 0) return;
-    const sourceRepresentation = worldSpecForEra(sourceEra.name).representation;
-    if (
-      !record.mergedInside &&
-      sourceRepresentation !== "diagrammatic-micro" &&
-      sourceRepresentation !== "speculative"
-    ) {
-      let authoredScale = Math.max(...record.scale.map(Math.abs));
-      const visibleCoreRadius = visibleCoreRadiusFor(
-        game.radius,
-        visibleMashRecords.length,
-      );
-      const scaleFit = attachmentSupportScaleFit(
-        supportRadiusForCurio(curio) * authoredScale,
-        visibleCoreRadius,
-      );
-      if (scaleFit < 1) {
-        record.scale = record.scale.map((value) => value * scaleFit) as [
-          number,
-          number,
-          number,
-        ];
-        authoredScale *= scaleFit;
-      }
-      const support = supportRadiusForCurio(curio) * authoredScale;
-      const targetDistance = targetAttachmentCenterDistance(
-        visibleCoreRadius,
-        support,
-      );
-      const restoredDistance = Math.hypot(...record.position);
-      if (restoredDistance < targetDistance) {
-        const direction = contactLocalSurfaceDirection(
-          {
-            x: record.position[0],
-            y: record.position[1],
-            z: record.position[2],
-          },
-          { x: 0, y: 0, z: 0, w: 1 },
-          collectibleIdentityFor(curio.id, curio.shape).seed + recordIndex,
-        );
-        record.position = [
-          direction.x * targetDistance,
-          direction.y * targetDistance,
-          direction.z * targetDistance,
-        ];
-      }
-    }
     if (!restoredRichRecords.has(record)) {
       addMashProxy(record, curio.color, false);
       return;
@@ -4463,13 +4456,6 @@ export function mountGame(
     mashGroup.add(visual);
     attachments.push(visual);
   });
-  const stickingPieces: {
-    visual: THREE.Object3D;
-    startPosition: THREE.Vector3;
-    targetPosition: THREE.Vector3;
-    targetScale: THREE.Vector3;
-    startedAt: number;
-  }[] = [];
   const relocateMashForCoreGrowth = (
     previousCoreRadius: number,
     nextCoreRadius: number,
@@ -4487,13 +4473,9 @@ export function mountGame(
     attachments.forEach((visual, index) => {
       relocateVector(visual.position, index + 1);
     });
-    stickingPieces.forEach((piece, index) => {
-      relocateVector(piece.startPosition, index + 101);
-      relocateVector(piece.targetPosition, index + 201);
-    });
     const relocatedRecords = new Set<MashRecordV4>();
     const relocateRecord = (record: MashRecordV4 | undefined, seed: number) => {
-      if (!record || record.mergedInside || relocatedRecords.has(record)) return;
+      if (!record || relocatedRecords.has(record)) return;
       const moved = relocateAttachmentForCoreGrowth(
         { x: record.position[0], y: record.position[1], z: record.position[2] },
         previousCoreRadius,
@@ -4537,7 +4519,6 @@ export function mountGame(
     attachments.length = 0;
     mashProxyRecords.length = 0;
     refreshMashProxy();
-    stickingPieces.length = 0;
     if (historyEnabled) mashHistoryRef.current = [];
   };
 
@@ -4548,14 +4529,7 @@ export function mountGame(
       (attachments.length > richMashLimit() ||
         richMashDrawCalls() > richMashDrawCallLimit())
     ) {
-      const oldestIndex = attachments.findIndex(
-        (visual) =>
-          !stickingPieces.some((piece) => piece.visual === visual),
-      );
-      // A freshly collected object gets 280 ms to visibly travel from the
-      // contact point onto the roll. Temporarily exceeding the rich budget is
-      // preferable to teleporting that active piece into the merged batch.
-      if (oldestIndex < 0) break;
+      const oldestIndex = 0;
       const [oldest] = attachments.splice(oldestIndex, 1);
       if (!oldest) break;
       const record = oldest.userData.mashRecord as MashRecordV4 | undefined;
@@ -4593,10 +4567,6 @@ export function mountGame(
           false,
         );
       }
-      const stickingIndex = stickingPieces.findIndex(
-        (piece) => piece.visual === visual,
-      );
-      if (stickingIndex >= 0) stickingPieces.splice(stickingIndex, 1);
       mashGroup.remove(visual);
       disposeVisual(visual);
       collapsed = true;
@@ -4623,11 +4593,6 @@ export function mountGame(
       visual.position.multiplyScalar(scale);
       visual.scale.multiplyScalar(scale);
       rebaseRecord(visual.userData.mashRecord as MashRecordV4 | undefined);
-    });
-    stickingPieces.forEach((piece) => {
-      piece.startPosition.multiplyScalar(scale);
-      piece.targetPosition.multiplyScalar(scale);
-      piece.targetScale.multiplyScalar(scale);
     });
     mashProxyRecords.forEach(({ record }) => rebaseRecord(record));
     mashHistoryRef.current.forEach((record) => rebaseRecord(record));
@@ -4723,6 +4688,7 @@ export function mountGame(
       drawCalls,
       builtTemplate,
     } = makeVisual(curio, sourceEra >= activeIndex);
+    const contactBounds = physicalBoundsForCurio(curio);
     if (authoredAnchor) {
       const semanticScale = 2 ** (sourceEra - activeIndex);
       const targetFootprint = THREE.MathUtils.clamp(
@@ -4745,7 +4711,7 @@ export function mountGame(
       visual.scale.multiplyScalar(fit);
     } else if (!authoredAnchor && levelDelta > 0) {
       const targetRadius = nextLayerObstacleRadius(
-        CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR,
+        CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR,
       );
       const enlarge = Math.max(
         targetRadius / Math.max(0.01, visualRadius),
@@ -4790,7 +4756,7 @@ export function mountGame(
     // grows. Treat every blocker like buffered scenery, including the initial
     // population, and reserve the full future camera arm below.
     const outerRing = phase === "refill" || big;
-    const rollingEnvelope = CORE_RADIUS_MAX * MAX_ROLL_ENVELOPE_FACTOR;
+    const rollingEnvelope = CORE_RADIUS_MAX * BASELINE_ROLL_ENVELOPE_FACTOR;
     const settledCameraArm =
       CORE_RADIUS_MAX *
       (isCompactView(width) ? 11.8 : 10.6) *
@@ -5009,6 +4975,8 @@ export function mountGame(
       size,
       visualRadius,
       bulkRadius,
+      contactCenter: contactBounds.center.clone(),
+      contactHalfExtents: contactBounds.halfExtents.clone(),
       big,
       baseY,
       grounded,
@@ -5240,10 +5208,12 @@ export function mountGame(
   const preparePickupHandoff = () => {
     const outgoingEra = game.era;
     const nextIndex = nextLayerAdvance(outgoingEra, ERAS.length).nextIndex;
-    transitionSurfaceFromY = literalPlayerSurfaceY;
+    transitionSurfaceFromY = activeLiteralStage
+      ? literalPlayerSupportForStage(activeLiteralStage)
+      : literalPlayerSurfaceY;
     const nextLiteralStage = literalStageForEra(ERAS[nextIndex].id);
     transitionSurfaceToY = nextLiteralStage
-      ? literalStageSurfaceY(nextLiteralStage.id)
+      ? literalPlayerSupportForStage(nextLiteralStage)
       : 0;
     pickups.forEach((pickup) => {
       if (pickup.sourceEra === outgoingEra) {
@@ -5288,6 +5258,8 @@ export function mountGame(
       game.originZ = 0;
       game.vx = 0;
       game.vz = 0;
+      game.rollQuaternion = [0, 0, 0, 1];
+      rollGroup.quaternion.identity();
       retireVisibleMash();
       collectedAuthoredAnchorIds.clear();
       literalAnchorReconcileKey = "";
@@ -5306,15 +5278,24 @@ export function mountGame(
     foamCluster.scale.multiplyScalar(radiusRebase);
     ballFace.position.multiplyScalar(radiusRebase);
     ballFace.scale.multiplyScalar(radiusRebase);
-    effectiveRollRadius = CORE_RADIUS_MIN;
+    effectiveRollRadius = visibleCoreRadiusFor(CORE_RADIUS_MIN);
     rollRadiusClock = 0.12;
     const nextLiteralStage = literalStageForEra(ERAS[nextIndex].id);
     literalPlayerSurfaceY = nextLiteralStage
       ? literalStageSurfaceY(nextLiteralStage.id)
       : 0;
-    const nextFloatHeight = literalPlayerSurfaceY + CORE_RADIUS_MIN * 0.94;
+    currentPlayerSurfaceY = nextLiteralStage
+      ? literalPlayerSupportForStage(nextLiteralStage)
+      : literalPlayerSurfaceY;
+    const nextHasSurface = worldSpecForEra(ERAS[nextIndex].name).surface !== "none";
+    const nextFloatHeight =
+      currentPlayerSurfaceY +
+      (nextHasSurface
+        ? visibleCoreRadiusFor(CORE_RADIUS_MIN)
+        : CORE_RADIUS_MIN * 0.94);
     const mobileView = isCompactView(width);
     playerRoot.position.set(game.x, nextFloatHeight, game.z);
+    cameraTrackedPlayerHeight = nextFloatHeight;
     camera.position.set(
       game.x + game.vx * 0.24 * game.lens,
       nextFloatHeight +
@@ -5386,9 +5367,12 @@ export function mountGame(
     const nextIndex = nextLayerAdvance(game.era, ERAS.length).nextIndex;
     const nextLiteralStage = literalStageForEra(ERAS[nextIndex].id);
     const nextSurfaceY = nextLiteralStage
-      ? literalStageSurfaceY(nextLiteralStage.id)
+      ? literalPlayerSupportForStage(nextLiteralStage)
       : 0;
-    const surfaceHandoff = Math.abs(nextSurfaceY - literalPlayerSurfaceY) > 0.1;
+    const currentSurfaceY = activeLiteralStage
+      ? literalPlayerSupportForStage(activeLiteralStage)
+      : literalPlayerSurfaceY;
+    const surfaceHandoff = Math.abs(nextSurfaceY - currentSurfaceY) > 0.1;
     scaleTransitionDurationMs = Math.max(
       scaleTransitionDuration(game.mode),
       surfaceHandoff ? 850 : 0,
@@ -5571,19 +5555,6 @@ export function mountGame(
       const unitSupportRadius = Number(
         attachment.userData.mashSupportRadius ?? 0.5,
       );
-      const authoredSupportRadius =
-        unitSupportRadius *
-        Math.max(
-          Math.abs(targetScale.x),
-          Math.abs(targetScale.y),
-          Math.abs(targetScale.z),
-        );
-      targetScale.multiplyScalar(
-        attachmentSupportScaleFit(
-          authoredSupportRadius,
-          attachmentCoreRadius,
-        ),
-      );
       attachment.scale.copy(targetScale);
       const supportRadius =
         unitSupportRadius *
@@ -5592,35 +5563,26 @@ export function mountGame(
           Math.abs(targetScale.y),
           Math.abs(targetScale.z),
         );
-      const targetDistance = targetAttachmentCenterDistance(
-        attachmentCoreRadius,
-        supportRadius,
-      );
-      const targetPosition = new THREE.Vector3(
-        direction.x,
-        direction.y,
-        direction.z,
-      ).multiplyScalar(targetDistance);
       mashGroup.updateMatrixWorld(true);
       const startPosition = mashGroup.worldToLocal(pickupWorldPosition.clone());
-      if (
-        startPosition.distanceTo(targetPosition) >
-        Math.max(game.radius * 1.5, supportRadius * 2)
-      ) {
-        startPosition.copy(targetPosition).multiplyScalar(1.08);
-      }
-      attachment.position.copy(startPosition);
-      attachment.scale.copy(targetScale).multiplyScalar(0.9);
+      const startDistance = startPosition.length();
+      const targetDistance =
+        startDistance > 0.0001
+          ? startDistance
+          : targetAttachmentCenterDistance(attachmentCoreRadius, supportRadius);
+      const targetPosition =
+        startDistance > 0.0001
+          ? startPosition.clone().multiplyScalar(targetDistance / startDistance)
+          : new THREE.Vector3(
+              direction.x,
+              direction.y,
+              direction.z,
+            ).multiplyScalar(targetDistance);
+      attachment.position.copy(targetPosition);
+      attachment.scale.copy(targetScale);
       attachment.userData.sourceEra = pickup.sourceEra;
       mashGroup.add(attachment);
       attachments.push(attachment);
-      stickingPieces.push({
-        visual: attachment,
-        startPosition: startPosition.clone(),
-        targetPosition: targetPosition.clone(),
-        targetScale,
-        startedAt: now,
-      });
       const mashRecord: MashRecordV4 = {
         eraId: sourceEra.id,
         curioId: pickup.curio.id,
@@ -5631,7 +5593,7 @@ export function mountGame(
           attachment.rotation.z,
         ],
         scale: targetScale.toArray() as [number, number, number],
-        mergedInside: fieldLike,
+        mergedInside: false,
       };
       attachment.userData.mashRecord = mashRecord;
       attachment.userData.mashColor = pickup.curio.color;
@@ -5641,8 +5603,9 @@ export function mountGame(
           mashHistoryRef.current.shift();
         }
       }
-      const mashProxyChanged = collapseRichMashToBudget();
-      if (!mashProxyChanged) refreshMashProxy();
+      // A rich attachment does not change the existing proxy membership.
+      // Rebuild only when crossing a rich/proxy budget boundary.
+      collapseRichMashToBudget();
       removePickup(pickup);
     } else {
       removePickup(pickup);
@@ -5994,6 +5957,8 @@ export function mountGame(
               attachmentDistance:
                 attachments[0]?.position.length() ?? 0,
               effectiveRadius: effectiveRollRadius,
+              contactCoreRadius: coreContactRadius(),
+              contactProxyCount: attachmentContactBoxes.length,
               attachmentIds: [
                 ...attachments.flatMap((visual) => {
                   const record = visual.userData.mashRecord as
@@ -6051,7 +6016,9 @@ export function mountGame(
               x: game.x,
               y: playerRoot.position.y,
               z: game.z,
-              surfaceY: literalPlayerSurfaceY,
+              surfaceY: currentPlayerSurfaceY,
+              groundSupportRadius: currentGroundSupportRadius,
+              rollQuaternion: [...game.rollQuaternion],
               literalPlayableClearance: literalPlayableClearanceAt(
                 game.x,
                 game.z,
@@ -6168,6 +6135,9 @@ export function mountGame(
           if (pickupIndex < 0) return null;
           const [pickup] = pickups.splice(pickupIndex, 1);
           const name = pickup.curio.name;
+          pickup.root.position.x =
+            game.x + game.radius + Math.max(0.02, pickup.visualRadius * 0.4);
+          pickup.root.position.z = game.z;
           collect(pickup, performance.now());
           reconcilePickupQueue();
           return name;
@@ -6182,6 +6152,9 @@ export function mountGame(
           if (pickupIndex < 0) return null;
           const [pickup] = pickups.splice(pickupIndex, 1);
           const id = pickup.curio.id;
+          pickup.root.position.x =
+            game.x + game.radius + Math.max(0.02, pickup.visualRadius * 0.4);
+          pickup.root.position.z = game.z;
           collect(pickup, performance.now());
           reconcilePickupQueue();
           return id;
@@ -6214,61 +6187,127 @@ export function mountGame(
   let performanceWindowStarted = performance.now();
   let performanceFrames = 0;
   let measuredFps = 60;
-  let effectiveRollRadius = game.radius;
+  let effectiveRollRadius = visibleCoreRadiusFor(game.radius);
   const mashCurioById = new Map(
     ERAS.flatMap((era) => era.curios.map((curio) => [curio.id, curio] as const)),
   );
-  const directionalAttachmentCircles: AttachmentCircleXZ[] = [];
+  const directionalAttachmentSpheres: AttachmentSphere[] = [];
+  const attachmentContactBoxes: Array<{
+    center: THREE.Vector3;
+    halfExtents: THREE.Vector3;
+    quaternion: THREE.Quaternion;
+  }> = [];
   const directionalSeenRecords = new Set<MashRecordV4>();
   const directionalAttachmentPosition = new THREE.Vector3();
+  const directionalAttachmentOrigin = new THREE.Vector3();
+  const directionalAttachmentScale = new THREE.Vector3();
+  const directionalAttachmentQuaternion = new THREE.Quaternion();
+  const directionalWorldQuaternion = new THREE.Quaternion();
+  const directionalAttachmentEuler = new THREE.Euler();
   const directionalRollQuaternion = new THREE.Quaternion();
-  const refreshDirectionalAttachmentCircles = () => {
-    rollGroup.getWorldQuaternion(directionalRollQuaternion);
+  const refreshDirectionalAttachments = () => {
+    // playerRoot has translation/scale only, so this local quaternion is also
+    // the rolling body's world orientation. Avoid traversing the whole mash
+    // during every bounded physics substep.
+    directionalRollQuaternion.copy(rollGroup.quaternion);
     directionalSeenRecords.clear();
-    let circleCount = 0;
-    const addRecord = (record: MashRecordV4 | undefined) => {
+    let proxyCount = 0;
+    const addRecord = (
+      record: MashRecordV4 | undefined,
+      liveVisual?: THREE.Object3D,
+    ) => {
       if (!record || directionalSeenRecords.has(record)) return;
       directionalSeenRecords.add(record);
       const curio = mashCurioById.get(record.curioId);
       if (!curio) return;
-      directionalAttachmentPosition
-        .set(...record.position)
-        .applyQuaternion(directionalRollQuaternion);
+      const bounds = physicalBoundsForCurio(curio);
+      if (liveVisual) {
+        directionalAttachmentScale.copy(liveVisual.scale);
+        directionalAttachmentQuaternion.copy(liveVisual.quaternion);
+        directionalAttachmentOrigin.copy(liveVisual.position);
+      } else {
+        directionalAttachmentScale.set(...record.scale);
+        directionalAttachmentEuler.set(...record.rotation);
+        directionalAttachmentQuaternion.setFromEuler(
+          directionalAttachmentEuler,
+        );
+        directionalAttachmentOrigin.set(...record.position);
+      }
       const authoredScale = Math.max(
-        Math.abs(record.scale[0]),
-        Math.abs(record.scale[1]),
-        Math.abs(record.scale[2]),
+        Math.abs(directionalAttachmentScale.x),
+        Math.abs(directionalAttachmentScale.y),
+        Math.abs(directionalAttachmentScale.z),
       );
-      const circle = directionalAttachmentCircles[circleCount] ?? {
+      const sphere = directionalAttachmentSpheres[proxyCount] ?? {
         x: 0,
+        y: 0,
         z: 0,
         radius: 0,
       };
-      circle.x = directionalAttachmentPosition.x;
-      circle.z = directionalAttachmentPosition.z;
-      circle.radius = supportRadiusForCurio(curio) * authoredScale;
-      directionalAttachmentCircles[circleCount] = circle;
-      circleCount += 1;
+      directionalAttachmentPosition
+        .copy(bounds.sphereCenter)
+        .multiply(directionalAttachmentScale)
+        .applyQuaternion(directionalAttachmentQuaternion)
+        .add(directionalAttachmentOrigin)
+        .applyQuaternion(directionalRollQuaternion);
+      sphere.x = directionalAttachmentPosition.x;
+      sphere.y = directionalAttachmentPosition.y;
+      sphere.z = directionalAttachmentPosition.z;
+      sphere.radius = bounds.radius * authoredScale;
+      directionalAttachmentSpheres[proxyCount] = sphere;
+
+      const box = attachmentContactBoxes[proxyCount] ?? {
+        center: new THREE.Vector3(),
+        halfExtents: new THREE.Vector3(),
+        quaternion: new THREE.Quaternion(),
+      };
+      box.center
+        .copy(bounds.center)
+        .multiply(directionalAttachmentScale)
+        .applyQuaternion(directionalAttachmentQuaternion)
+        .add(directionalAttachmentOrigin)
+        .applyQuaternion(directionalRollQuaternion);
+      box.halfExtents.set(
+        bounds.halfExtents.x * Math.abs(directionalAttachmentScale.x),
+        bounds.halfExtents.y * Math.abs(directionalAttachmentScale.y),
+        bounds.halfExtents.z * Math.abs(directionalAttachmentScale.z),
+      );
+      directionalWorldQuaternion
+        .copy(directionalRollQuaternion)
+        .multiply(directionalAttachmentQuaternion);
+      box.quaternion.copy(directionalWorldQuaternion);
+      attachmentContactBoxes[proxyCount] = box;
+      proxyCount += 1;
     };
     attachments.forEach((visual) =>
-      addRecord(visual.userData.mashRecord as MashRecordV4 | undefined),
-    );
-    mashProxyRecords.forEach(({ record }) => addRecord(record));
-    directionalAttachmentCircles.length = circleCount;
-  };
-  const directionalRollRadius = (directionX: number, directionZ: number) =>
-    Math.min(
-      game.radius * MAX_ROLL_ENVELOPE_FACTOR,
-      directionalAttachmentEnvelopeXZ(
-        game.radius,
-        directionX,
-        directionZ,
-        directionalAttachmentCircles,
+      addRecord(
+        visual.userData.mashRecord as MashRecordV4 | undefined,
+        visual,
       ),
     );
+    mashProxyRecords.forEach(({ record }) => addRecord(record));
+    directionalAttachmentSpheres.length = proxyCount;
+    attachmentContactBoxes.length = proxyCount;
+  };
+  const coreContactRadius = () => visibleCoreRadiusFor(game.radius);
+  const directionalRollRadius = (directionX: number, directionZ: number) =>
+    directionalAttachmentEnvelopeXZ(
+      coreContactRadius(),
+      directionX,
+      directionZ,
+      directionalAttachmentSpheres,
+    );
+  const downwardRollSupport = () =>
+    directionalOrientedBoxEnvelope3D(
+      coreContactRadius(),
+      0,
+      -1,
+      0,
+      attachmentContactBoxes,
+    );
   const refreshEffectiveRollRadius = () => {
-    refreshDirectionalAttachmentCircles();
-    effectiveRollRadius = game.radius;
+    refreshDirectionalAttachments();
+    effectiveRollRadius = coreContactRadius();
     for (let sample = 0; sample < 16; sample += 1) {
       const angle = (sample / 16) * Math.PI * 2;
       effectiveRollRadius = Math.max(
@@ -6278,8 +6317,224 @@ export function mountGame(
     }
     rollRadiusClock = 0;
   };
+  let currentGroundSupportRadius = coreContactRadius();
+  currentPlayerSurfaceY = activeLiteralStage
+    ? literalPlayerSupportForStage(activeLiteralStage)
+    : literalPlayerSurfaceY;
+  let cameraTrackedPlayerHeight = currentPlayerSurfaceY + game.radius * 0.94;
+  const syncPlayerTransform = (dt: number, now: number) => {
+    const displayedScale = playerRoot.scale.x;
+    const hasSurface = worldSpecForEra(activeEra.name).surface !== "none";
+    currentPlayerSurfaceY =
+      activeLiteralStage && scaleTransitionStarted < 0
+        ? literalPlayerSupportForStage(activeLiteralStage)
+        : literalPlayerSurfaceY;
+    currentGroundSupportRadius = hasSurface
+      ? downwardRollSupport()
+      : coreContactRadius();
+    const targetHeight = hasSurface
+      ? currentPlayerSurfaceY + currentGroundSupportRadius * displayedScale
+      : currentPlayerSurfaceY +
+        game.radius * displayedScale * 0.94 +
+        (early ? Math.sin(now * 0.0017) * 0.035 : 0);
+    // This is the rigid body's actual contact center. Smoothing it creates a
+    // hovering collider that can pass over floor-level pickups; only the
+    // camera is allowed to ease after a lump rolls away.
+    const nextHeight = targetHeight;
+    playerRoot.position.set(game.x, nextHeight, game.z);
+    playerRoot.updateMatrixWorld(true);
+    return nextHeight;
+  };
   const desiredCamera = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
+  const playerContactCenter = new THREE.Vector3();
+  const pickupContactCenter = new THREE.Vector3();
+  const pickupContactHalfExtents = new THREE.Vector3();
+  const pickupContactQuaternion = new THREE.Quaternion();
+  const rollAxis = new THREE.Vector3();
+  const rollStepQuaternion = new THREE.Quaternion();
+  const integrateRollingDisplacement = (
+    travelledX: number,
+    travelledZ: number,
+  ) => {
+    const travelledDistance = Math.hypot(travelledX, travelledZ);
+    if (travelledDistance <= 0.000001) return;
+    const maxRollStepAngle = Math.PI / 24;
+    const maxRollSubsteps = 32;
+    let remainingDistance = travelledDistance;
+    rollAxis.set(
+      travelledZ / travelledDistance,
+      0,
+      -travelledX / travelledDistance,
+    );
+    for (
+      let rollStep = 0;
+      remainingDistance > 0.000001 && rollStep < maxRollSubsteps;
+      rollStep += 1
+    ) {
+      const rollingSupport = Math.max(
+        coreContactRadius(),
+        downwardRollSupport(),
+      );
+      const stepDistance = Math.min(
+        remainingDistance,
+        rollingSupport * maxRollStepAngle,
+      );
+      rollStepQuaternion.setFromAxisAngle(
+        rollAxis,
+        rollingAngleForDistance(stepDistance, rollingSupport),
+      );
+      // The no-slip axis is expressed in world/parent space, so compose on
+      // the left. Euler x/z increments are path- and order-dependent.
+      rollGroup.quaternion
+        .premultiply(rollStepQuaternion)
+        .normalize();
+      refreshDirectionalAttachments();
+      remainingDistance -= stepDistance;
+    }
+    if (remainingDistance > 0.000001) {
+      const rollingSupport = Math.max(
+        coreContactRadius(),
+        downwardRollSupport(),
+      );
+      rollStepQuaternion.setFromAxisAngle(
+        rollAxis,
+        rollingAngleForDistance(remainingDistance, rollingSupport),
+      );
+      rollGroup.quaternion
+        .premultiply(rollStepQuaternion)
+        .normalize();
+      refreshDirectionalAttachments();
+    }
+  };
+  const pickupContactBox: OrientedContactBox = {
+    center: pickupContactCenter,
+    halfExtents: pickupContactHalfExtents,
+    quaternion: pickupContactQuaternion,
+  };
+  const separationContactCenter = new THREE.Vector3();
+  const stickyBodyTouchesBoxAt = (
+    x: number,
+    z: number,
+    box: OrientedContactBox,
+  ) => {
+    separationContactCenter.set(x, playerRoot.position.y, z);
+    return stickyBodyIntersectsOrientedBox(
+      separationContactCenter,
+      coreContactRadius(),
+      attachmentContactBoxes,
+      box,
+    );
+  };
+  const separateStickyBodyFromBox = (
+    box: OrientedContactBox,
+    outwardX: number,
+    outwardZ: number,
+    maximumDistance: number,
+  ) => {
+    if (!stickyBodyTouchesBoxAt(game.x, game.z, box)) return false;
+    let directionLength = Math.hypot(outwardX, outwardZ);
+    if (directionLength < 0.000001) {
+      outwardX = Math.abs(game.vx) + Math.abs(game.vz) > 0.000001 ? -game.vx : 1;
+      outwardZ = Math.abs(game.vx) + Math.abs(game.vz) > 0.000001 ? -game.vz : 0;
+      directionLength = Math.hypot(outwardX, outwardZ);
+    }
+    const normalX = outwardX / directionLength;
+    const normalZ = outwardZ / directionLength;
+    const originX = game.x;
+    const originZ = game.z;
+    const limit = Math.max(
+      0.01,
+      maximumDistance + directionalRollRadius(-normalX, -normalZ),
+    );
+    let clearDistance = Math.min(0.01, limit);
+    while (
+      clearDistance < limit &&
+      stickyBodyTouchesBoxAt(
+        originX + normalX * clearDistance,
+        originZ + normalZ * clearDistance,
+        box,
+      )
+    ) {
+      clearDistance = Math.min(limit, clearDistance * 2);
+    }
+    if (
+      stickyBodyTouchesBoxAt(
+        originX + normalX * clearDistance,
+        originZ + normalZ * clearDistance,
+        box,
+      )
+    ) {
+      return false;
+    }
+    let penetratingDistance = 0;
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+      const candidateDistance = (penetratingDistance + clearDistance) / 2;
+      if (
+        stickyBodyTouchesBoxAt(
+          originX + normalX * candidateDistance,
+          originZ + normalZ * candidateDistance,
+          box,
+        )
+      ) {
+        penetratingDistance = candidateDistance;
+      } else {
+        clearDistance = candidateDistance;
+      }
+    }
+    game.x = originX + normalX * (clearDistance + 0.0001);
+    game.z = originZ + normalZ * (clearDistance + 0.0001);
+    const inwardVelocity = game.vx * normalX + game.vz * normalZ;
+    if (inwardVelocity < 0) {
+      game.vx -= inwardVelocity * normalX;
+      game.vz -= inwardVelocity * normalZ;
+    }
+    return true;
+  };
+  const resolveStickyBodyAgainstBox = (
+    box: OrientedContactBox,
+    outwardX: number,
+    outwardZ: number,
+    maximumDistance: number,
+    dt: number,
+    now: number,
+  ) => {
+    let resolved = false;
+    for (let iteration = 0; iteration < 4; iteration += 1) {
+      const beforeSeparationX = game.x;
+      const beforeSeparationZ = game.z;
+      if (
+        !separateStickyBodyFromBox(
+          box,
+          outwardX,
+          outwardZ,
+          maximumDistance,
+        )
+      ) {
+        return resolved;
+      }
+      resolved = true;
+      integrateRollingDisplacement(
+        game.x - beforeSeparationX,
+        game.z - beforeSeparationZ,
+      );
+      syncPlayerTransform(dt, now);
+      if (!stickyBodyTouchesBoxAt(game.x, game.z, box)) return true;
+    }
+    // A pathological long branch can rotate into the collider repeatedly.
+    // Finish with one non-rolling contact projection so the frame always ends
+    // physically clear instead of ratcheting or jittering next frame.
+    if (stickyBodyTouchesBoxAt(game.x, game.z, box)) {
+      separateStickyBodyFromBox(
+        box,
+        outwardX,
+        outwardZ,
+        maximumDistance,
+      );
+      syncPlayerTransform(dt, now);
+    }
+    return resolved;
+  };
   const farPickupDummy = new THREE.Object3D();
   const drawBudgetFrustum = new THREE.Frustum();
   const drawBudgetProjection = new THREE.Matrix4();
@@ -6441,6 +6696,8 @@ export function mountGame(
         game.vx = (game.vx / speed) * maxSpeed;
         game.vz = (game.vz / speed) * maxSpeed;
       }
+      const rollStartAbsoluteX = game.x + game.originX;
+      const rollStartAbsoluteZ = game.z + game.originZ;
       game.x += game.vx * dt;
       game.z += game.vz * dt;
       const colliderChunkSize = worldChunkSize(activeWorldKind);
@@ -6503,7 +6760,12 @@ export function mountGame(
         : activeWorldTopology === "finite"
           ? 0
           : game.z;
-      refreshDirectionalAttachmentCircles();
+      refreshDirectionalAttachments();
+      integrateRollingDisplacement(
+        game.x + game.originX - rollStartAbsoluteX,
+        game.z + game.originZ - rollStartAbsoluteZ,
+      );
+      syncPlayerTransform(dt, now);
       if (environmentGroup.visible) sceneryColliders.forEach((collider) => {
         const colliderX = colliderChunkX + collider.x;
         const colliderZ = colliderChunkZ + collider.z;
@@ -6519,24 +6781,48 @@ export function mountGame(
           contactDirection.x,
           contactDirection.z,
         );
-        const collision = resolveCircleAabbCollision(
+        const nearestX = THREE.MathUtils.clamp(
           game.x,
+          colliderX - collider.halfWidth,
+          colliderX + collider.halfWidth,
+        );
+        const nearestZ = THREE.MathUtils.clamp(
           game.z,
-          game.vx,
-          game.vz,
-          collisionEnvelope,
-          colliderX,
-          colliderZ,
+          colliderZ - collider.halfDepth,
+          colliderZ + collider.halfDepth,
+        );
+        if (
+          Math.hypot(nearestX - game.x, nearestZ - game.z) >
+          collisionEnvelope
+        ) {
+          return;
+        }
+        pickupContactCenter.set(colliderX, playerRoot.position.y, colliderZ);
+        pickupContactHalfExtents.set(
           collider.halfWidth,
+          1_000,
           collider.halfDepth,
         );
-        game.x = collision.x;
-        game.z = collision.z;
-        game.vx = collision.vx;
-        game.vz = collision.vz;
+        pickupContactQuaternion.identity();
+        const playerInsideCollider =
+          Math.abs(game.x - colliderX) <= collider.halfWidth &&
+          Math.abs(game.z - colliderZ) <= collider.halfDepth;
+        resolveStickyBodyAgainstBox(
+          pickupContactBox,
+          playerInsideCollider ? contactDirection.x : -contactDirection.x,
+          playerInsideCollider ? contactDirection.z : -contactDirection.z,
+          collisionEnvelope + Math.hypot(collider.halfWidth, collider.halfDepth),
+          dt,
+          now,
+        );
       });
-      rollGroup.rotation.x += (game.vz * dt) / Math.max(0.5, game.radius);
-      rollGroup.rotation.z -= (game.vx * dt) / Math.max(0.5, game.radius);
+      game.rollQuaternion = [
+        rollGroup.quaternion.x,
+        rollGroup.quaternion.y,
+        rollGroup.quaternion.z,
+        rollGroup.quaternion.w,
+      ];
+      syncPlayerTransform(dt, now);
 
       for (const pickup of pickups) {
         if (
@@ -6548,38 +6834,63 @@ export function mountGame(
         const entranceScale = pickupLifecycleScale(pickup, now);
         if (entranceScale < PICKUP_COLLISION_SCALE) continue;
         const collisionRadius = pickup.visualRadius * entranceScale;
+        const contactScale = pickup.size * entranceScale;
+        const contactBroadRadius = Math.max(
+          collisionRadius,
+          (pickup.contactCenter.length() + pickup.contactHalfExtents.length()) *
+            contactScale,
+        );
         const dx = pickup.root.position.x - game.x;
         const dz = pickup.root.position.z - game.z;
         const distance = Math.hypot(dx, dz);
         const collisionEnvelope = directionalRollRadius(dx, dz);
         if (
           labEra === null &&
-          distance < collisionEnvelope + collisionRadius
+          distance < collisionEnvelope + contactBroadRadius
         ) {
+          pickupContactQuaternion.copy(pickup.root.quaternion);
+          pickupContactCenter
+            .copy(pickup.contactCenter)
+            .multiplyScalar(contactScale)
+            .applyQuaternion(pickupContactQuaternion)
+            .add(pickup.root.position);
+          pickupContactHalfExtents
+            .copy(pickup.contactHalfExtents)
+            .multiplyScalar(contactScale);
+          playerContactCenter.set(game.x, playerRoot.position.y, game.z);
+          const physicalContact = stickyBodyIntersectsOrientedBox(
+            playerContactCenter,
+            coreContactRadius(),
+            attachmentContactBoxes,
+            pickupContactBox,
+          );
+          if (!physicalContact) continue;
           if (
             canCollectPickup(
               pickup.sourceEra,
               activeIndex,
-              pickup.visualRadius,
-              collisionEnvelope,
+              pickup.bulkRadius,
+              game.radius,
             )
           ) {
             collect(pickup, now);
             pickup.root.position.x = Number.POSITIVE_INFINITY;
           } else {
-            const collision = resolveCircularCollision(
-              game.x,
-              game.z,
-              game.vx,
-              game.vz,
-              pickup.root.position.x,
-              pickup.root.position.z,
-              collisionEnvelope + collisionRadius,
-            );
-            game.x = collision.x;
-            game.z = collision.z;
-            game.vx = collision.vx;
-            game.vz = collision.vz;
+            if (resolveStickyBodyAgainstBox(
+              pickupContactBox,
+              game.x - pickupContactCenter.x,
+              game.z - pickupContactCenter.z,
+              collisionEnvelope + contactBroadRadius,
+              dt,
+              now,
+            )) {
+              game.rollQuaternion = [
+                rollGroup.quaternion.x,
+                rollGroup.quaternion.y,
+                rollGroup.quaternion.z,
+                rollGroup.quaternion.w,
+              ];
+            }
             const newBlockerEncounter = now - lastBlockerContactAt > 1_000;
             lastBlockerContactAt = now;
             if (
@@ -6747,14 +7058,10 @@ export function mountGame(
         reconcilePickupQueue();
       }
     }
-    phaseEnd("simulation", simulationStartedAt);
-
     const displayedPlayerRadius = game.radius * playerRoot.scale.x;
-    const floatHeight =
-      literalPlayerSurfaceY +
-      displayedPlayerRadius * 0.94 +
-      (early ? Math.sin(now * 0.0017) * 0.035 : 0);
-    playerRoot.position.set(game.x, floatHeight, game.z);
+    refreshDirectionalAttachments();
+    const floatHeight = syncPlayerTransform(dt, now);
+    phaseEnd("simulation", simulationStartedAt);
     if (rollRadiusClock >= 0.12) refreshEffectiveRollRadius();
     const mashProjectedSize = projectedDiameterPixels(
       Math.max(displayedPlayerRadius, effectiveRollRadius) * 2,
@@ -6951,16 +7258,8 @@ export function mountGame(
       ballFaceMaterial.needsUpdate = true;
     }
     const mashPieceCount = visibleMashPieceCount();
-    const wobble = early ? 0.055 : Math.min(0.035, mashPieceCount * 0.0007);
-    const coreShare = coreShareFor(mashPieceCount);
-    coreMaterial.opacity = early
-      ? Math.max(0.08, 0.58 - mashPieceCount * 0.04)
-      : Math.max(0.1, 0.56 - mashPieceCount * 0.012);
-    core.scale.set(
-      game.radius * coreShare * (1 + Math.sin(now * 0.0021) * wobble),
-      game.radius * coreShare * (1 + Math.sin(now * 0.0027 + 1.3) * wobble),
-      game.radius * coreShare * (1 + Math.sin(now * 0.0019 + 2.4) * wobble),
-    );
+    coreMaterial.opacity = early ? 0.58 : 0.56;
+    core.scale.setScalar(game.radius);
     const nextFoamVisibility = early && mashPieceCount < 11;
     if (foamCluster.visible !== nextFoamVisibility) {
       foamCluster.visible = nextFoamVisibility;
@@ -7280,27 +7579,6 @@ export function mountGame(
     }
     phaseEnd("pickup-lod", pickupLodStartedAt);
 
-    let stickingPieceSettled = false;
-    for (let index = stickingPieces.length - 1; index >= 0; index -= 1) {
-      const piece = stickingPieces[index];
-      const progress = Math.min(1, (now - piece.startedAt) / 280);
-      const ease = 1 - (1 - progress) ** 3;
-      const pop = 0.9 + ease * 0.1 + Math.sin(progress * Math.PI) * 0.055;
-      piece.visual.position.lerpVectors(
-        piece.startPosition,
-        piece.targetPosition,
-        ease,
-      );
-      piece.visual.scale.copy(piece.targetScale).multiplyScalar(pop);
-      if (progress >= 1) {
-        piece.visual.position.copy(piece.targetPosition);
-        piece.visual.scale.copy(piece.targetScale);
-        stickingPieces.splice(index, 1);
-        stickingPieceSettled = true;
-      }
-    }
-    if (stickingPieceSettled) collapseRichMashToBudget();
-
     let popBurstOpacity = 0;
     for (let index = popBursts.length - 1; index >= 0; index -= 1) {
       const burst = popBursts[index];
@@ -7333,6 +7611,15 @@ export function mountGame(
     }
 
     const mobileView = isCompactView(width);
+    cameraTrackedPlayerHeight =
+      cameraTrackedPlayerHeight <= 0
+        ? floatHeight
+        : THREE.MathUtils.damp(
+            cameraTrackedPlayerHeight,
+            floatHeight,
+            6,
+            dt,
+          );
     // A learning transition briefly overshoots the rendered ball for delight,
     // but that cosmetic scale must not lengthen the physical chase arm beyond
     // the finite room it is depicting.
@@ -7342,7 +7629,7 @@ export function mountGame(
         : displayedPlayerRadius;
     desiredCamera.set(
       game.x + game.vx * 0.24 * game.lens,
-      floatHeight +
+      cameraTrackedPlayerHeight +
         cameraFramingRadius * (mobileView ? 6.6 : 6.05) * game.lens,
       game.z +
         cameraFramingRadius * (mobileView ? 11.8 : 10.6) * game.lens,
@@ -7384,21 +7671,26 @@ export function mountGame(
         },
       ).region;
       const cameraInset = 0.4;
+      const cameraApron =
+        activeLiteralStage.id === "microscope-slide" ||
+        activeLiteralStage.id === "tabletop"
+          ? cameraFramingRadius * (mobileView ? 12.2 : 11) * game.lens
+          : 0;
       camera.position.x = THREE.MathUtils.clamp(
         camera.position.x,
-        playerRegion.minX + cameraInset,
-        playerRegion.maxX - cameraInset,
+        playerRegion.minX + cameraInset - cameraApron,
+        playerRegion.maxX - cameraInset + cameraApron,
       );
       camera.position.z = THREE.MathUtils.clamp(
         camera.position.z,
-        playerRegion.minZ + cameraInset,
-        playerRegion.maxZ - cameraInset,
+        playerRegion.minZ + cameraInset - cameraApron,
+        playerRegion.maxZ - cameraInset + cameraApron,
       );
     }
     cameraTarget.set(
       game.x,
-      literalPlayerSurfaceY +
-        (floatHeight - literalPlayerSurfaceY) * 0.82,
+      currentPlayerSurfaceY +
+        (cameraTrackedPlayerHeight - currentPlayerSurfaceY) * 0.82,
       game.z - 0.7,
     );
     camera.lookAt(cameraTarget);

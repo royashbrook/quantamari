@@ -179,9 +179,9 @@ export const literalSupportBoundaries = (
 };
 
 /**
- * The protected lane is sized for the largest supported rolling envelope, not
- * merely the bare core. Large attached props can therefore pass through the
- * authored room exit without the invisible-wall feeling of a core-sized gap.
+ * The protected lane is wider than the bare core's normal growth envelope.
+ * Unusually long, honestly simulated attachments can still require the player
+ * to turn, collect differently, or grow before passing the authored room exit.
  */
 export const LITERAL_DOORWAY_CLEAR_WIDTH = 10;
 export const LITERAL_ROUTE_HALF_WIDTH = LITERAL_DOORWAY_CLEAR_WIDTH / 2;
@@ -201,8 +201,8 @@ export const LITERAL_STAGES: readonly LiteralStage[] = [
       "microbe-meadow",
       "fiber-pollen",
     ],
-    nearZ: 32,
-    farZ: 20,
+    nearZ: 34,
+    farZ: 18,
   },
   {
     id: "tabletop",
@@ -214,7 +214,7 @@ export const LITERAL_STAGES: readonly LiteralStage[] = [
       "pocket-world",
       "tabletop-trek",
     ],
-    nearZ: 20,
+    nearZ: 18,
     farZ: 4,
   },
   {
@@ -263,7 +263,7 @@ export const LITERAL_ARCHITECTURE: readonly LiteralArchitecturePrimitive[] = [
     primitive: "box",
     collision: "support",
     position: [0, 5.15, 26],
-    dimensions: [11, 0.08, 8],
+    dimensions: [32, 0.08, 28],
     rotation: [0, 0, 0],
     visibleIn: ["microscope-slide", "tabletop"],
   },
@@ -273,7 +273,7 @@ export const LITERAL_ARCHITECTURE: readonly LiteralArchitecturePrimitive[] = [
     semanticIdentity: "microscope-stand",
     primitive: "box",
     collision: "barrier",
-    position: [-11.5, 8.2, 27],
+    position: [-18, 8.2, 27],
     dimensions: [4, 6.4, 5],
     rotation: [0, 0, 0],
     visibleIn: ["microscope-slide", "tabletop"],
@@ -284,7 +284,7 @@ export const LITERAL_ARCHITECTURE: readonly LiteralArchitecturePrimitive[] = [
     semanticIdentity: "microscope-objective",
     primitive: "cylinder",
     collision: "barrier",
-    position: [-8, 7.2, 25],
+    position: [-18.5, 7.2, 25],
     dimensions: [2.5, 4, 2.5],
     rotation: [0, 0, 0],
     visibleIn: ["microscope-slide", "tabletop"],
@@ -296,7 +296,18 @@ export const LITERAL_ARCHITECTURE: readonly LiteralArchitecturePrimitive[] = [
     primitive: "box",
     collision: "support",
     position: [0, 4.8, 18],
-    dimensions: [36, 0.6, 32],
+    dimensions: [40, 0.6, 44],
+    rotation: [0, 0, 0],
+    visibleIn: ["microscope-slide", "tabletop"],
+  },
+  {
+    id: "architecture/study-camera-apron",
+    label: "Non-playable study camera apron",
+    semanticIdentity: "study-work-surface-camera-apron",
+    primitive: "box",
+    collision: "none",
+    position: [0, 4.8, 50],
+    dimensions: [40, 0.6, 20],
     rotation: [0, 0, 0],
     visibleIn: ["microscope-slide", "tabletop"],
   },
@@ -423,7 +434,7 @@ export const LITERAL_PROP_ANCHORS: readonly LiteralPropAnchor[] = [
     id: "prop/slide-pollen",
     curioId: "fiber-pollen/pollen-grain",
     curioName: "pollen grain",
-    position: [-4, 5.3, 28.8],
+    position: [-10, 5.3, 31],
     rotation: [0, 0.4, 0],
     footprintRadius: 0.35,
     visibleIn: ["microscope-slide"],
@@ -433,7 +444,7 @@ export const LITERAL_PROP_ANCHORS: readonly LiteralPropAnchor[] = [
     id: "prop/slide-tardigrade",
     curioId: "fiber-pollen/tardigrade",
     curioName: "tardigrade",
-    position: [4, 5.3, 25],
+    position: [10, 5.3, 26],
     rotation: [0, -0.65, 0],
     footprintRadius: 0.5,
     visibleIn: ["microscope-slide"],
@@ -443,7 +454,7 @@ export const LITERAL_PROP_ANCHORS: readonly LiteralPropAnchor[] = [
     id: "prop/slide-hair-fiber",
     curioId: "fiber-pollen/hair-fiber",
     curioName: "hair fiber",
-    position: [-3.8, 5.25, 22.8],
+    position: [-9, 5.25, 20],
     rotation: [0, 1.1, 0],
     footprintRadius: 0.65,
     visibleIn: ["microscope-slide"],
@@ -453,7 +464,7 @@ export const LITERAL_PROP_ANCHORS: readonly LiteralPropAnchor[] = [
     id: "prop/tabletop-crumb",
     curioId: "dust-country/crumb",
     curioName: "crumb",
-    position: [-6, 5.2, 18],
+    position: [-6, 5.2, 16],
     rotation: [0, 0.2, 0],
     footprintRadius: 0.45,
     visibleIn: ["tabletop"],
@@ -613,7 +624,7 @@ export const LITERAL_STAGE_TRANSITIONS = [
   {
     from: "microscope-slide",
     to: "tabletop",
-    atZ: 20,
+    atZ: 18,
     semantic: "scale-reveal",
   },
   {

@@ -33,6 +33,8 @@ export type SavedLiteralSceneOrigin = {
   z: number;
 };
 
+export type RollQuaternion = [number, number, number, number];
+
 export type SaveDataV4 = {
   version: 4;
   mode: GameMode;
@@ -42,6 +44,8 @@ export type SaveDataV4 = {
   unitemizedPicked: number;
   x: number;
   z: number;
+  /** Normalized rolling-body orientation; preserves which lump is underfoot. */
+  rollQuaternion: RollQuaternion;
   zooms: number;
   /** Completed full journeys through every layer. Absent in pre-v3.0 saves. */
   cycles: number;
@@ -188,6 +192,16 @@ function tuple3(value: unknown, positive = false): [number, number, number] | nu
   return numbers as [number, number, number];
 }
 
+function normalizedQuaternion(value: unknown): RollQuaternion {
+  if (!Array.isArray(value) || value.length !== 4) return [0, 0, 0, 1];
+  const numbers = value.map(finiteNumber);
+  if (numbers.some((number) => number === null)) return [0, 0, 0, 1];
+  const [x, y, z, w] = numbers as RollQuaternion;
+  const length = Math.hypot(x, y, z, w);
+  if (!Number.isFinite(length) || length <= 1e-8) return [0, 0, 0, 1];
+  return [x / length, y / length, z / length, w / length];
+}
+
 function collectionKey(eraId: string, curioId: string) {
   return `${eraId}\u0000${curioId}`;
 }
@@ -267,6 +281,7 @@ export function createSaveData(snapshot: SaveSnapshot): SaveDataV4 {
   return {
     ...snapshot,
     version: 4,
+    rollQuaternion: normalizedQuaternion(snapshot.rollQuaternion),
     mash: snapshot.mash.slice(-96),
     collectedAuthoredAnchors: [
       ...new Set(snapshot.collectedAuthoredAnchors ?? []),
@@ -438,6 +453,7 @@ function sanitizeV4(
     unitemizedPicked,
     x: boundedNumber(value.x, 0),
     z: boundedNumber(value.z, 0),
+    rollQuaternion: normalizedQuaternion(value.rollQuaternion),
     zooms: nonnegativeInteger(value.zooms),
     cycles: nonnegativeInteger(value.cycles),
     sound: typeof value.sound === "boolean" ? value.sound : true,
@@ -535,6 +551,7 @@ function legacySaveFields(
     unitemizedPicked: Math.max(0, picked - itemized),
     x: boundedNumber(value.x, 0),
     z: boundedNumber(value.z, 0),
+    rollQuaternion: [0, 0, 0, 1],
     zooms: nonnegativeInteger(value.zooms),
     cycles: 0,
     sound: typeof value.sound === "boolean" ? value.sound : true,

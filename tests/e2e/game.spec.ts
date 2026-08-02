@@ -165,6 +165,8 @@ type PerformanceSnapshot = {
       attachmentScale: number;
       attachmentDistance: number;
       effectiveRadius: number;
+      contactCoreRadius: number;
+      contactProxyCount: number;
       attachmentIds: string[];
       attachmentDistances: number[];
     };
@@ -207,6 +209,8 @@ type PerformanceSnapshot = {
       y: number;
       z: number;
       surfaceY: number;
+      groundSupportRadius: number;
+      rollQuaternion: [number, number, number, number];
       literalPlayableClearance: number;
       cameraX: number;
       cameraY: number;
@@ -2353,7 +2357,9 @@ test("long game crosses a layer without a skip animation or size pop", async ({
           ? {
               extended:
                 snapshot.runtime.representations.effectiveRadius >
-                snapshot.runtime.radius * 1.5,
+                snapshot.runtime.representations.contactCoreRadius * 1.2,
+              physical:
+                snapshot.runtime.representations.contactProxyCount === 1,
               proxy:
                 snapshot.runtime.representations.attachmentProxyActive,
             }
@@ -2361,7 +2367,7 @@ test("long game crosses a layer without a skip animation or size pop", async ({
       },
       { timeout: 15_000 },
     )
-    .toEqual({ extended: true, proxy: false });
+    .toEqual({ extended: true, physical: true, proxy: false });
   await expect
     .poll(
       async () =>
@@ -3011,6 +3017,10 @@ test("rolling into an authored room prop attaches it and reload restores one ide
     { x: shoe!.x, z: shoe!.z + approachDistance },
   );
   expect(positioned).not.toBeNull();
+  await page.waitForTimeout(450);
+  const separated = (await readPerformanceDiagnostics(page))?.runtime;
+  expect(separated?.pickups.authoredAnchorIds).toContain(shoeAnchorId);
+  expect(separated?.representations.attachmentIds).not.toContain(shoeCurioId);
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
@@ -3034,6 +3044,20 @@ test("rolling into an authored room prop attaches it and reload restores one ide
     await page.keyboard.up("w");
   }
 
+  await page.waitForTimeout(350);
+  await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          snapshot: () => PerformanceSnapshot;
+          setPlayerPosition: (x: number, z: number) => unknown;
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__;
+    const player = diagnostics?.snapshot().runtime.player;
+    if (player) diagnostics?.setPlayerPosition(player.x, player.z);
+  });
+  await page.waitForTimeout(100);
   const afterContact = await readPerformanceDiagnostics(page);
   expect(
     Math.hypot(
@@ -3046,6 +3070,17 @@ test("rolling into an authored room prop attaches it and reload restores one ide
   );
   expect(afterContact?.runtime.representations.attachmentDistances).toEqual(
     expect.arrayContaining([expect.any(Number)]),
+  );
+  expect(afterContact?.runtime.representations.contactProxyCount).toBeGreaterThan(
+    0,
+  );
+  expect(afterContact?.runtime.player.groundSupportRadius).toBeGreaterThanOrEqual(
+    afterContact?.runtime.representations.contactCoreRadius ?? Infinity,
+  );
+  expect(afterContact?.runtime.player.y).toBeCloseTo(
+    (afterContact?.runtime.player.surfaceY ?? 0) +
+      (afterContact?.runtime.player.groundSupportRadius ?? 0),
+    4,
   );
   const literalSceneOrigin = afterContact?.runtime.world.literalSceneOrigin;
   expect(literalSceneOrigin).not.toBeNull();
@@ -3064,13 +3099,28 @@ test("rolling into an authored room prop attaches it and reload restores one ide
           (entry: { curioId?: string }) => entry.curioId === curioId,
         )?.count ?? 0,
       literalSceneOrigin: save.literalSceneOrigin ?? null,
+      rollQuaternion: save.rollQuaternion ?? null,
     };
   }, shoeCurioId);
-  expect(persisted).toEqual({
+  expect({
+    mashCount: persisted.mashCount,
+    collectionCount: persisted.collectionCount,
+    literalSceneOrigin: persisted.literalSceneOrigin,
+  }).toEqual({
     mashCount: 1,
     collectionCount: 1,
     literalSceneOrigin,
   });
+  expect(
+    Math.abs(
+      persisted.rollQuaternion.reduce(
+        (sum: number, value: number, index: number) =>
+          sum +
+          value * (afterContact?.runtime.player.rollQuaternion[index] ?? 0),
+        0,
+      ),
+    ),
+  ).toBeGreaterThan(0.9999);
 
   await page.reload();
   await page.getByRole("button", { name: "Play Learning Tour" }).click();
@@ -3087,6 +3137,22 @@ test("rolling into an authored room prop attaches it and reload restores one ide
   const restored = (await readPerformanceDiagnostics(page))?.runtime;
   expect(restored).toBeDefined();
   expect(restored!.world.literalSceneOrigin).toEqual(literalSceneOrigin);
+  const orientationDot = Math.abs(
+    restored!.player.rollQuaternion.reduce(
+      (sum, value, index) =>
+        sum + value * (afterContact?.runtime.player.rollQuaternion[index] ?? 0),
+      0,
+    ),
+  );
+  expect(orientationDot).toBeGreaterThan(0.9999);
+  expect(restored!.player.groundSupportRadius).toBeCloseTo(
+    afterContact!.runtime.player.groundSupportRadius,
+    2,
+  );
+  expect(restored!.player.y).toBeCloseTo(
+    restored!.player.surfaceY + restored!.player.groundSupportRadius,
+    4,
+  );
   expect({
     attachmentCopies: restored!.representations.attachmentIds.filter(
       (id) => id === shoeCurioId,
@@ -3096,10 +3162,83 @@ test("rolling into an authored room prop attaches it and reload restores one ide
   }).toEqual({ attachmentCopies: 1, anchorRespawned: false });
 });
 
+test("field attachments keep their grown transforms through save and reload", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await enablePerformanceDiagnostics(page, "balanced");
+  await begin(page);
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups.queued,
+      { timeout: 30_000 },
+    )
+    .toBe(0);
+
+  const collectCurrent = () =>
+    page.evaluate(() =>
+      (window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectCurrentPickup: () => string | null;
+        };
+      }).__QUARKATAMARI_PERFORMANCE__?.collectCurrentPickup() ?? null,
+    );
+  expect(await collectCurrent()).not.toBeNull();
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.representations
+          .attachments,
+    )
+    .toBe(1);
+  const firstDistance =
+    (await readPerformanceDiagnostics(page))?.runtime.representations
+      .attachmentDistances[0] ?? 0;
+
+  expect(await collectCurrent()).not.toBeNull();
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.representations
+          .attachments,
+    )
+    .toBe(2);
+  const grown = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(grown.representations.attachmentDistances[0]).toBeGreaterThan(
+    firstDistance,
+  );
+
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  const persisted = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("everything-roll-save-v4") ?? "{}"),
+  );
+  expect(
+    persisted.mash.every(
+      (record: { mergedInside?: boolean }) => record.mergedInside === false,
+    ),
+  ).toBe(true);
+
+  await page.reload();
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+  const restored = (await readPerformanceDiagnostics(page))!.runtime;
+  expect(restored.representations.attachmentDistances).toHaveLength(2);
+  restored.representations.attachmentDistances.forEach((distance, index) => {
+    expect(distance).toBeCloseTo(
+      grown.representations.attachmentDistances[index],
+      5,
+    );
+  });
+});
+
 test("a cross-stage learning shift keeps shared literal architecture fixed", async ({
   page,
 }) => {
   test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
   await enablePerformanceDiagnostics(page, "balanced");
   await captureThreeScenes(page);
   await seedLearningEra(page, "fiber-pollen", 11);
@@ -3127,16 +3266,75 @@ test("a cross-stage learning shift keeps shared literal architecture fixed", asy
   expect(
     before!.world.literalPlayableBounds!.maxX -
       before!.world.literalPlayableBounds!.minX,
-  ).toBeCloseTo(11, 3);
+  ).toBeCloseTo(32, 3);
   expect(
     before!.world.literalPlayableBounds!.maxZ -
       before!.world.literalPlayableBounds!.minZ,
-  ).toBeCloseTo(8, 3);
+  ).toBeCloseTo(28, 3);
+  expect(before?.pickups.current).toBe(before?.pickups.target);
+  expect(before?.pickups.outsidePlayable).toBe(0);
+  expect(before?.player.cameraLiteralPlayableClearance).toBeGreaterThanOrEqual(
+    0.39,
+  );
+  expect(before?.player.projectedDiameter).toBeLessThan(155);
+  const literalOrigin = before!.world.literalSceneOrigin!;
+  await page.evaluate(
+    ({ x, z }) => {
+      const diagnostics = (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            setPlayerPosition: (nextX: number, nextZ: number) => unknown;
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__;
+      diagnostics?.setPlayerPosition(x, z);
+    },
+    { x: literalOrigin.x, z: literalOrigin.z + 12 },
+  );
+  await expect
+    .poll(
+      async () => {
+        const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+        return runtime
+          ? {
+              framed: runtime.player.projectedDiameter < 155,
+              chaseDistance: runtime.player.cameraDistance > 12,
+            }
+          : null;
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({ framed: true, chaseDistance: true });
+  await page.evaluate(
+    ({ x, z }) => {
+      const diagnostics = (
+        window as typeof window & {
+          __QUARKATAMARI_PERFORMANCE__?: {
+            setPlayerPosition: (nextX: number, nextZ: number) => unknown;
+          };
+        }
+      ).__QUARKATAMARI_PERFORMANCE__;
+      diagnostics?.setPlayerPosition(x, z);
+    },
+    literalOrigin,
+  );
+  expect(before?.pickups.authoredAnchorIds).toEqual(
+    expect.arrayContaining([
+      "prop/slide-pollen",
+      "prop/slide-tardigrade",
+      "prop/slide-hair-fiber",
+    ]),
+  );
   const sharedSurfaceBefore = await readSceneObjectWorldPosition(
     page,
     "literal:architecture/study-work-surface",
   );
+  const sharedSlideBefore = await readSceneObjectWorldPosition(
+    page,
+    "literal:architecture/glass-specimen-slide",
+  );
   expect(sharedSurfaceBefore).not.toBeNull();
+  expect(sharedSlideBefore).not.toBeNull();
 
   const triggered = await page.evaluate(() => {
     const diagnostics = (
@@ -3173,6 +3371,8 @@ test("a cross-stage learning shift keeps shared literal architecture fixed", asy
     .toEqual({ era: 12, transition: false });
   const after = (await readPerformanceDiagnostics(page))?.runtime;
   expect(after?.world.literalStage).toBe("tabletop");
+  expect(after?.player.surfaceY).toBeCloseTo(5.19, 3);
+  expect(after?.player.y).toBeGreaterThan(5.19);
   expect(after?.world.literalSceneOrigin).toEqual(
     before?.world.literalSceneOrigin,
   );
@@ -3183,6 +3383,12 @@ test("a cross-stage learning shift keeps shared literal architecture fixed", asy
       "literal:architecture/study-work-surface",
     ),
   ).toEqual(sharedSurfaceBefore);
+  expect(
+    await readSceneObjectWorldPosition(
+      page,
+      "literal:architecture/glass-specimen-slide",
+    ),
+  ).toEqual(sharedSlideBefore);
 });
 
 test("the tabletop surface drops the player into a reachable fixed room", async ({
@@ -3212,9 +3418,15 @@ test("the tabletop surface drops the player into a reachable fixed room", async 
     ).__QUARKATAMARI_PERFORMANCE__;
     diagnostics?.setPlayerPosition(0, 20);
   });
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.player.surfaceY,
+    )
+    .toBeCloseTo(5.19, 3);
   const before = (await readPerformanceDiagnostics(page))!.runtime;
   expect(before.world.literalStage).toBe("tabletop");
-  expect(before.player.surfaceY).toBeCloseTo(5.1, 3);
+  expect(before.player.surfaceY).toBeCloseTo(5.19, 3);
   expect(before.pickups.genericMinBaseY).toBeGreaterThan(4.9);
   expect(before.player.literalPlayableClearance).toBeGreaterThanOrEqual(0);
   const roomFloorBefore = await readSceneObjectWorldPosition(
@@ -3240,9 +3452,8 @@ test("the tabletop surface drops the player into a reachable fixed room", async 
   expect(during.transitionActive).toBe(true);
   expect(during.player.surfaceY).toBeGreaterThan(0.02);
   expect(during.player.surfaceY).toBeLessThan(5.1);
-  expect(during.player.cameraLiteralPlayableClearance).toBeGreaterThanOrEqual(
-    0.39,
-  );
+  expect(during.player.cameraDistance).toBeGreaterThan(8);
+  expect(during.player.projectedDiameter).toBeLessThan(220);
   expect(
     await readSceneObjectWorldPosition(
       page,
