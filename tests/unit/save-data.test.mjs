@@ -131,6 +131,44 @@ test("v4 loading keeps valid records while dropping malformed records", () => {
   assert.equal(loaded?.save.cycles, 0);
 });
 
+test("aggregate layout markers round trip while unmarked v4 mash stays detectable", () => {
+  const raw = serializeSaveData(
+    createSaveData({
+      mode: "journey",
+      eraId: "atomic-cloud",
+      progress: 0.25,
+      picked: 3,
+      unitemizedPicked: 0,
+      x: 0,
+      z: 0,
+      rollQuaternion: [0, 0, 0, 1],
+      zooms: 2,
+      cycles: 0,
+      sound: true,
+      mash: [
+        mash({ aggregateLayout: 1 }),
+        mash({ position: [4, 5, 6] }),
+        mash({ position: [7, 8, 9], aggregateLayout: 2 }),
+      ],
+      collection: [],
+    }),
+  );
+
+  const loaded = loadSaveCandidates({ v4: raw }, catalog);
+  assert.equal(loaded?.sourceVersion, 4);
+  assert.equal(loaded?.save.mash[0].aggregateLayout, 1);
+  assert.equal(
+    Object.hasOwn(loaded?.save.mash[1] ?? {}, "aggregateLayout"),
+    false,
+    "an unmarked released-v4 record must remain distinguishable for migration",
+  );
+  assert.equal(
+    Object.hasOwn(loaded?.save.mash[2] ?? {}, "aggregateLayout"),
+    false,
+    "unknown marker revisions must not masquerade as the supported layout",
+  );
+});
+
 test("completed journey cycles survive a save round trip and legacy saves default to zero", () => {
   const snapshot = {
     mode: "journey",
