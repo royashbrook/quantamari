@@ -1680,7 +1680,7 @@
   <title>Quantamari — Roll up the scale of everything</title>
   <meta
     name="description"
-    content="A browser-only rolling game from the theory below known physics to the fiction beyond the observable universe."
+    content="A browser-only rolling game from the theory below known physics to the fiction beyond the observable universe. No ads, no lives, no timers, nothing to buy, no accounts, no cookies. Works offline."
   />
   <meta name="application-name" content="Quantamari" />
   <link rel="canonical" href="https://quantamari.royashbrook.com/" />
