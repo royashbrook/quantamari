@@ -2035,13 +2035,23 @@ kbd {
 
   .fact-card {
     grid-template-columns: 36px minmax(0, 1fr);
-    padding: 6px 10px;
+    padding: 5px 10px;
   }
 
   .find-token {
     width: 34px;
     height: 34px;
     font-size: 15px;
+  }
+
+  /* 11px labels have to fit the same 66px landscape card the 8px ones did. */
+  .fact-kicker {
+    line-height: 1;
+  }
+
+  .fact-card h2,
+  .fact-card p {
+    margin-top: 0;
   }
 
   .fact-card p {
