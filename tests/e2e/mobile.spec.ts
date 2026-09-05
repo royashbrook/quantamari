@@ -59,6 +59,26 @@ async function closeGeometry(locator: Locator) {
   });
 }
 
+// Samples the centre and the 4px-inset corners and edge midpoints of the
+// element's box; returns the points that resolve to something else.
+async function hitTestsOwnBox(locator: Locator) {
+  return locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const inset = 4;
+    const xs = [rect.left + inset, rect.left + rect.width / 2, rect.right - inset];
+    const ys = [rect.top + inset, rect.top + rect.height / 2, rect.bottom - inset];
+    const misses: string[] = [];
+    for (const x of xs) {
+      for (const y of ys) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit === element || (hit && element.contains(hit))) continue;
+        misses.push(`${Math.round(x)},${Math.round(y)} -> ${hit?.tagName ?? "none"}`);
+      }
+    }
+    return misses;
+  });
+}
+
 async function collectCurrentPickup(page: Page) {
   let pickedName: string | null = null;
   await expect
@@ -1052,5 +1072,95 @@ test("iPhone keeps the previous layer underfoot while backdrops recede", async (
         scene?.foundationRugOffsetY,
       );
     }
+  }
+});
+
+test("iPhone 14 Pro Max reads every label at 11px and taps the credit links at 44px", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 430, height: 932 });
+  await page.addInitScript(({ coachKey, installedValue }) => {
+    (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
+      }
+    ).__QUARKATAMARI_PERFORMANCE_REQUESTED__ = true;
+    localStorage.setItem(coachKey, installedValue);
+  }, {
+    coachKey: INSTALL_COACH_STORAGE_KEY,
+    installedValue: INSTALL_COACH_INSTALLED_VALUE,
+  });
+  await page.goto(appPath);
+
+  const fontSizes = (selectors: string[]) =>
+    page.evaluate(
+      (list) =>
+        list.map((selector) => {
+          const element = document.querySelector<HTMLElement>(selector);
+          return {
+            selector,
+            size: element
+              ? Number.parseFloat(getComputedStyle(element).fontSize)
+              : null,
+          };
+        }),
+      selectors,
+    );
+  const expectReadable = async (selectors: string[]) => {
+    for (const { selector, size } of await fontSizes(selectors)) {
+      expect(size, selector).not.toBeNull();
+      expect(size, selector).toBeGreaterThanOrEqual(11);
+    }
+  };
+
+  await expectReadable([
+    ".welcome-foot",
+    ".mode-card-kicker",
+    ".mode-card p",
+    ".mode-play",
+  ]);
+
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.locator(".touch-tip")).toBeVisible();
+  await expectReadable([
+    ".stats small",
+    ".frontier small",
+    ".frontier b",
+    ".progress-value",
+    ".touch-tip",
+    ".mobile-current",
+  ]);
+
+  await collectCurrentPickup(page);
+  await expect(page.locator(".fact-card")).toBeVisible();
+  await expectReadable([".fact-kicker", ".fact-card h2", ".fact-card p"]);
+
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  const menu = page.getByRole("dialog", { name: "Game menu" });
+  await menu.getByRole("button", { name: "About Quantamari" }).click();
+  const links = [
+    menu.getByRole("link", { name: "GitHub" }),
+    menu.getByRole("link", { name: "roy" }),
+    menu.getByRole("link", { name: "ai" }),
+    menu.getByRole("link", { name: "sponsor me" }),
+  ];
+  const boxes = [];
+  for (const link of links) {
+    await expect(link).toBeVisible();
+    const geometry = await closeGeometry(link);
+    expect(geometry.height).toBeGreaterThanOrEqual(44);
+    expect(geometry.inside).toBe(true);
+    // Every sample in the link's own box lands on the link, so no neighbour
+    // or button steals the edge of the tap.
+    expect(await hitTestsOwnBox(link)).toEqual([]);
+    boxes.push(geometry.rect);
+  }
+  // The three credit links stay on one row at 430px.
+  for (const rect of boxes.slice(1)) {
+    expect(Math.abs(rect.top - boxes[1].top)).toBeLessThan(2);
   }
 });

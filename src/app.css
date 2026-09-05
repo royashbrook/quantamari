@@ -1469,7 +1469,11 @@ kbd {
 
   .lab-banner button {
     height: 44px;
-    font-size: 10px;
+    font-size: 11px;
+  }
+
+  .lab-banner {
+    font-size: 11px;
   }
 
   .lab-banner > span {
@@ -1556,7 +1560,7 @@ kbd {
     display: block;
     overflow: hidden;
     color: #4b2868;
-    font: 800 9px var(--font-geist-mono), monospace;
+    font: 800 11px var(--font-geist-mono), monospace;
     letter-spacing: 0.02em;
     text-overflow: ellipsis;
     text-transform: uppercase;
@@ -1582,7 +1586,7 @@ kbd {
     gap: 8px;
     margin-top: 0;
     color: #59406e;
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .frontier {
@@ -1630,7 +1634,7 @@ kbd {
     flex: 0 1 auto;
     align-items: baseline;
     flex-direction: row;
-    gap: 2px;
+    gap: 4px;
     overflow: hidden;
   }
 
@@ -1655,17 +1659,17 @@ kbd {
   }
 
   .grow-action small {
-    font-size: 6px;
+    font-size: 11px;
   }
 
   .grow-action > span:first-child b {
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .grow-choice {
     max-width: 44%;
     overflow: hidden;
-    font-size: 6px;
+    font-size: 11px;
     text-overflow: ellipsis;
   }
 
@@ -1677,7 +1681,7 @@ kbd {
   .stats small {
     margin-top: 0;
     color: #4b2868;
-    font-size: 8px;
+    font-size: 11px;
     letter-spacing: 0.02em;
     white-space: nowrap;
   }
@@ -1738,7 +1742,11 @@ kbd {
   .fact-kicker {
     grid-column: 2;
     grid-row: 1;
-    font-size: 8px;
+    font-size: 11px;
+  }
+
+  .fact-kicker b {
+    font-size: 11px;
   }
 
   .fact-card h2 {
@@ -1757,7 +1765,7 @@ kbd {
     grid-row: 4;
     margin-top: 1px;
     overflow: hidden;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1.25;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -1770,7 +1778,7 @@ kbd {
     width: auto;
     margin-top: 2px;
     overflow: hidden;
-    font-size: 6.5px;
+    font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1792,15 +1800,17 @@ kbd {
     border-width: 2px;
     border-radius: 16px 14px 18px 14px;
     box-shadow: 0 4px 0 #4b2868, 0 10px 24px rgba(6, 4, 22, 0.2);
-    font-size: 9px;
+    font-size: 11px;
     transform: none;
-    white-space: nowrap;
+    white-space: normal;
     animation: bottom-notice-in 220ms ease-out both;
   }
 
   .toast .toast-text {
+    display: -webkit-box;
     overflow: hidden;
-    text-overflow: ellipsis;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .controls {
@@ -1814,7 +1824,7 @@ kbd {
     grid-row: 4;
     max-width: none;
     color: rgba(52, 32, 78, 0.86);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 750;
     letter-spacing: 0.08em;
     text-align: center;
@@ -1847,7 +1857,7 @@ kbd {
     gap: 6px;
     margin-top: 12px;
     flex-wrap: wrap;
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .mode-cards {
@@ -1882,7 +1892,7 @@ kbd {
   }
 
   .mode-card-kicker {
-    font-size: 7px;
+    font-size: 11px;
   }
 
   .mode-card h2 {
@@ -1892,7 +1902,7 @@ kbd {
 
   .mode-card p {
     margin-top: 3px;
-    font-size: 9px;
+    font-size: 11px;
     line-height: 1.25;
   }
 
@@ -1901,6 +1911,7 @@ kbd {
     grid-row: 1;
     min-height: 44px;
     padding: 6px 7px 6px 10px;
+    font-size: 11px;
   }
 
   .mode-button-detail {
@@ -1932,7 +1943,7 @@ kbd {
   }
 
   .atlas > header p {
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .atlas-mode {
@@ -1946,13 +1957,13 @@ kbd {
   .atlas-mode button {
     min-height: 44px;
     padding: 0 14px;
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .era-actions button {
     min-height: 44px;
     padding: 0 14px;
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .scale-scrubber input {
@@ -1970,7 +1981,7 @@ kbd {
   }
 
   .scale-scrubber > div {
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .scale-scrubber > div b {
@@ -2025,13 +2036,23 @@ kbd {
 
   .fact-card {
     grid-template-columns: 36px minmax(0, 1fr);
-    padding: 6px 10px;
+    padding: 5px 10px;
   }
 
   .find-token {
     width: 34px;
     height: 34px;
     font-size: 15px;
+  }
+
+  /* 11px labels have to fit the same 66px landscape card the 8px ones did. */
+  .fact-kicker {
+    line-height: 1;
+  }
+
+  .fact-card h2,
+  .fact-card p {
+    margin-top: 0;
   }
 
   .fact-card p {
@@ -2101,7 +2122,7 @@ kbd {
 
   .welcome-lead {
     max-width: 650px;
-    font-size: 9px;
+    font-size: 11px;
     line-height: 1.25;
   }
 
@@ -2142,7 +2163,7 @@ kbd {
 
   .mode-card p {
     margin-top: 2px;
-    font-size: 8px;
+    font-size: 11px;
     line-height: 1.2;
   }
 
@@ -2151,7 +2172,7 @@ kbd {
     grid-row: 1;
     min-height: 44px;
     padding: 4px 6px 4px 8px;
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .mode-button-detail {
@@ -2166,7 +2187,7 @@ kbd {
 
   .welcome-foot {
     margin-top: 7px;
-    font-size: 6.5px;
+    font-size: 11px;
   }
 }
 

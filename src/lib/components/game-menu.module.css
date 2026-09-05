@@ -56,7 +56,7 @@
 .heading > span,
 .dangerKicker {
   color: #a74774;
-  font: 850 9px var(--font-geist-mono), ui-monospace, monospace;
+  font: 850 11px var(--font-geist-mono), ui-monospace, monospace;
   letter-spacing: 0.13em;
 }
 
@@ -223,7 +223,7 @@
   margin-top: 3px;
   overflow: hidden;
   color: #7b6c82;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -251,7 +251,7 @@
   border-radius: 14px;
   box-shadow: none;
   color: #65526e;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
@@ -276,7 +276,7 @@
 
 .aboutHero > span {
   color: #a74774;
-  font: 850 9px var(--font-geist-mono), ui-monospace, monospace;
+  font: 850 11px var(--font-geist-mono), ui-monospace, monospace;
   letter-spacing: 0.13em;
 }
 
@@ -310,6 +310,7 @@
 .buildDetails > div {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
   gap: 12px;
   padding: 10px 13px;
   border-top: 1px solid #eadfe7;
@@ -321,7 +322,7 @@
 
 .buildDetails dt {
   color: #67536f;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 820;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -337,6 +338,8 @@
 }
 
 .buildDetails a {
+  display: inline-block;
+  padding: 16px 4px;
   color: #a74774;
 }
 
@@ -396,12 +399,19 @@
   padding: 11px 20px 13px;
   border-top: 1px solid #eadfcc;
   color: #67536f;
-  font: 750 10px var(--font-geist-mono), ui-monospace, monospace;
+  font: 750 11px var(--font-geist-mono), ui-monospace, monospace;
   letter-spacing: 0.03em;
 }
 
 .credit > span:first-child {
   display: inline;
+}
+
+/* A 12px line is not a tap target; the padding grows the hit area to 44px
+   while the text keeps its size and stays on one row. */
+.credit a {
+  display: inline-block;
+  padding: 16px 2px;
 }
 
 .heart {
@@ -458,7 +468,7 @@
   }
 
   .heading p {
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .close {
