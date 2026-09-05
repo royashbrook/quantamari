@@ -10,6 +10,8 @@ import {
 import {
   CORE_RADIUS_MAX,
   CORE_RADIUS_MIN,
+  FIRST_LAYER_FINDS,
+  FIT_CUE_REACH,
   PHYSICAL_SEED_RADIUS,
   canCollectPickup,
   canStartPointerSteering,
@@ -17,6 +19,7 @@ import {
   collectionProgressGain,
   collectibleIdentityFor,
   deepLensUnlocked,
+  fitCueVisible,
   mashProxyScale,
   nextLayerAdvance,
   nextLayerObstacleRadius,
@@ -133,6 +136,40 @@ test("collection drives one bounded logarithmic layer transition", () => {
   assert.equal(progressAfterPickup(0.2, 4, 4, chunky), 0.2 + chunky);
   assert.equal(progressAfterPickup(0.2, 3, 4, chunky), 0.2);
   assert.equal(progressAfterPickup(0.2, 5, 4, chunky), 0.2);
+});
+
+test("the first layer fills in a dozen finds or fewer in either pace", () => {
+  assert.ok(FIRST_LAYER_FINDS >= 8 && FIRST_LAYER_FINDS <= 12);
+  for (const mode of ["learning", "journey"]) {
+    let progress = 0;
+    let finds = 0;
+    while (progress < 1) {
+      progress = progressAfterPickup(
+        progress,
+        0,
+        0,
+        collectionProgressGain(1.2, 0.35, 0.3, mode, true),
+      );
+      finds += 1;
+    }
+    assert.ok(finds <= 12, `${mode} took ${finds} finds`);
+    assert.ok(finds >= 8, `${mode} took only ${finds} finds`);
+  }
+  // Later layers keep their authored pace.
+  assert.equal(
+    collectionProgressGain(1.2, 0.35, 0.3, "journey", false),
+    collectionProgressGain(1.2, 0.35, 0.3, "journey"),
+  );
+  assert.ok(collectionProgressGain(1.2, 0.35, 0.3, "journey") < 0.01);
+});
+
+test("the fit cue rings only nearby current-layer pickups that fit", () => {
+  assert.equal(fitCueVisible(3, 3, 2, 0.7, 1), true);
+  assert.equal(fitCueVisible(3, 3, FIT_CUE_REACH, 0.7, 1), true);
+  assert.equal(fitCueVisible(3, 3, FIT_CUE_REACH + 0.01, 0.7, 1), false);
+  assert.equal(fitCueVisible(3, 3, 2, 1.09, 1), false);
+  assert.equal(fitCueVisible(4, 3, 2, 0.7, 1), false);
+  assert.equal(fitCueVisible(2, 3, 2, 0.7, 1), false);
 });
 
 test("the physical bootstrap seed stays tiny and independent of progression radius", () => {

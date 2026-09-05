@@ -154,18 +154,44 @@ export function physicalSeedRadiusFor(_progressionRadius: number) {
   return PHYSICAL_SEED_RADIUS;
 }
 
+/**
+ * The very first layer of a fresh run fills in this many finds in either
+ * pace, so the first scale jump (the whole point of the mechanic) arrives in
+ * the first couple of minutes. Every later layer keeps its authored pace.
+ */
+export const FIRST_LAYER_FINDS = 10;
+
 export function collectionProgressGain(
   rollingRadius: number,
   pickupBulkRadius: number,
   gameplayBulkFactor: number,
   mode: GameMode = "learning",
+  firstLayer = false,
 ) {
   const relativeBulk = pickupBulkRadius / Math.max(0.001, rollingRadius);
   const learningGain = Math.max(
     0.022,
     Math.min(0.095, relativeBulk ** 2 * gameplayBulkFactor * 0.15),
   );
-  return learningGain * (mode === "journey" ? 0.025 : 1);
+  const gain = learningGain * (mode === "journey" ? 0.025 : 1);
+  return firstLayer ? Math.max(gain, 1 / FIRST_LAYER_FINDS) : gain;
+}
+
+/** How far out, in rolling radii, the fit cue rings collectible pickups. */
+export const FIT_CUE_REACH = 6;
+
+export function fitCueVisible(
+  sourceEra: number,
+  activeEra: number,
+  distance: number,
+  pickupBulkRadius: number,
+  rollingRadius: number,
+) {
+  return (
+    sourceEra === activeEra &&
+    distance <= rollingRadius * FIT_CUE_REACH &&
+    canCollectPickup(sourceEra, activeEra, pickupBulkRadius, rollingRadius)
+  );
 }
 
 export function progressAfterPickup(
