@@ -72,6 +72,7 @@
   const RESET_GENERATION_KEY = "everything-roll-reset-generation";
   const LAST_SEEN_BUILD_KEY = "quantamari-last-seen-build";
   const INSTALL_COACH_REVEAL_DELAY_MS = 900;
+  const INSTALL_COACH_AUTO_RETIRE_MS = 24_000;
   const WORKER_BUILD_TIMEOUT_MS = 1_000;
   const WORKER_BUILD_RETRY_DELAY_MS = 1_500;
   const WORKER_BUILD_RETRY_LIMIT = 2;
@@ -185,6 +186,7 @@
   let installedDisplayMode = $state(false);
   let installPromptEvent: BeforeInstallPromptEvent | null = null;
   let installCoachTimer: number | null = null;
+  let installCoachRetireTimer: number | null = null;
   let installCoachSuppressedForVisit = false;
   let toast = $state(
     "Current-scale things stick. Older specks dissolve quietly into mass.",
@@ -248,9 +250,14 @@
   }
 
   function clearInstallCoachTimer() {
-    if (installCoachTimer === null) return;
-    window.clearTimeout(installCoachTimer);
-    installCoachTimer = null;
+    if (installCoachTimer !== null) {
+      window.clearTimeout(installCoachTimer);
+      installCoachTimer = null;
+    }
+    if (installCoachRetireTimer !== null) {
+      window.clearTimeout(installCoachRetireTimer);
+      installCoachRetireTimer = null;
+    }
   }
 
   function storeInstallCoachState(value: string) {
@@ -281,6 +288,12 @@
         !installCoachSuppressedForVisit
       ) {
         installCoachVisible = true;
+        // An unasked-for coach never nags: it leaves on its own and snoozes
+        // like a tap on Got it. The menu still opens it on demand.
+        installCoachRetireTimer = window.setTimeout(() => {
+          installCoachRetireTimer = null;
+          if (installCoachVisible && !installCoachManual) dismissInstallCoach();
+        }, INSTALL_COACH_AUTO_RETIRE_MS);
       }
     }, INSTALL_COACH_REVEAL_DELAY_MS);
   }
@@ -396,10 +409,7 @@
     lastFact = fact;
     hasFact = true;
     if (kind !== "pickup") return;
-    if (
-      !factVisible &&
-      (toastVisible || installCoachVisible || Date.now() < factCooldownUntil)
-    ) {
+    if (!factVisible && (toastVisible || Date.now() < factCooldownUntil)) {
       return;
     }
 
@@ -1666,8 +1676,6 @@
     installCoachVisible &&
       (started || installCoachManual) &&
       !installedDisplayMode &&
-      !toastVisible &&
-      !factVisible &&
       !updateReady &&
       !updateApplying &&
       !showMenu &&
@@ -1701,7 +1709,8 @@
     class:awaiting-start={!started}
     class:empty-origin={started && hud.era === 0}
     class:lab-active={labEra !== null}
-    class:has-bottom-notice={toastVisible || factVisible || installCoachShowing}
+    class:has-bottom-notice={toastVisible || factVisible}
+    class:coaching={installCoachShowing}
     class="world"
     style={`--pop: ${era.palette[2]}; --deep: ${era.palette[0]}`}
     onpointerdown={pointerDown}
