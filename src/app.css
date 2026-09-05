@@ -810,7 +810,8 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
-.has-bottom-notice .controls {
+.has-bottom-notice .controls,
+.coaching .controls {
   visibility: hidden;
   opacity: 0;
 }

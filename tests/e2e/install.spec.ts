@@ -77,7 +77,7 @@ test("iPhone gives first-time install steps without crowding the launcher", asyn
   await expect(coach).toContainText("Install Quantamari");
   await expect(coach).toContainText("Add to Home Screen");
   await expect(coach).toContainText("Open as Web App");
-  await expect(page.locator(".journey-dock")).toBeHidden();
+  await expect(page.locator(".journey-dock")).toBeVisible();
   await expect(page.getByTestId("install-announcement")).toContainText(
     "Install Quantamari",
   );
@@ -114,6 +114,73 @@ test("iPhone gives first-time install steps without crowding the launcher", asyn
   await page.waitForTimeout(1_200);
   await expect(coach).toHaveCount(0);
 
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  await page.getByRole("button", { name: "Install Quantamari" }).click();
+  await expect(coach).toBeVisible();
+});
+
+test("first-visit coach leaves the dock and fact cards alone and retires itself", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-air");
+  test.setTimeout(75_000);
+  await page.addInitScript(() => {
+    (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE_REQUESTED__?: boolean;
+      }
+    ).__QUARKATAMARI_PERFORMANCE_REQUESTED__ = true;
+  });
+  await page.goto(appPath);
+  await page.getByRole("button", { name: "Play Long Game" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const coach = page.getByTestId("install-coach");
+  const dock = page.locator(".journey-dock");
+  await expect(coach).toBeVisible({ timeout: installCoachTimeout });
+  const coachShownAt = Date.now();
+  // The coach's slide-in outlasts the dock's visibility transition, so a
+  // dock hidden by the coach is fully hidden once this settles.
+  await coach.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .getAnimations()
+        .map((animation) => animation.finished.catch(() => undefined)),
+    );
+  });
+  await expect(dock).toBeVisible();
+  await expect(page.locator(".touch-tip")).toBeVisible();
+  const coachBox = (await coach.boundingBox())!;
+  const dockBox = (await dock.boundingBox())!;
+  expect(coachBox.y + coachBox.height).toBeLessThanOrEqual(dockBox.y);
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                __QUARKATAMARI_PERFORMANCE__?: {
+                  collectCurrentPickup: () => string | null;
+                };
+              }
+            ).__QUARKATAMARI_PERFORMANCE__?.collectCurrentPickup() ?? null,
+        ),
+      { timeout: 15_000 },
+    )
+    .not.toBeNull();
+  const fact = page.locator(".fact-card");
+  await expect(fact).toBeVisible();
+  await expect(fact.locator("p")).not.toHaveText("");
+  await expect(coach).toBeVisible();
+
+  await expect(coach).toHaveCount(0, {
+    timeout: Math.max(1_000, 30_000 - (Date.now() - coachShownAt)),
+  });
+  await expect(dock).toBeVisible();
   await page.getByRole("button", { name: "Open game menu" }).click();
   await page.getByRole("button", { name: "Install Quantamari" }).click();
   await expect(coach).toBeVisible();

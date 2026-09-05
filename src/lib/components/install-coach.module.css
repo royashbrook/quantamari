@@ -31,6 +31,12 @@
   animation: install-coach-in 220ms ease-out both;
 }
 
+/* Desktop shares the bottom band with toasts and fact cards; the coach yields
+   to them there. The phone strip below the top bar never has to. */
+:global(.has-bottom-notice) .coach {
+  visibility: hidden;
+}
+
 .coach img {
   width: 48px;
   height: 48px;
@@ -111,9 +117,12 @@
 }
 
 @media (max-width: 860px), (pointer: coarse) and (max-height: 500px) {
+  /* The journey dock owns the bottom of a phone screen; a coach that sat
+     there hid the scale, the finds count, and the only control hint. */
   .coach {
+    top: calc(58px + var(--safe-top));
     right: calc(10px + var(--safe-right));
-    bottom: calc(10px + var(--safe-bottom));
+    bottom: auto;
     left: calc(10px + var(--safe-left));
     width: auto;
     grid-template-columns: 42px minmax(0, 1fr) auto 44px;
@@ -146,10 +155,14 @@
     padding: 0 9px;
   }
 
+  :global(.has-bottom-notice) .coach {
+    visibility: visible;
+  }
+
   @keyframes install-coach-in {
     from {
       opacity: 0;
-      transform: translateY(18px);
+      transform: translateY(-18px);
     }
 
     to {
