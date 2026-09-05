@@ -18,6 +18,7 @@ import {
   circleAabbClearance,
   collectionProgressGain,
   collectibleIdentityFor,
+  fitCueVisible,
   mashProxyScale,
   nextLayerAdvance,
   nextLayerObstacleRadius,
@@ -279,6 +280,7 @@ const PICKUP_RICH_NEAR_DISTANCE = 18;
 const PICKUP_PHYSICAL_POSE_ENTER_MARGIN = 1.1;
 const PICKUP_PHYSICAL_POSE_EXIT_MARGIN = 1.65;
 const MAX_POP_BURSTS = 12;
+const MAX_FIT_CUES = 16;
 
 const pickupEntranceScale = (bornAt: number, now: number) => {
   const progress = Math.min(
@@ -4327,6 +4329,26 @@ export function mountGame(
   popBurstMesh.frustumCulled = false;
   scene.add(popBurstMesh);
   const popBurstDummy = new THREE.Object3D();
+  // Which things fit is the whole skill, so nearby collectible pickups wear a
+  // faint flat ring. One pooled instanced draw, like the pop bursts.
+  const fitCueMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false,
+  });
+  const fitCueMesh = new THREE.InstancedMesh(
+    popBurstGeometry,
+    fitCueMaterial,
+    MAX_FIT_CUES,
+  );
+  fitCueMesh.name = "fit-cue";
+  fitCueMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  fitCueMesh.count = 0;
+  fitCueMesh.visible = false;
+  fitCueMesh.frustumCulled = false;
+  scene.add(fitCueMesh);
+  let fitCueCount = 0;
   const popBursts: {
     position: THREE.Vector3;
     color: THREE.Color;
@@ -5573,6 +5595,7 @@ export function mountGame(
         pickup.bulkRadius,
         gameplayBulkFactor,
         game.mode,
+        activeIndex === 0 && game.cycles === 0,
       ),
     );
     if (isCurrentScale) {
@@ -6321,6 +6344,10 @@ export function mountGame(
             bursts: {
               active: popBursts.length,
               limit: MAX_POP_BURSTS,
+            },
+            fitCues: {
+              active: fitCueCount,
+              limit: MAX_FIT_CUES,
             },
             drawCalls: renderer.info.render.calls,
             triangles: renderer.info.render.triangles,
@@ -7971,6 +7998,41 @@ export function mountGame(
           break;
       }
     });
+    let nextFitCueCount = 0;
+    if (labEra === null && scaleTransitionStarted < 0) {
+      for (const { pickup, distance, entranceScale, pickupWorldScale } of pickupDetail) {
+        if (nextFitCueCount >= MAX_FIT_CUES) break;
+        if (
+          pickup.retireStartedAt !== null ||
+          pickup.handoffX !== null ||
+          !fitCueVisible(
+            pickup.sourceEra,
+            activeIndex,
+            distance,
+            pickup.bulkRadius,
+            game.radius,
+          )
+        ) {
+          continue;
+        }
+        popBurstDummy.position.copy(pickup.root.position);
+        popBurstDummy.rotation.set(Math.PI / 2, 0, 0);
+        popBurstDummy.scale.setScalar(
+          Math.max(0.2, pickup.visualRadius * pickupWorldScale * entranceScale * 1.4),
+        );
+        popBurstDummy.updateMatrix();
+        fitCueMesh.setMatrixAt(nextFitCueCount, popBurstDummy.matrix);
+        nextFitCueCount += 1;
+      }
+    }
+    if ((nextFitCueCount > 0) !== (fitCueCount > 0)) {
+      baseSceneDrawCallsDirty = true;
+    }
+    fitCueCount = nextFitCueCount;
+    fitCueMesh.count = fitCueCount;
+    fitCueMesh.visible = fitCueCount > 0;
+    fitCueMesh.instanceMatrix.needsUpdate = fitCueCount > 0;
+    fitCueMaterial.opacity = 0.22 + Math.sin(now * 0.004) * 0.08;
     const silhouetteLod = collectibleLodPool.endFrame();
     silhouetteLodInstances = silhouetteLod.instances;
     silhouetteBadgeInstances = silhouetteLod.badges;

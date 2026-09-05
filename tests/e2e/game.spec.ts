@@ -251,6 +251,10 @@ type PerformanceSnapshot = {
       active: number;
       limit: number;
     };
+    fitCues: {
+      active: number;
+      limit: number;
+    };
   };
 };
 
@@ -2513,6 +2517,62 @@ test("long game crosses a layer without a skip animation or size pop", async ({
     )
     .toBeLessThan(0.03);
 });
+
+for (const mode of ["Long game", "Learning tour"] as const) {
+  test(`a fresh ${mode.toLowerCase()} reaches its first grow within a dozen finds`, async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await enablePerformanceDiagnostics(page, "balanced");
+    await begin(page, mode);
+    await expect
+      .poll(
+        async () => (await readPerformanceDiagnostics(page))?.runtime.era,
+        { timeout: 15_000 },
+      )
+      .toBe(0);
+
+    // The fit cue: something collectible sits near a fresh spawn.
+    await expect
+      .poll(
+        async () =>
+          (await readPerformanceDiagnostics(page))?.runtime.fitCues?.active ?? 0,
+        { timeout: 20_000 },
+      )
+      .toBeGreaterThan(0);
+
+    let finds = 0;
+    while (finds < 12) {
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              () =>
+                (
+                  window as typeof window & {
+                    __QUARKATAMARI_PERFORMANCE__?: {
+                      collectCurrentPickup: () => string | null;
+                    };
+                  }
+                ).__QUARKATAMARI_PERFORMANCE__?.collectCurrentPickup() ?? null,
+            ),
+          { timeout: 15_000 },
+        )
+        .not.toBeNull();
+      finds += 1;
+      const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+      if (runtime?.readyToGrow) break;
+    }
+    const runtime = (await readPerformanceDiagnostics(page))?.runtime;
+    expect(runtime, `${finds} finds`).toMatchObject({
+      era: 0,
+      progress: 1,
+      readyToGrow: true,
+    });
+    expect(finds).toBeGreaterThanOrEqual(8);
+    await expect(page.getByTestId("grow-layer")).toBeVisible();
+  });
+}
 
 test("a ready scale waits for the player and remains collectible", async ({
   page,
