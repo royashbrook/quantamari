@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 
@@ -374,6 +374,17 @@ async function inspectInstanceColors(page: Page) {
   });
 }
 
+// The game menu hands focus back in the same synchronous flush that closes
+// its dialog, so once the dialog is observed hidden the opener is already the
+// active element. One read, no polling: a regression to a deferred handoff
+// fails here instead of hiding behind a retry.
+async function expectMenuClosedWithFocusOn(menu: Locator, opener: Locator) {
+  await expect(menu).toBeHidden();
+  expect(
+    await opener.evaluate((element) => document.activeElement === element),
+  ).toBe(true);
+}
+
 async function begin(page: Page, mode: "Long game" | "Learning tour" = "Learning tour") {
   await page.goto(appPath);
   await page
@@ -702,15 +713,13 @@ test("boots the static game at its production root", async ({ page }) => {
   ).toBeHidden();
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(menu).toBeHidden();
-  await expect(menuTrigger).toBeFocused();
+  await expectMenuClosedWithFocusOn(menu, menuTrigger);
   const startButton = page.getByRole("button", { name: "Play Long Game" });
   await startButton.focus();
   await page.keyboard.press("Escape");
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(menu).toBeHidden();
-  await expect(startButton).toBeFocused();
+  await expectMenuClosedWithFocusOn(menu, startButton);
 
   await page.getByRole("button", { name: "Play Learning Tour" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
