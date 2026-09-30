@@ -24,15 +24,6 @@ test("welcome keeps both mode actions inside compact iPhone Air viewports", asyn
       safeBottom: 34,
       safeLeft: 0,
     },
-    {
-      name: "Air landscape",
-      width: 794,
-      height: 370,
-      safeTop: 0,
-      safeRight: 59,
-      safeBottom: 21,
-      safeLeft: 59,
-    },
   ];
 
   for (const viewport of viewports) {

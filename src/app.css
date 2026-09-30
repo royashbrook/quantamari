@@ -1354,7 +1354,7 @@ kbd {
   box-shadow: 0 4px 0 rgba(75, 40, 104, 0.85), 0 0 22px rgba(255, 125, 208, 0.5);
 }
 
-@media (max-width: 860px), (pointer: coarse) and (max-height: 500px) {
+@media (max-width: 860px) {
   .shell,
   .world {
     min-height: 0;
@@ -2018,53 +2018,6 @@ kbd {
   }
 }
 
-@media (max-width: 860px) and (max-height: 500px),
-  (pointer: coarse) and (max-height: 500px) {
-  .journey-dock {
-    grid-template-rows: auto 3px auto;
-    gap: 3px 10px;
-    padding: 5px 10px;
-  }
-
-  .touch-tip {
-    display: none;
-  }
-
-  .mobile-current {
-    display: none;
-  }
-
-  .fact-card {
-    grid-template-columns: 36px minmax(0, 1fr);
-    padding: 5px 10px;
-  }
-
-  .find-token {
-    width: 34px;
-    height: 34px;
-    font-size: 15px;
-  }
-
-  /* 11px labels have to fit the same 66px landscape card the 8px ones did. */
-  .fact-kicker {
-    line-height: 1;
-  }
-
-  .fact-card h2,
-  .fact-card p {
-    margin-top: 0;
-  }
-
-  .fact-card p {
-    -webkit-line-clamp: 1;
-  }
-
-  .lab-banner {
-    padding-top: 4px;
-    padding-bottom: 4px;
-  }
-}
-
 @media (max-height: 680px) and (min-width: 861px) and (pointer: fine) {
   .topbar {
     padding-top: 12px;
@@ -2090,104 +2043,6 @@ kbd {
 
   .welcome-foot {
     margin-top: 17px;
-  }
-}
-
-@media (max-height: 500px) {
-  .welcome {
-    width: min(
-      760px,
-      calc(100vw - 20px - var(--safe-left) - var(--safe-right))
-    );
-    max-height: calc(100dvh - 10px - var(--safe-top) - var(--safe-bottom));
-    padding: 10px 14px;
-    border-width: 3px;
-    border-radius: 18px;
-    box-shadow: 0 6px 0 #4b2868, 0 20px 60px rgba(7, 4, 28, 0.48);
-  }
-
-  .welcome .eyebrow {
-    display: none;
-  }
-
-  .welcome h1 {
-    margin: 0 0 4px;
-    font-size: 28px;
-    line-height: 1;
-  }
-
-  .welcome h1 br {
-    display: none;
-  }
-
-  .welcome-lead {
-    max-width: 650px;
-    font-size: 11px;
-    line-height: 1.25;
-  }
-
-  .mode-cards {
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .mode-card {
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    grid-template-rows: 1fr;
-    gap: 7px;
-    padding: 7px 8px;
-  }
-
-  .mode-card-mark {
-    width: 28px;
-    height: 28px;
-    grid-column: 1;
-    grid-row: 1;
-    font-size: 13px;
-  }
-
-  .mode-card-copy {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .mode-card-kicker {
-    display: none;
-  }
-
-  .mode-card h2 {
-    margin: 0;
-    font-size: 13px;
-  }
-
-  .mode-card p {
-    margin-top: 2px;
-    font-size: 11px;
-    line-height: 1.2;
-  }
-
-  .mode-play {
-    grid-column: 3;
-    grid-row: 1;
-    min-height: 44px;
-    padding: 4px 6px 4px 8px;
-    font-size: 11px;
-  }
-
-  .mode-button-detail {
-    display: none;
-  }
-
-  .mode-play b {
-    width: 20px;
-    height: 20px;
-    font-size: 13px;
-  }
-
-  .welcome-foot {
-    margin-top: 7px;
-    font-size: 11px;
   }
 }
 
