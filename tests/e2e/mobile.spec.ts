@@ -32,6 +32,14 @@ async function startLearningTour(page: Page) {
   await startMode(page, "Play Learning Tour");
 }
 
+// The canvas is visible before the HUD has arrived: starting a mode drops
+// .awaiting-start and every .hud surface fades in over 220ms, so a dock read
+// in that window sees opacity 0 and counts no bottom surface at all. The
+// gameplay chrome is ready once the dock's transition has landed on 1.
+async function awaitGameplayHud(page: Page) {
+  await expect(page.locator(".journey-dock")).toHaveCSS("opacity", "1");
+}
+
 async function closeGeometry(locator: Locator) {
   return locator.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -107,6 +115,7 @@ test("iPhone gameplay uses one passive bottom dock across browser and PWA-sized 
 }) => {
   test.setTimeout(75_000);
   await startLearningTour(page);
+  await awaitGameplayHud(page);
 
   await expect(page.locator(".fact-card")).toHaveCount(0);
   await expect(page.locator(".toast")).toHaveCount(0);
