@@ -1,5 +1,8 @@
 import * as THREE from "three";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import {
+  createMashProxyRefreshQueue,
+  rebuildMashProxyMeshes,
+} from "./mash-proxy-batch";
 import {
   type Curio,
   ERAS,
@@ -4207,7 +4210,7 @@ export function mountGame(
     );
   let mashProxyPieceCount = 0;
   let visibleMashProxyFamilyCount = 0;
-  const refreshMashProxy = () => {
+  const rebuildMashProxy = () => {
     const visibleProxyRecords = [
       ...mashProxyRecords,
       ...(mashProxyIncludesRich
@@ -4258,30 +4261,19 @@ export function mountGame(
         );
       }
     });
-    const mergeProxyParts = (parts: THREE.BufferGeometry[]) => {
-      if (parts.length === 0) return new THREE.BufferGeometry();
-      const merged = mergeGeometries(parts, false);
-      if (!merged) {
-        parts.forEach((geometry) => geometry.dispose());
-        throw new TypeError("Visible mash silhouettes could not be batched");
-      }
-      merged.computeBoundingSphere();
-      return merged;
-    };
-    const nextSolidGeometry = mergeProxyParts(transformedSolidParts);
-    const nextEffectGeometry = mergeProxyParts(transformedEffectParts);
-    transformedSolidParts.forEach((geometry) => geometry.dispose());
-    transformedEffectParts.forEach((geometry) => geometry.dispose());
-    mashProxySolidMesh.geometry.dispose();
-    mashProxyEffectMesh.geometry.dispose();
-    mashProxySolidMesh.geometry = nextSolidGeometry;
-    mashProxyEffectMesh.geometry = nextEffectGeometry;
+    rebuildMashProxyMeshes([
+      { mesh: mashProxySolidMesh, parts: transformedSolidParts },
+      { mesh: mashProxyEffectMesh, parts: transformedEffectParts },
+    ]);
     mashProxyPieceCount = visibleProxyRecords.length;
     visibleMashProxyFamilyCount = activeSpeciesIds.size;
-    mashProxySolidMesh.visible = transformedSolidParts.length > 0;
-    mashProxyEffectMesh.visible = transformedEffectParts.length > 0;
     baseSceneDrawCallsDirty = true;
   };
+  // Every membership change (a collection past the rich budget, a layer
+  // advance, a restore) asks for a refresh; the frame loop merges once per
+  // rendered frame however many arrived, so a pickup burst costs one merge.
+  const mashProxyRefreshQueue = createMashProxyRefreshQueue(rebuildMashProxy);
+  const refreshMashProxy = () => mashProxyRefreshQueue.request();
   const setMashProxyLod = (_compact: boolean) => {
     // Collected objects must never blink between their authored form and the
     // combined proxy as the camera crosses a projected-size threshold. Older
@@ -4617,6 +4609,10 @@ export function mountGame(
   };
   trimMashProxyRecords();
   if (!collapseRichMashToBudget()) refreshMashProxy();
+  // The restored body is whole before the first frame: a runtime mounted
+  // behind an open menu (a profile switch) renders nothing until the menu
+  // closes, and its diagnostics must not report a half-built mash meanwhile.
+  mashProxyRefreshQueue.flush();
   const collapseDistantMash = (nextIndex: number) => {
     let collapsed = false;
     for (let index = attachments.length - 1; index >= 0; index -= 1) {
@@ -6215,6 +6211,9 @@ export function mountGame(
               attachments: attachments.length,
               proxyPieces: mashProxyPieceCount,
               proxyFamilies: visibleMashProxyFamilyCount,
+              proxyRefreshRequests: mashProxyRefreshQueue.requests,
+              proxyRebuilds: mashProxyRefreshQueue.rebuilds,
+              proxyRefreshPending: mashProxyRefreshQueue.pending,
               richMashDrawCalls: richMashDrawCalls(),
               visibleAttachments: attachments.filter((visual) => visual.visible)
                 .length,
@@ -7685,6 +7684,9 @@ export function mountGame(
     ).size;
     const silhouetteReserve =
       (activeSilhouetteFamilies + fabricSilhouetteFamilies) * 2;
+    // One authored geometry merge per rendered frame, after every collection
+    // and layer change of this frame has queued, before draw calls are counted.
+    mashProxyRefreshQueue.flush();
     if (baseSceneDrawCallsDirty) {
       refreshBaseSceneDrawCalls();
     }

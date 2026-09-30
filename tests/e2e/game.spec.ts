@@ -167,6 +167,9 @@ type PerformanceSnapshot = {
       attachments: number;
       proxyPieces: number;
       proxyFamilies: number;
+      proxyRefreshRequests: number;
+      proxyRebuilds: number;
+      proxyRefreshPending: boolean;
       richMashDrawCalls: number;
       visibleAttachments: number;
       attachmentProxyActive: boolean;
@@ -4020,6 +4023,92 @@ test("collected room props stay authored through battery LOD frames", async ({
   );
   expect(visibleAuthoredMash.every(({ worldScale }) => worldScale > 0.01)).toBe(
     true,
+  );
+});
+
+test("a pickup burst merges the attached proxy once per rendered frame", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "battery");
+  await seedLearningEra(page, "everyday-kingdom", 16);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups
+          .authoredAnchorIds.length ?? 0,
+      { timeout: 30_000 },
+    )
+    .toBe(6);
+  const before = (await readPerformanceDiagnostics(page))!;
+  expect(before.runtime.representations.proxyRefreshPending).toBe(false);
+
+  // Six collections in one task: the battery rich budget is four, so the
+  // fifth and sixth each push a piece into the proxy and ask for a rebuild.
+  // Read back in that same task, before any frame, nothing has merged yet.
+  const burst = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectCurrentPickup: () => string | null;
+          snapshot: () => {
+            runtime: {
+              representations: {
+                proxyRefreshRequests: number;
+                proxyRebuilds: number;
+                proxyRefreshPending: boolean;
+              };
+            };
+          };
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__!;
+    const collected = Array.from(
+      { length: 6 },
+      () => diagnostics.collectCurrentPickup() ?? null,
+    );
+    return { collected, ...diagnostics.snapshot().runtime.representations };
+  });
+  expect(burst.collected.filter(Boolean)).toHaveLength(6);
+  expect(burst.proxyRebuilds).toBe(before.runtime.representations.proxyRebuilds);
+  expect(
+    burst.proxyRefreshRequests -
+      before.runtime.representations.proxyRefreshRequests,
+  ).toBeGreaterThanOrEqual(2);
+  expect(burst.proxyRefreshPending).toBe(true);
+
+  // Several rendered frames later the queue has drained exactly once.
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              pending: snapshot.runtime.representations.proxyRefreshPending,
+              settled:
+                snapshot.phases.frame.count - before.phases.frame.count >= 3,
+            }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({ pending: false, settled: true });
+
+  const after = (await readPerformanceDiagnostics(page))!;
+  const representations = after.runtime.representations;
+  expect(
+    representations.proxyRebuilds - before.runtime.representations.proxyRebuilds,
+  ).toBe(1);
+  expect(representations.attachments + representations.proxyPieces).toBe(6);
+  expect(representations.attachments).toBe(4);
+  expect(representations.proxyPieces).toBe(2);
+  expect(representations.attachmentProxyActive).toBe(false);
+  expect(representations.richMashDrawCalls).toBeLessThanOrEqual(12);
+  expect(after.runtime.drawCalls).toBeLessThanOrEqual(
+    after.runtime.budget.maxDrawCalls,
   );
 });
 
