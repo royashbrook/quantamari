@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 
@@ -167,6 +167,9 @@ type PerformanceSnapshot = {
       attachments: number;
       proxyPieces: number;
       proxyFamilies: number;
+      proxyRefreshRequests: number;
+      proxyRebuilds: number;
+      proxyRefreshPending: boolean;
       richMashDrawCalls: number;
       visibleAttachments: number;
       attachmentProxyActive: boolean;
@@ -372,6 +375,17 @@ async function inspectInstanceColors(page: Page) {
     }
     return { checked, offenders };
   });
+}
+
+// The game menu hands focus back in the same synchronous flush that closes
+// its dialog, so once the dialog is observed hidden the opener is already the
+// active element. One read, no polling: a regression to a deferred handoff
+// fails here instead of hiding behind a retry.
+async function expectMenuClosedWithFocusOn(menu: Locator, opener: Locator) {
+  await expect(menu).toBeHidden();
+  expect(
+    await opener.evaluate((element) => document.activeElement === element),
+  ).toBe(true);
 }
 
 async function begin(page: Page, mode: "Long game" | "Learning tour" = "Learning tour") {
@@ -702,15 +716,13 @@ test("boots the static game at its production root", async ({ page }) => {
   ).toBeHidden();
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(menu).toBeHidden();
-  await expect(menuTrigger).toBeFocused();
+  await expectMenuClosedWithFocusOn(menu, menuTrigger);
   const startButton = page.getByRole("button", { name: "Play Long Game" });
   await startButton.focus();
   await page.keyboard.press("Escape");
   await expect(menu).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(menu).toBeHidden();
-  await expect(startButton).toBeFocused();
+  await expectMenuClosedWithFocusOn(menu, startButton);
 
   await page.getByRole("button", { name: "Play Learning Tour" }).click();
   await expect(page.locator("canvas.three-canvas")).toBeVisible({
@@ -4011,6 +4023,92 @@ test("collected room props stay authored through battery LOD frames", async ({
   );
   expect(visibleAuthoredMash.every(({ worldScale }) => worldScale > 0.01)).toBe(
     true,
+  );
+});
+
+test("a pickup burst merges the attached proxy once per rendered frame", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enablePerformanceDiagnostics(page, "battery");
+  await seedLearningEra(page, "everyday-kingdom", 16);
+  await begin(page);
+
+  await expect
+    .poll(
+      async () =>
+        (await readPerformanceDiagnostics(page))?.runtime.pickups
+          .authoredAnchorIds.length ?? 0,
+      { timeout: 30_000 },
+    )
+    .toBe(6);
+  const before = (await readPerformanceDiagnostics(page))!;
+  expect(before.runtime.representations.proxyRefreshPending).toBe(false);
+
+  // Six collections in one task: the battery rich budget is four, so the
+  // fifth and sixth each push a piece into the proxy and ask for a rebuild.
+  // Read back in that same task, before any frame, nothing has merged yet.
+  const burst = await page.evaluate(() => {
+    const diagnostics = (
+      window as typeof window & {
+        __QUARKATAMARI_PERFORMANCE__?: {
+          collectCurrentPickup: () => string | null;
+          snapshot: () => {
+            runtime: {
+              representations: {
+                proxyRefreshRequests: number;
+                proxyRebuilds: number;
+                proxyRefreshPending: boolean;
+              };
+            };
+          };
+        };
+      }
+    ).__QUARKATAMARI_PERFORMANCE__!;
+    const collected = Array.from(
+      { length: 6 },
+      () => diagnostics.collectCurrentPickup() ?? null,
+    );
+    return { collected, ...diagnostics.snapshot().runtime.representations };
+  });
+  expect(burst.collected.filter(Boolean)).toHaveLength(6);
+  expect(burst.proxyRebuilds).toBe(before.runtime.representations.proxyRebuilds);
+  expect(
+    burst.proxyRefreshRequests -
+      before.runtime.representations.proxyRefreshRequests,
+  ).toBeGreaterThanOrEqual(2);
+  expect(burst.proxyRefreshPending).toBe(true);
+
+  // Several rendered frames later the queue has drained exactly once.
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await readPerformanceDiagnostics(page);
+        return snapshot
+          ? {
+              pending: snapshot.runtime.representations.proxyRefreshPending,
+              settled:
+                snapshot.phases.frame.count - before.phases.frame.count >= 3,
+            }
+          : null;
+      },
+      { timeout: 15_000 },
+    )
+    .toEqual({ pending: false, settled: true });
+
+  const after = (await readPerformanceDiagnostics(page))!;
+  const representations = after.runtime.representations;
+  expect(
+    representations.proxyRebuilds - before.runtime.representations.proxyRebuilds,
+  ).toBe(1);
+  expect(representations.attachments + representations.proxyPieces).toBe(6);
+  expect(representations.attachments).toBe(4);
+  expect(representations.proxyPieces).toBe(2);
+  expect(representations.attachmentProxyActive).toBe(false);
+  expect(representations.richMashDrawCalls).toBeLessThanOrEqual(12);
+  expect(after.runtime.drawCalls).toBeLessThanOrEqual(
+    after.runtime.budget.maxDrawCalls,
   );
 });
 

@@ -163,6 +163,7 @@
   let atlasOpener: HTMLElement | null = null;
   let guideOpener: HTMLElement | null = null;
   let menuOpener: HTMLElement | null = null;
+  let menuFocusReturn: { opener: HTMLElement | null } | null = null;
   let childOpenedFromMenu: "atlas" | "guide" | null = null;
   let started = $state(false);
   let showAtlas = $state(false);
@@ -576,13 +577,21 @@
   }
 
   function closeMenu() {
-    const opener = menuOpener;
+    menuFocusReturn = { opener: menuOpener };
     menuOpener = null;
     showMenu = false;
-    window.requestAnimationFrame(() => {
-      if (opener?.isConnected) opener.focus();
-      else menuButton?.focus();
-    });
+  }
+
+  // Runs from the menu's own effect in the same synchronous flush that
+  // closes its dialog, so the menu is never observed hidden with focus still
+  // inside it. A requestAnimationFrame hop here was the old contract; under a
+  // loaded CI run that frame could arrive seconds late.
+  function restoreMenuFocus() {
+    const pending = menuFocusReturn;
+    menuFocusReturn = null;
+    if (!pending) return;
+    if (pending.opener?.isConnected) pending.opener.focus();
+    else menuButton?.focus();
   }
 
   function openGuide(event?: Event) {
@@ -2098,6 +2107,7 @@
       installNative={installKind === "native"}
       {performanceProfile}
       onClose={closeMenu}
+      onClosed={restoreMenuFocus}
       onOpenGuide={openGuideFromMenu}
       onOpenAtlas={openAtlasFromMenu}
       onToggleSound={toggleSound}

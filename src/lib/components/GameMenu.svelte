@@ -17,6 +17,7 @@
     installAvailable: boolean;
     installNative: boolean;
     onClose: () => void;
+    onClosed?: () => void;
     onOpenGuide: () => void;
     onOpenAtlas: () => void;
     onToggleSound: () => void;
@@ -37,6 +38,7 @@
     installAvailable,
     installNative,
     onClose,
+    onClosed,
     onOpenGuide,
     onOpenAtlas,
     onToggleSound,
@@ -78,15 +80,28 @@
     resetFailed = !onReset();
   }
 
+  // Tracks the open prop across effect runs so the closed callback fires
+  // exactly once per open-to-closed transition, in the same synchronous
+  // flush as the dialog closing. The browser may already have closed the
+  // dialog itself (an Escape cancel without user activation is not
+  // cancelable), so the transition is keyed on the prop, not on dialog.open.
+  let wasOpen = false;
+
   $effect(() => {
     if (!dialog) return;
-    if (open && !dialog.open) {
-      view = "main";
-      resetFailed = false;
-      dialog.showModal();
-    } else if (!open && dialog.open) {
-      dialog.close();
+    if (open) {
+      if (!dialog.open) {
+        view = "main";
+        resetFailed = false;
+        dialog.showModal();
+      }
+      wasOpen = true;
+      return;
     }
+    if (dialog.open) dialog.close();
+    if (!wasOpen) return;
+    wasOpen = false;
+    onClosed?.();
   });
 
   $effect(() => {
