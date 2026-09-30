@@ -1162,6 +1162,7 @@ test("iPhone 14 Pro Max reads every label at 11px and taps the credit links at 4
     await expect(link).toBeVisible();
     const geometry = await closeGeometry(link);
     expect(geometry.height).toBeGreaterThanOrEqual(44);
+    expect(geometry.width).toBeGreaterThanOrEqual(44);
     expect(geometry.inside).toBe(true);
     // Every sample in the link's own box lands on the link, so no neighbour
     // or button steals the edge of the tap.
