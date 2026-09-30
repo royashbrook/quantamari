@@ -407,11 +407,16 @@
   display: inline;
 }
 
-/* A 12px line is not a tap target; the padding grows the hit area to 44px
-   while the text keeps its size and stays on one row. */
+/* A 12px line is not a tap target; the box grows the hit area to 44px on both
+   axes (short words like "ai" included) while the text keeps its size. */
 .credit a {
-  display: inline-block;
-  padding: 16px 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 2px;
+  vertical-align: middle;
 }
 
 .heart {
