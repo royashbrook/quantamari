@@ -84,20 +84,10 @@ test("iPhone gives first-time install steps without crowding the launcher", asyn
 
   await expectCoachFitsViewport(coach);
 
-  await page.setViewportSize({ width: 794, height: 370 });
-  await page.evaluate(() => {
-    document.documentElement.style.setProperty("--safe-top", "0px");
-    document.documentElement.style.setProperty("--safe-right", "59px");
-    document.documentElement.style.setProperty("--safe-bottom", "21px");
-    document.documentElement.style.setProperty("--safe-left", "59px");
-  });
-  await expectCoachFitsViewport(coach);
-
   await page.setViewportSize({ width: 320, height: 568 });
   await page.evaluate(() => {
-    document.documentElement.style.setProperty("--safe-right", "0px");
+    document.documentElement.style.setProperty("--safe-top", "0px");
     document.documentElement.style.setProperty("--safe-bottom", "0px");
-    document.documentElement.style.setProperty("--safe-left", "0px");
   });
   await expectCoachFitsViewport(coach);
 

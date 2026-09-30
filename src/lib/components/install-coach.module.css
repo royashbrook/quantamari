@@ -116,7 +116,7 @@
   }
 }
 
-@media (max-width: 860px), (pointer: coarse) and (max-height: 500px) {
+@media (max-width: 860px) {
   /* The journey dock owns the bottom of a phone screen; a coach that sat
      there hid the scale, the finds count, and the only control hint. */
   .coach {

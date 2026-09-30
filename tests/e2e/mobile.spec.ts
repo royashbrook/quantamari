@@ -128,8 +128,6 @@ test("iPhone gameplay uses one passive bottom dock across browser and PWA-sized 
     { name: "small portrait", width: 375, height: 812 },
     { name: "browser portrait", width: 420, height: 719 },
     { name: "standalone-sized portrait", width: 420, height: 912 },
-    { name: "browser landscape", width: 794, height: 370 },
-    { name: "standalone-sized Air landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
 
@@ -318,8 +316,6 @@ test("iPhone gameplay uses one passive bottom dock across browser and PWA-sized 
 
   for (const viewport of [
     { name: "standalone-sized portrait", width: 420, height: 912 },
-    { name: "browser landscape", width: 794, height: 370 },
-    { name: "standalone-sized Air landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
     const factLayout = await page.evaluate(() => {
@@ -417,8 +413,6 @@ test("iPhone keeps player-paced growth compact and reachable", async ({
   for (const viewport of [
     { name: "browser portrait", width: 420, height: 719 },
     { name: "standalone portrait", width: 420, height: 912 },
-    { name: "browser landscape", width: 794, height: 370 },
-    { name: "standalone landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
     const button = await closeGeometry(grow);
@@ -574,7 +568,6 @@ test("iPhone menu routes keep Field Guide and Scale Lab exits visible", async ({
 
   for (const viewport of [
     { name: "portrait", width: 420, height: 719 },
-    { name: "standalone-sized Air landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
     await page.getByRole("button", { name: "Open game menu" }).click();
@@ -720,8 +713,6 @@ test("iPhone update notice stays persistent without replacing the bottom dock", 
   for (const viewport of [
     { name: "browser portrait", width: 420, height: 719 },
     { name: "standalone-sized portrait", width: 420, height: 912 },
-    { name: "browser landscape", width: 794, height: 370 },
-    { name: "standalone-sized Air landscape", width: 912, height: 420 },
   ]) {
     await page.setViewportSize(viewport);
     const geometry = await closeGeometry(banner);

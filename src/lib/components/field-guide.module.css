@@ -2441,9 +2441,7 @@
   }
 }
 
-/* Coarse landscape phones can be wider than the portrait breakpoint while
-   still needing an iOS-safe, non-zooming full-screen guide. */
-@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+@media (max-width: 760px) {
   .dialog {
     position: fixed;
     inset: 0;
