@@ -401,6 +401,13 @@
   color: #67536f;
   font: 750 11px var(--font-geist-mono), ui-monospace, monospace;
   letter-spacing: 0.03em;
+  /* every wrapped row of the maker line sits centered, like royashbrook.com */
+  text-align: center;
+}
+
+/* the dot travels with sponsor me, so a narrow phone never strands it */
+.tail {
+  white-space: nowrap;
 }
 
 .credit > span:first-child {

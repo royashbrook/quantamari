@@ -357,15 +357,17 @@
         >
           ai
         </a>
-        <span aria-hidden="true">·</span>
-        <a
-          href="https://github.com/sponsors/royashbrook"
-          target="_blank"
-          rel="noreferrer"
-          class={styles.sponsor}
+        <span class={styles.tail}
+          ><span aria-hidden="true">·</span>
+          <a
+            href="https://github.com/sponsors/royashbrook"
+            target="_blank"
+            rel="noreferrer"
+            class={styles.sponsor}
+          >
+            sponsor me
+          </a></span
         >
-          sponsor me
-        </a>
       </span>
       {#if view !== "about"}
         <span aria-hidden="true">·</span>

@@ -1165,3 +1165,66 @@ test("iPhone 14 Pro Max reads every label at 11px and taps the credit links at 4
     expect(Math.abs(rect.top - boxes[1].top)).toBeLessThan(2);
   }
 });
+
+test("a 320px phone centres every row of the maker line and keeps the dot with sponsor me", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.addInitScript(({ coachKey, installedValue }) => {
+    localStorage.setItem(coachKey, installedValue);
+  }, {
+    coachKey: INSTALL_COACH_STORAGE_KEY,
+    installedValue: INSTALL_COACH_INSTALLED_VALUE,
+  });
+  await page.goto(appPath);
+  await page.getByRole("button", { name: "Play Learning Tour" }).click();
+  await expect(page.locator("canvas.three-canvas")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Open game menu" }).click();
+  const menu = page.getByRole("dialog", { name: "Game menu" });
+  await menu.getByRole("button", { name: "About Quantamari" }).click();
+  const sponsor = menu.getByRole("link", { name: "sponsor me" });
+  await expect(sponsor).toBeVisible();
+  const rows = await sponsor.evaluate((link) => {
+    const line = link.closest("footer")!.querySelector(":scope > span")!;
+    const footer = line.closest("footer")!;
+    const box = footer.getBoundingClientRect();
+    const style = getComputedStyle(footer);
+    const left = box.left + Number.parseFloat(style.paddingLeft);
+    const right = box.right - Number.parseFloat(style.paddingRight);
+    // rows, grouped by vertical centre: the 44px link boxes sit their text a
+    // little lower than the plain words beside them
+    const byRow: { mid: number; l: number; r: number }[] = [];
+    // the line is a flex item (one box), so read each row from the ink on it:
+    // the words and the heart, not the blank spaces at the row ends
+    // links count by their tap box, as the kidgames checker measures them
+    const rects: DOMRect[] = [...line.querySelectorAll("svg, a")].map((el) => el.getBoundingClientRect());
+    const walk = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      if (!node.textContent!.trim() || node.parentElement!.closest("a")) continue;
+      if (getComputedStyle(node.parentElement!).position === "absolute") continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      rects.push(...range.getClientRects());
+    }
+    for (const rect of rects) {
+      if (!rect.width) continue;
+      const mid = (rect.top + rect.bottom) / 2;
+      const row = byRow.find((r) => Math.abs(r.mid - mid) < 14);
+      if (row) {
+        row.l = Math.min(row.l, rect.left);
+        row.r = Math.max(row.r, rect.right);
+      } else byRow.push({ mid, l: rect.left, r: rect.right });
+    }
+    const centre = (r: DOMRect) => (r.top + r.bottom) / 2;
+    const dot = link.previousElementSibling!.getBoundingClientRect();
+    return {
+      gaps: byRow.map((row) => Math.abs(row.l - left - (right - row.r))),
+      count: byRow.length,
+      dotWithSponsor: Math.abs(centre(dot) - centre(link.getBoundingClientRect())) < 8,
+    };
+  });
+  expect(rows.count).toBeGreaterThan(1);
+  for (const gap of rows.gaps) expect(gap).toBeLessThan(3);
+  expect(rows.dotWithSponsor).toBe(true);
+});
